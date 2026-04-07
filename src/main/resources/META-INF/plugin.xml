@@ -1,7 +1,6 @@
-<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
     <id>com.github.nearkim.aicodewalkthrough</id>
-    <name>ai-code-walkthrough</name>
+    <name>AI Code Walkthrough</name>
     <vendor>nearkim</vendor>
 
     <depends>com.intellij.modules.platform</depends>
@@ -9,7 +8,58 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.nearkim.aicodewalkthrough.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.nearkim.aicodewalkthrough.startup.MyProjectActivity" />
+        <toolWindow id="Code Tour"
+                    factoryClass="com.github.nearkim.aicodewalkthrough.toolwindow.CodeTourToolWindowFactory"
+                    anchor="right"
+                    icon="AllIcons.Actions.Play_forward"/>
+
+        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.ClaudeCliService"/>
+        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.FlowPlannerService"/>
+        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.TourSessionService"/>
+        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings"/>
+
+        <projectConfigurable instance="com.github.nearkim.aicodewalkthrough.settings.CodeTourConfigurable"
+                             id="com.github.nearkim.aicodewalkthrough.settings.CodeTourConfigurable"
+                             parentId="tools"
+                             displayName="AI Code Walkthrough"/>
     </extensions>
+
+    <actions>
+        <group id="CodeTour.ActionGroup" text="Code Tour" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+
+            <action id="CodeTour.MapFlow"
+                    class="com.github.nearkim.aicodewalkthrough.action.MapFlowAction"
+                    text="Map Flow..."
+                    description="Open Code Tour and map a code flow">
+                <keyboard-shortcut first-keystroke="ctrl alt W" keymap="$default"/>
+            </action>
+
+            <action id="CodeTour.StartTour"
+                    class="com.github.nearkim.aicodewalkthrough.action.StartTourAction"
+                    text="Start Tour"/>
+
+            <action id="CodeTour.NextStep"
+                    class="com.github.nearkim.aicodewalkthrough.action.NextStepAction"
+                    text="Next Step">
+                <keyboard-shortcut first-keystroke="ctrl alt RIGHT" keymap="$default"/>
+            </action>
+
+            <action id="CodeTour.PrevStep"
+                    class="com.github.nearkim.aicodewalkthrough.action.PrevStepAction"
+                    text="Previous Step">
+                <keyboard-shortcut first-keystroke="ctrl alt LEFT" keymap="$default"/>
+            </action>
+
+            <action id="CodeTour.SkipStep"
+                    class="com.github.nearkim.aicodewalkthrough.action.SkipStepAction"
+                    text="Skip Step"/>
+
+            <action id="CodeTour.StopTour"
+                    class="com.github.nearkim.aicodewalkthrough.action.StopTourAction"
+                    text="Stop Tour">
+                <keyboard-shortcut first-keystroke="ESCAPE" keymap="$default"/>
+            </action>
+        </group>
+    </actions>
 </idea-plugin>
