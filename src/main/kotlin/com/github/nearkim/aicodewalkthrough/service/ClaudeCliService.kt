@@ -8,19 +8,24 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.TimeUnit
 
 @Service(Service.Level.PROJECT)
 class ClaudeCliService(private val project: Project) : Disposable {
 
     private val settings get() = project.service<CodeTourSettings>()
+    private val json = Json { ignoreUnknownKeys = true }
 
     @Volatile
     private var activeProcess: Process? = null
 
     suspend fun query(
         prompt: String,
-        onStderrLine: ((String) -> Unit)? = null,
+        onProgress: ((String) -> Unit)? = null,
     ): String = withContext(Dispatchers.IO) {
         val basePath = project.basePath
             ?: throw IllegalStateException("Project base path is not available")
@@ -28,7 +33,8 @@ class ClaudeCliService(private val project: Project) : Disposable {
         val command = listOf(
             settings.state.claudePath,
             "--print",
-            "--output-format", "json",
+            "--output-format", "stream-json",
+            "--verbose",
             "--system-prompt", SYSTEM_PROMPT,
             "-p", prompt,
         )
@@ -36,6 +42,7 @@ class ClaudeCliService(private val project: Project) : Disposable {
         val processBuilder = ProcessBuilder(command)
             .directory(java.io.File(basePath))
             .redirectErrorStream(false)
+            .redirectInput(ProcessBuilder.Redirect.from(java.io.File("/dev/null")))
 
         augmentPath(processBuilder)
 
@@ -49,12 +56,35 @@ class ClaudeCliService(private val project: Project) : Disposable {
                     lines.forEach { line ->
                         thisLogger().debug("claude stderr: $line")
                         stderrLines.add(line)
-                        onStderrLine?.invoke(line)
                     }
                 }
             }
 
-            val stdout = process.inputStream.bufferedReader().readText()
+            var resultJson: String? = null
+            process.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    if (line.isBlank()) return@forEach
+                    try {
+                        val event = json.parseToJsonElement(line).jsonObject
+                        val type = event["type"]?.jsonPrimitive?.content ?: return@forEach
+
+                        when (type) {
+                            "assistant" -> {
+                                val toolObj = event["tool"]?.jsonObject
+                                if (toolObj != null) {
+                                    val progressMsg = formatToolUse(toolObj)
+                                    if (progressMsg != null) onProgress?.invoke(progressMsg)
+                                }
+                            }
+                            "result" -> {
+                                resultJson = line
+                            }
+                        }
+                    } catch (e: Exception) {
+                        thisLogger().debug("Failed to parse stream event: $line")
+                    }
+                }
+            }
 
             val timeoutSeconds = settings.state.requestTimeout.toLong()
             val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
@@ -73,19 +103,49 @@ class ClaudeCliService(private val project: Project) : Disposable {
                 )
             }
 
-            if (stdout.isBlank()) {
-                throw IllegalStateException("Claude CLI returned empty response")
+            if (resultJson.isNullOrBlank()) {
+                throw IllegalStateException("Claude CLI returned no result event")
             }
 
-            stdout
+            resultJson
         } finally {
             activeProcess = null
+        }
+    }
+
+    private fun formatToolUse(tool: JsonObject): String? {
+        val name = tool["name"]?.jsonPrimitive?.content ?: return null
+        val input = tool["input"]?.jsonObject ?: return "$name"
+
+        return when (name) {
+            "Read" -> {
+                val filePath = input["file_path"]?.jsonPrimitive?.content ?: return "Reading file..."
+                "Reading $filePath"
+            }
+            "Glob" -> {
+                val pattern = input["pattern"]?.jsonPrimitive?.content ?: return "Searching files..."
+                "Finding files: $pattern"
+            }
+            "Grep" -> {
+                val pattern = input["pattern"]?.jsonPrimitive?.content ?: return "Searching code..."
+                "Searching for: $pattern"
+            }
+            "Bash" -> {
+                val cmd = input["command"]?.jsonPrimitive?.content?.take(60) ?: return "Running command..."
+                "Running: $cmd"
+            }
+            "Write", "Edit" -> {
+                val filePath = input["file_path"]?.jsonPrimitive?.content ?: return "$name..."
+                "$name $filePath"
+            }
+            else -> name
         }
     }
 
     suspend fun checkAvailability(): CliStatus = withContext(Dispatchers.IO) {
         try {
             val processBuilder = ProcessBuilder(settings.state.claudePath, "--version")
+                .redirectInput(ProcessBuilder.Redirect.from(java.io.File("/dev/null")))
             augmentPath(processBuilder)
             val process = processBuilder.start()
             val output = process.inputStream.bufferedReader().readText().trim()

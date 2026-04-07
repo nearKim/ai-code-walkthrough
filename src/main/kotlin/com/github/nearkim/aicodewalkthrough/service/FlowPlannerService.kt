@@ -34,7 +34,7 @@ class FlowPlannerService(private val project: Project) {
     ): Result<MappingResult> {
         return try {
             val prompt = buildPrompt(question, followUpContext)
-            val rawResponse = claudeService.query(prompt, onStderrLine = onProgress)
+            val rawResponse = claudeService.query(prompt, onProgress = onProgress)
 
             val envelope = json.decodeFromString<ClaudeEnvelope>(rawResponse)
             if (envelope.isError) {
