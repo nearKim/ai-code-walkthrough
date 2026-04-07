@@ -132,10 +132,26 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
                 g2.font = plainFont
                 g2.color = JBColor(Color(80, 80, 80), Color(170, 170, 170))
-                g2.drawString(explanation, xStart + labelWidth + gap, yBaseline)
+                val explanationX = xStart + labelWidth + gap
+                val availableWidth = targetRegion.x + targetRegion.width - explanationX - JBUI.scale(8)
+                val truncated = truncateToFit(g2, explanation, availableWidth)
+                g2.drawString(truncated, explanationX, yBaseline)
             } finally {
                 g2.dispose()
             }
+        }
+
+        private fun truncateToFit(g2: Graphics2D, text: String, maxWidth: Int): String {
+            if (maxWidth <= 0) return ""
+            val fm = g2.fontMetrics
+            if (fm.stringWidth(text) <= maxWidth) return text
+            val ellipsis = "..."
+            val ellipsisWidth = fm.stringWidth(ellipsis)
+            var end = text.length
+            while (end > 0 && fm.stringWidth(text.substring(0, end)) + ellipsisWidth > maxWidth) {
+                end--
+            }
+            return if (end > 0) text.substring(0, end) + ellipsis else ellipsis
         }
     }
 }

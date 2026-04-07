@@ -70,10 +70,16 @@ class ClaudeCliService(private val project: Project) : Disposable {
 
                         when (type) {
                             "assistant" -> {
-                                val toolObj = event["tool"]?.jsonObject
-                                if (toolObj != null) {
-                                    val progressMsg = formatToolUse(toolObj)
-                                    if (progressMsg != null) onProgress?.invoke(progressMsg)
+                                val message = event["message"]?.jsonObject
+                                val content = message?.get("content")
+                                if (content is kotlinx.serialization.json.JsonArray) {
+                                    for (item in content) {
+                                        val obj = item.jsonObject
+                                        if (obj["type"]?.jsonPrimitive?.content == "tool_use") {
+                                            val progressMsg = formatToolUse(obj)
+                                            if (progressMsg != null) onProgress?.invoke(progressMsg)
+                                        }
+                                    }
                                 }
                             }
                             "result" -> {
@@ -113,9 +119,9 @@ class ClaudeCliService(private val project: Project) : Disposable {
         }
     }
 
-    private fun formatToolUse(tool: JsonObject): String? {
-        val name = tool["name"]?.jsonPrimitive?.content ?: return null
-        val input = tool["input"]?.jsonObject ?: return "$name"
+    private fun formatToolUse(toolUse: JsonObject): String? {
+        val name = toolUse["name"]?.jsonPrimitive?.content ?: return null
+        val input = toolUse["input"]?.jsonObject ?: return name
 
         return when (name) {
             "Read" -> {
