@@ -25,6 +25,8 @@ import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Cursor
 import java.awt.FlowLayout
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
@@ -80,6 +82,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     // Status indicator
     private var statusDot: JBLabel? = null
+
+    // Command history
+    private val history = mutableListOf<String>()
+    private var historyIndex = 0
+    private var historyDraft = ""
 
     init {
         cardPanel.add(createInputCard(), CARD_INPUT)
@@ -181,6 +188,16 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             emptyText.setText("Ask about your codebase...")
             lineWrap = true
             wrapStyleWord = true
+            addKeyListener(object : KeyAdapter() {
+                override fun keyPressed(e: KeyEvent) {
+                    val navigated = when (e.keyCode) {
+                        KeyEvent.VK_UP -> historyUp(this@apply, requireAtStart = true)
+                        KeyEvent.VK_DOWN -> historyDown(this@apply, requireAtEnd = true)
+                        else -> false
+                    }
+                    if (navigated) e.consume()
+                }
+            })
         }
         panel.add(JBScrollPane(questionTextArea!!), BorderLayout.CENTER)
 
@@ -220,6 +237,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             addActionListener {
                 val question = questionTextArea!!.text.trim()
                 if (question.isNotEmpty()) {
+                    addToHistory(question)
                     sessionService.startMapping(question)
                 }
             }
@@ -383,14 +401,25 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
             val followUpPanel = JPanel(BorderLayout(JBUI.scale(4), 0))
             followUpPanel.border = JBUI.Borders.empty(8, 0, 0, 0)
-            followUpField = JBTextField().apply {
+            followUpField = JBTextField().apply field@{
                 emptyText.setText("Ask a follow-up...")
+                addKeyListener(object : KeyAdapter() {
+                    override fun keyPressed(e: KeyEvent) {
+                        val navigated = when (e.keyCode) {
+                            KeyEvent.VK_UP -> historyUp(this@field, requireAtStart = false)
+                            KeyEvent.VK_DOWN -> historyDown(this@field, requireAtEnd = false)
+                            else -> false
+                        }
+                        if (navigated) e.consume()
+                    }
+                })
             }
             followUpPanel.add(followUpField!!, BorderLayout.CENTER)
             val sendButton = JButton("Send").apply {
                 addActionListener {
                     val text = followUpField!!.text.trim()
                     if (text.isNotEmpty()) {
+                        addToHistory(text)
                         sessionService.submitFollowUp(text)
                         followUpField!!.text = ""
                     }
@@ -412,12 +441,24 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
             val answerPanel = JPanel(BorderLayout(JBUI.scale(4), 0))
             answerPanel.border = JBUI.Borders.empty(8, 0, 0, 0)
-            clarificationField = JBTextField()
+            clarificationField = JBTextField().apply clarification@{
+                addKeyListener(object : KeyAdapter() {
+                    override fun keyPressed(e: KeyEvent) {
+                        val navigated = when (e.keyCode) {
+                            KeyEvent.VK_UP -> historyUp(this@clarification, requireAtStart = false)
+                            KeyEvent.VK_DOWN -> historyDown(this@clarification, requireAtEnd = false)
+                            else -> false
+                        }
+                        if (navigated) e.consume()
+                    }
+                })
+            }
             answerPanel.add(clarificationField!!, BorderLayout.CENTER)
             val replyButton = JButton("Reply").apply {
                 addActionListener {
                     val text = clarificationField!!.text.trim()
                     if (text.isNotEmpty()) {
+                        addToHistory(text)
                         sessionService.answerClarification(text)
                         clarificationField!!.text = ""
                     }
@@ -684,6 +725,40 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
             return component
         }
+    }
+
+    // ── Command History ──────────────────────────────────────────────────
+
+    private fun addToHistory(text: String) {
+        if (history.isEmpty() || history.last() != text) {
+            history.add(text)
+        }
+        historyIndex = history.size
+        historyDraft = ""
+    }
+
+    /** Navigate to the previous history entry. Returns true if navigation occurred. */
+    private fun historyUp(field: javax.swing.text.JTextComponent, requireAtStart: Boolean): Boolean {
+        if (history.isEmpty() || historyIndex == 0) return false
+        if (requireAtStart && field.caretPosition != 0) return false
+        if (historyIndex == history.size) {
+            historyDraft = field.text
+        }
+        historyIndex--
+        field.text = history[historyIndex]
+        field.caretPosition = 0
+        return true
+    }
+
+    /** Navigate to the next history entry (or restore draft). Returns true if navigation occurred. */
+    private fun historyDown(field: javax.swing.text.JTextComponent, requireAtEnd: Boolean): Boolean {
+        if (historyIndex >= history.size) return false
+        if (requireAtEnd && field.caretPosition != field.document.length) return false
+        historyIndex++
+        val newText = if (historyIndex < history.size) history[historyIndex] else historyDraft
+        field.text = newText
+        field.caretPosition = newText.length
+        return true
     }
 
     companion object {

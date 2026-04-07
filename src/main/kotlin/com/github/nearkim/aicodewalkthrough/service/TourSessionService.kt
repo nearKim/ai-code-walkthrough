@@ -114,10 +114,15 @@ class TourSessionService(private val project: Project, private val scope: Corout
             return
         }
 
+        // Find next non-broken step so the decoration controller can preview it
+        var nextIdx = currentStepIndex + 1
+        while (nextIdx < steps.size && steps[nextIdx].broken) nextIdx++
+        val upcomingStep = steps.getOrNull(nextIdx)
+
         val totalSteps = steps.size
         val decorationController = project.service<EditorDecorationController>()
         ApplicationManager.getApplication().invokeLater {
-            decorationController.showStep(step, currentStepIndex, totalSteps)
+            decorationController.showStep(step, currentStepIndex, totalSteps, upcomingStep)
             listeners.forEach { it.onStepChanged(currentStepIndex, step) }
         }
     }

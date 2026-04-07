@@ -213,10 +213,17 @@ class ClaudeCliService(private val project: Project) : Disposable {
                   "file_path": "relative/path/to/file.kt",
                   "symbol": "functionOrClassName",
                   "start_line": 1,
-                  "end_line": 10,
-                  "explanation": "1-2 sentence explanation of what this code does.",
+                  "end_line": 50,
+                  "explanation": "1-2 sentence explanation of the overall purpose of this code.",
                   "why_included": "Why this step matters in the flow.",
-                  "uncertain": false
+                  "uncertain": false,
+                  "line_annotations": [
+                    {
+                      "start_line": 10,
+                      "end_line": 15,
+                      "text": "Short annotation explaining what this specific block does."
+                    }
+                  ]
                 }
               ]
             }
@@ -233,9 +240,13 @@ class ClaudeCliService(private val project: Project) : Disposable {
             3. Use file paths relative to the project root.
             4. Return type "clarification" when the question is ambiguous or you need more information to give a useful answer.
             5. Order steps by execution sequence. Linearize branching control flow (try/catch, if/else) by following the most common/happy path and noting alternatives in the explanation field.
-            6. Keep explanation to 1-2 sentences. Put deeper reasoning in why_included.
+            6. Keep explanation to 1-2 sentences covering the overall purpose. Put deeper reasoning in why_included.
             7. Mark uncertain: true for steps that are inferred rather than directly traced from code.
             8. Always populate the symbol field when the step targets a specific function, class, or method.
+            9. Use line_annotations to annotate noteworthy sub-regions within the step's start_line..end_line range.
+               ADD annotations for: branches (if/else/when/try-catch) explaining which path is taken and why, complex or business-critical variable declarations, non-obvious expressions or algorithm steps.
+               SKIP annotations for: trivial assignments, boilerplate, obvious getters/setters.
+               line_annotations may be empty. All annotation start_line/end_line must be within the step's own start_line..end_line range.
         """.trimIndent()
     }
 }

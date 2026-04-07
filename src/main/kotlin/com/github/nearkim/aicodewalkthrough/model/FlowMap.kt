@@ -4,6 +4,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class LineAnnotation(
+    @SerialName("start_line") val startLine: Int,
+    @SerialName("end_line") val endLine: Int,
+    val text: String,
+)
+
+@Serializable
 data class FlowStep(
     val id: String,
     val title: String,
@@ -14,6 +21,7 @@ data class FlowStep(
     val explanation: String,
     @SerialName("why_included") val whyIncluded: String,
     val uncertain: Boolean = false,
+    @SerialName("line_annotations") val lineAnnotations: List<LineAnnotation> = emptyList(),
     @kotlinx.serialization.Transient val broken: Boolean = false,
     @kotlinx.serialization.Transient val breakReason: String? = null,
 )
