@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.service
 import com.github.nearkim.aicodewalkthrough.model.ClaudeEnvelope
 import com.github.nearkim.aicodewalkthrough.model.FollowUpContext
 import com.github.nearkim.aicodewalkthrough.model.LlmResponse
+import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
@@ -14,6 +15,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 
+data class MappingResult(
+    val response: LlmResponse,
+    val metadata: ResponseMetadata?,
+)
+
 @Service(Service.Level.PROJECT)
 class FlowPlannerService(private val project: Project) {
 
@@ -21,10 +27,14 @@ class FlowPlannerService(private val project: Project) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun mapFlow(question: String, followUpContext: FollowUpContext? = null): Result<LlmResponse> {
+    suspend fun mapFlow(
+        question: String,
+        followUpContext: FollowUpContext? = null,
+        onProgress: ((String) -> Unit)? = null,
+    ): Result<MappingResult> {
         return try {
             val prompt = buildPrompt(question, followUpContext)
-            val rawResponse = claudeService.query(prompt)
+            val rawResponse = claudeService.query(prompt, onStderrLine = onProgress)
 
             val envelope = json.decodeFromString<ClaudeEnvelope>(rawResponse)
             if (envelope.isError) {
@@ -39,15 +49,18 @@ class FlowPlannerService(private val project: Project) {
             val cleaned = stripMarkdownFences(resultText)
             val llmResponse = json.decodeFromString<LlmResponse>(cleaned)
 
-            if (llmResponse.type == "flow_map" && llmResponse.steps != null) {
+            val finalResponse = if (llmResponse.type == "flow_map" && llmResponse.steps != null) {
                 val basePath = project.basePath
                     ?: return Result.failure(IllegalStateException("Project base path is not available"))
                 val validator = StepValidator(basePath)
                 val validatedSteps = validator.validate(llmResponse.steps)
-                Result.success(llmResponse.copy(steps = validatedSteps))
+                llmResponse.copy(steps = validatedSteps)
             } else {
-                Result.success(llmResponse)
+                llmResponse
             }
+
+            val metadata = buildMetadata(envelope, finalResponse)
+            Result.success(MappingResult(finalResponse, metadata))
         } catch (e: SerializationException) {
             thisLogger().warn("Failed to parse Claude response", e)
             Result.failure(IllegalStateException("Failed to parse response: ${e.message}", e))
@@ -62,6 +75,18 @@ class FlowPlannerService(private val project: Project) {
 
     fun cancel() {
         claudeService.cancel()
+    }
+
+    private fun buildMetadata(envelope: ClaudeEnvelope, response: LlmResponse): ResponseMetadata? {
+        val durationMs = envelope.durationMs ?: return null
+        val steps = response.steps ?: emptyList()
+        return ResponseMetadata(
+            durationMs = durationMs,
+            costUsd = envelope.costUsd,
+            numTurns = envelope.numTurns ?: 0,
+            stepCount = steps.size,
+            fileCount = steps.map { it.filePath }.distinct().size,
+        )
     }
 
     private fun buildPrompt(question: String, followUpContext: FollowUpContext?): String {

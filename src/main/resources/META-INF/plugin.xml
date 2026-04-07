@@ -17,6 +17,7 @@
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.FlowPlannerService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.TourSessionService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings"/>
+        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.editor.EditorDecorationController"/>
 
         <projectConfigurable instance="com.github.nearkim.aicodewalkthrough.settings.CodeTourConfigurable"
                              id="com.github.nearkim.aicodewalkthrough.settings.CodeTourConfigurable"

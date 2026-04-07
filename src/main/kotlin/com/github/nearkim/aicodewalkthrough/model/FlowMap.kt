@@ -54,4 +54,15 @@ data class ClaudeEnvelope(
     @SerialName("is_error") val isError: Boolean = false,
     val result: String? = null,
     @SerialName("session_id") val sessionId: String? = null,
+    @SerialName("duration_ms") val durationMs: Long? = null,
+    @SerialName("cost_usd") val costUsd: Double? = null,
+    @SerialName("num_turns") val numTurns: Int? = null,
+)
+
+data class ResponseMetadata(
+    val durationMs: Long,
+    val costUsd: Double?,
+    val numTurns: Int,
+    val stepCount: Int,
+    val fileCount: Int,
 )

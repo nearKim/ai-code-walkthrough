@@ -12,6 +12,8 @@ class StopTourAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
     override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        project.service<TourSessionService>().stopTour()
     }
 
     override fun update(e: AnActionEvent) {

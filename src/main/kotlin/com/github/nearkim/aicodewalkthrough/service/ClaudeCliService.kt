@@ -18,7 +18,10 @@ class ClaudeCliService(private val project: Project) : Disposable {
     @Volatile
     private var activeProcess: Process? = null
 
-    suspend fun query(prompt: String): String = withContext(Dispatchers.IO) {
+    suspend fun query(
+        prompt: String,
+        onStderrLine: ((String) -> Unit)? = null,
+    ): String = withContext(Dispatchers.IO) {
         val basePath = project.basePath
             ?: throw IllegalStateException("Project base path is not available")
 
@@ -26,7 +29,7 @@ class ClaudeCliService(private val project: Project) : Disposable {
             settings.state.claudePath,
             "--print",
             "--output-format", "json",
-            "-s", SYSTEM_PROMPT,
+            "--system-prompt", SYSTEM_PROMPT,
             "-p", prompt,
         )
 
@@ -34,13 +37,20 @@ class ClaudeCliService(private val project: Project) : Disposable {
             .directory(java.io.File(basePath))
             .redirectErrorStream(false)
 
+        augmentPath(processBuilder)
+
         val process = processBuilder.start()
         activeProcess = process
 
         try {
-            val stderr = Thread.ofVirtual().start {
+            val stderrLines = mutableListOf<String>()
+            val stderrThread = Thread.ofVirtual().start {
                 process.errorStream.bufferedReader().useLines { lines ->
-                    lines.forEach { line -> thisLogger().debug("claude stderr: $line") }
+                    lines.forEach { line ->
+                        thisLogger().debug("claude stderr: $line")
+                        stderrLines.add(line)
+                        onStderrLine?.invoke(line)
+                    }
                 }
             }
 
@@ -53,11 +63,14 @@ class ClaudeCliService(private val project: Project) : Disposable {
                 throw IllegalStateException("Claude CLI timed out after ${timeoutSeconds}s")
             }
 
-            stderr.join(1000)
+            stderrThread.join(1000)
 
             val exitCode = process.exitValue()
             if (exitCode != 0) {
-                throw IllegalStateException("Claude CLI exited with code $exitCode")
+                val stderrOutput = stderrLines.joinToString("\n").take(500)
+                throw IllegalStateException(
+                    "Claude CLI exited with code $exitCode${if (stderrOutput.isNotBlank()) ": $stderrOutput" else ""}"
+                )
             }
 
             if (stdout.isBlank()) {
@@ -70,6 +83,27 @@ class ClaudeCliService(private val project: Project) : Disposable {
         }
     }
 
+    suspend fun checkAvailability(): CliStatus = withContext(Dispatchers.IO) {
+        try {
+            val processBuilder = ProcessBuilder(settings.state.claudePath, "--version")
+            augmentPath(processBuilder)
+            val process = processBuilder.start()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            val finished = process.waitFor(5, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                return@withContext CliStatus(false, "claude CLI timed out")
+            }
+            if (process.exitValue() == 0) {
+                CliStatus(true, output)
+            } else {
+                CliStatus(false, "claude exited with code ${process.exitValue()}")
+            }
+        } catch (e: Exception) {
+            CliStatus(false, e.message ?: "claude not found")
+        }
+    }
+
     fun cancel() {
         activeProcess?.destroyForcibly()
         activeProcess = null
@@ -77,6 +111,25 @@ class ClaudeCliService(private val project: Project) : Disposable {
 
     override fun dispose() {
         cancel()
+    }
+
+    data class CliStatus(val available: Boolean, val versionOrError: String)
+
+    private fun augmentPath(processBuilder: ProcessBuilder) {
+        val env = processBuilder.environment()
+        val currentPath = env["PATH"] ?: ""
+        val home = System.getProperty("user.home")
+        val extraPaths = listOf(
+            "$home/.local/bin",
+            "$home/.npm-global/bin",
+            "$home/.nvm/versions/node/current/bin",
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+        )
+        val missing = extraPaths.filter { it !in currentPath }
+        if (missing.isNotEmpty()) {
+            env["PATH"] = (listOf(currentPath) + missing).joinToString(":")
+        }
     }
 
     companion object {
