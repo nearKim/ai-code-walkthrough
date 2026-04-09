@@ -1,5 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service
 
+import com.github.nearkim.aicodewalkthrough.model.AiProvider
+import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
@@ -15,29 +17,35 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.TimeUnit
 
 @Service(Service.Level.PROJECT)
-class ClaudeCliService(private val project: Project) : Disposable {
+class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
     private val settings get() = project.service<CodeTourSettings>()
     private val json = Json { ignoreUnknownKeys = true }
+    override val provider: AiProvider = AiProvider.CLAUDE_CLI
 
     @Volatile
     private var activeProcess: Process? = null
 
-    suspend fun query(
+    override suspend fun query(
         prompt: String,
-        onProgress: ((String) -> Unit)? = null,
-    ): String = withContext(Dispatchers.IO) {
+        onProgress: ((String) -> Unit)?,
+    ): ProviderResponse = withContext(Dispatchers.IO) {
         val basePath = project.basePath
             ?: throw IllegalStateException("Project base path is not available")
 
-        val command = listOf(
-            settings.state.claudePath,
-            "--print",
-            "--output-format", "stream-json",
-            "--verbose",
-            "--system-prompt", SYSTEM_PROMPT,
-            "-p", prompt,
-        )
+        val state = settings.state
+        val command = buildList {
+            add(state.claudePath)
+            add("--print")
+            add("--output-format"); add("stream-json")
+            add("--verbose")
+            add("--system-prompt"); add(PromptContract.buildSystemPrompt(state.enableMcp))
+            val mcpPath = state.mcpConfigPath.trim()
+            if (mcpPath.isNotEmpty()) {
+                add("--mcp-config"); add(mcpPath)
+            }
+            add("-p"); add(prompt)
+        }
 
         val processBuilder = ProcessBuilder(command)
             .directory(java.io.File(basePath))
@@ -113,7 +121,24 @@ class ClaudeCliService(private val project: Project) : Disposable {
                 throw IllegalStateException("Claude CLI returned no result event")
             }
 
-            resultJson
+            val envelope = json.decodeFromString<com.github.nearkim.aicodewalkthrough.model.ClaudeEnvelope>(resultJson)
+            if (envelope.isError) {
+                throw IllegalStateException("Claude returned error: ${envelope.result}")
+            }
+
+            val content = envelope.result
+                ?: throw IllegalStateException("Claude envelope has null result")
+
+            ProviderResponse(
+                content = content,
+                metadata = ResponseMetadata(
+                    durationMs = envelope.durationMs ?: 0,
+                    costUsd = envelope.costUsd,
+                    numTurns = envelope.numTurns ?: 0,
+                    stepCount = 0,
+                    fileCount = 0,
+                ),
+            )
         } finally {
             activeProcess = null
         }
@@ -148,7 +173,7 @@ class ClaudeCliService(private val project: Project) : Disposable {
         }
     }
 
-    suspend fun checkAvailability(): CliStatus = withContext(Dispatchers.IO) {
+    override suspend fun checkAvailability(): ProviderStatus = withContext(Dispatchers.IO) {
         try {
             val processBuilder = ProcessBuilder(settings.state.claudePath, "--version")
                 .redirectInput(ProcessBuilder.Redirect.from(java.io.File("/dev/null")))
@@ -158,19 +183,19 @@ class ClaudeCliService(private val project: Project) : Disposable {
             val finished = process.waitFor(5, TimeUnit.SECONDS)
             if (!finished) {
                 process.destroyForcibly()
-                return@withContext CliStatus(false, "claude CLI timed out")
+                return@withContext ProviderStatus(provider, false, "Claude CLI timed out")
             }
             if (process.exitValue() == 0) {
-                CliStatus(true, output)
+                ProviderStatus(provider, true, output)
             } else {
-                CliStatus(false, "claude exited with code ${process.exitValue()}")
+                ProviderStatus(provider, false, "claude exited with code ${process.exitValue()}")
             }
         } catch (e: Exception) {
-            CliStatus(false, e.message ?: "claude not found")
+            ProviderStatus(provider, false, e.message ?: "claude not found")
         }
     }
 
-    fun cancel() {
+    override fun cancel() {
         activeProcess?.destroyForcibly()
         activeProcess = null
     }
@@ -178,8 +203,6 @@ class ClaudeCliService(private val project: Project) : Disposable {
     override fun dispose() {
         cancel()
     }
-
-    data class CliStatus(val available: Boolean, val versionOrError: String)
 
     private fun augmentPath(processBuilder: ProcessBuilder) {
         val env = processBuilder.environment()
@@ -196,57 +219,5 @@ class ClaudeCliService(private val project: Project) : Disposable {
         if (missing.isNotEmpty()) {
             env["PATH"] = (listOf(currentPath) + missing).joinToString(":")
         }
-    }
-
-    companion object {
-        private val SYSTEM_PROMPT = """
-            You are a code walkthrough assistant. Analyze the codebase and respond with ONLY valid JSON matching one of these schemas:
-
-            Flow map response:
-            {
-              "type": "flow_map",
-              "summary": "One-paragraph high-level answer.",
-              "steps": [
-                {
-                  "id": "step-1",
-                  "title": "Short title",
-                  "file_path": "relative/path/to/file.kt",
-                  "symbol": "functionOrClassName",
-                  "start_line": 1,
-                  "end_line": 50,
-                  "explanation": "1-2 sentence explanation of the overall purpose of this code.",
-                  "why_included": "Why this step matters in the flow.",
-                  "uncertain": false,
-                  "line_annotations": [
-                    {
-                      "start_line": 10,
-                      "end_line": 15,
-                      "text": "Short annotation explaining what this specific block does."
-                    }
-                  ]
-                }
-              ]
-            }
-
-            Clarification response:
-            {
-              "type": "clarification",
-              "clarification_question": "Your clarifying question here."
-            }
-
-            Rules:
-            1. Always respond with valid JSON matching one of the schemas above. No markdown, no extra text.
-            2. Explore the codebase thoroughly using your built-in tools (file reading, grep, etc.) before answering.
-            3. Use file paths relative to the project root.
-            4. Return type "clarification" when the question is ambiguous or you need more information to give a useful answer.
-            5. Order steps by execution sequence. Linearize branching control flow (try/catch, if/else) by following the most common/happy path and noting alternatives in the explanation field.
-            6. Keep explanation to 1-2 sentences covering the overall purpose. Put deeper reasoning in why_included.
-            7. Mark uncertain: true for steps that are inferred rather than directly traced from code.
-            8. Always populate the symbol field when the step targets a specific function, class, or method.
-            9. Use line_annotations to annotate noteworthy sub-regions within the step's start_line..end_line range.
-               ADD annotations for: branches (if/else/when/try-catch) explaining which path is taken and why, complex or business-critical variable declarations, non-obvious expressions or algorithm steps.
-               SKIP annotations for: trivial assignments, boilerplate, obvious getters/setters.
-               line_annotations may be empty. All annotation start_line/end_line must be within the step's own start_line..end_line range.
-        """.trimIndent()
     }
 }

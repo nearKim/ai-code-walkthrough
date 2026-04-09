@@ -70,10 +70,16 @@ class EditorDecorationController(private val project: Project) : Disposable {
         activeHighlighters.add(highlighter)
 
         // Step header inlay (higher priority so it appears above any annotation at the same offset)
+        val severity = normalizedSeverity(step)
+        val confidence = normalizedConfidence(step)
         val stepRenderer = StepInlayRenderer(
-            editor,
+            editor = editor,
             stepLabel = "Step ${stepIndex + 1}/$totalSteps \u2014 ${step.title}",
             explanation = step.explanation,
+            severityLabel = severity?.let { "Severity: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
+            confidenceLabel = confidence?.let { "Confidence: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
+            backgroundColor = backgroundColorForSeverity(severity, step.broken),
+            accentColor = accentColorForSeverity(severity, step.broken),
         )
         val inlay = editor.inlayModel.addBlockElement(startOffset, true, true, 10, stepRenderer)
         if (inlay != null) activeInlays.add(inlay)
@@ -129,6 +135,10 @@ class EditorDecorationController(private val project: Project) : Disposable {
         private val editor: Editor,
         private val stepLabel: String,
         private val explanation: String,
+        private val severityLabel: String?,
+        private val confidenceLabel: String?,
+        private val backgroundColor: JBColor,
+        private val accentColor: JBColor,
     ) : EditorCustomElementRenderer {
 
         private val vPad = JBUI.scale(5)
@@ -142,11 +152,16 @@ class EditorDecorationController(private val project: Project) : Disposable {
             val width = calcWidthInPixels(inlay)
             val boldFont = editor.colorsScheme.getFont(EditorFontType.BOLD)
             val plainFont = editor.colorsScheme.getFont(EditorFontType.PLAIN)
+            val smallFont = editor.colorsScheme.getFont(EditorFontType.ITALIC)
             val boldFm = editor.contentComponent.getFontMetrics(boldFont)
             val plainFm = editor.contentComponent.getFontMetrics(plainFont)
+            val smallFm = editor.contentComponent.getFontMetrics(smallFont)
             val availableWidth = width - hPad * 2
+            val metaLines = buildMetaText().takeIf { it.isNotBlank() }?.let { wrapText(smallFm, it, availableWidth) } ?: emptyList()
             val explLines = wrapText(plainFm, explanation, availableWidth)
-            return vPad + boldFm.height + lineGap + explLines.size * (plainFm.height + lineGap) + vPad
+            val metaHeight = if (metaLines.isEmpty()) 0 else metaLines.size * (smallFm.height + lineGap)
+            val gapAfterMeta = if (metaLines.isEmpty()) 0 else lineGap
+            return vPad + boldFm.height + gapAfterMeta + metaHeight + lineGap + explLines.size * (plainFm.height + lineGap) + vPad
         }
 
         override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
@@ -154,15 +169,18 @@ class EditorDecorationController(private val project: Project) : Disposable {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
 
-                val bg = JBColor(Color(218, 232, 248), Color(40, 52, 66))
-                g2.color = bg
+                g2.color = backgroundColor
                 g2.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
+                g2.color = accentColor
+                g2.fillRect(targetRegion.x, targetRegion.y, JBUI.scale(4), targetRegion.height)
 
                 val scheme = editor.colorsScheme
                 val boldFont = scheme.getFont(EditorFontType.BOLD)
                 val plainFont = scheme.getFont(EditorFontType.PLAIN)
+                val smallFont = scheme.getFont(EditorFontType.ITALIC)
                 val boldFm = g2.getFontMetrics(boldFont)
                 val plainFm = g2.getFontMetrics(plainFont)
+                val smallFm = g2.getFontMetrics(smallFont)
                 val availableWidth = targetRegion.width - hPad * 2
 
                 val x = targetRegion.x + hPad
@@ -172,6 +190,16 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 g2.color = JBColor(Color(30, 30, 30), Color(220, 220, 220))
                 g2.drawString(stepLabel, x, y)
                 y += boldFm.height + lineGap
+
+                val metaText = buildMetaText()
+                if (metaText.isNotBlank()) {
+                    g2.font = smallFont
+                    g2.color = accentColor
+                    for (line in wrapText(smallFm, metaText, availableWidth)) {
+                        g2.drawString(line, x, y)
+                        y += smallFm.height + lineGap
+                    }
+                }
 
                 g2.font = plainFont
                 g2.color = JBColor(Color(60, 60, 60), Color(180, 180, 180))
@@ -183,6 +211,9 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 g2.dispose()
             }
         }
+
+        private fun buildMetaText(): String =
+            listOfNotNull(severityLabel, confidenceLabel).joinToString("  ·  ")
     }
 
     private class LineAnnotationInlayRenderer(
@@ -234,6 +265,45 @@ class EditorDecorationController(private val project: Project) : Disposable {
     }
 
     companion object {
+        private fun normalizedSeverity(step: FlowStep): String? {
+            val severity = step.severity?.trim()?.lowercase()
+            return when (severity) {
+                "high", "medium", "low", "info" -> severity
+                null -> if (step.broken) "high" else null
+                else -> severity
+            }
+        }
+
+        private fun normalizedConfidence(step: FlowStep): String? {
+            val confidence = step.confidence?.trim()?.lowercase()
+            return when (confidence) {
+                "high", "medium", "low", "uncertain", "estimated" -> confidence
+                null -> if (step.uncertain) "uncertain" else null
+                else -> confidence
+            }
+        }
+
+        private fun backgroundColorForSeverity(severity: String?, broken: Boolean): JBColor {
+            return when {
+                broken -> JBColor(Color(250, 235, 235), Color(66, 38, 38))
+                severity == "high" -> JBColor(Color(250, 235, 235), Color(66, 38, 38))
+                severity == "medium" -> JBColor(Color(252, 244, 226), Color(72, 58, 34))
+                severity == "low" -> JBColor(Color(235, 243, 252), Color(38, 50, 66))
+                severity == "info" -> JBColor(Color(236, 241, 247), Color(39, 46, 56))
+                else -> JBColor(Color(218, 232, 248), Color(40, 52, 66))
+            }
+        }
+
+        private fun accentColorForSeverity(severity: String?, broken: Boolean): JBColor {
+            return when {
+                broken || severity == "high" -> JBColor(Color(190, 70, 60), Color(235, 130, 120))
+                severity == "medium" -> JBColor(Color(190, 120, 40), Color(240, 185, 100))
+                severity == "low" -> JBColor(Color(70, 110, 170), Color(130, 170, 225))
+                severity == "info" -> JBColor(Color(90, 110, 130), Color(150, 170, 190))
+                else -> JBColor(Color(70, 110, 170), Color(130, 170, 225))
+            }
+        }
+
         fun wrapText(fm: FontMetrics, text: String, maxWidth: Int): List<String> {
             if (maxWidth <= 0) return listOf(text)
             val words = text.split(' ')

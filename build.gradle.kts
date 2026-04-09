@@ -134,6 +134,10 @@ tasks {
         gradleVersion = providers.gradleProperty("gradleVersion").get()
     }
 
+    runIde {
+        autoReload = false
+    }
+
     publishPlugin {
         dependsOn(patchChangelog)
     }

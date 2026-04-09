@@ -26,9 +26,9 @@ class StepValidator(private val projectBasePath: String) {
         if (step.symbol != null) {
             val matchLine = findSymbolLine(lines, step.symbol)
             if (matchLine != null) {
-                val originalRangeSize = (step.endLine - step.startLine).coerceAtLeast(0)
                 val newStartLine = matchLine + 1
-                val newEndLine = (matchLine + 1 + originalRangeSize).coerceAtMost(fileLineCount)
+                val symbolEndLine = findSymbolEndLine(lines, matchLine)
+                val newEndLine = (symbolEndLine + 1).coerceAtMost(fileLineCount)
                 return step.copy(startLine = newStartLine, endLine = newEndLine)
             }
         }
@@ -55,6 +55,25 @@ class StepValidator(private val projectBasePath: String) {
             if (line.contains(symbol)) return index
         }
         return null
+    }
+
+    // Scan forward from symbolLine tracking brace depth to find the closing } of the symbol body.
+    // Returns symbolLine itself if no opening brace is found (e.g. single-expression fun).
+    private fun findSymbolEndLine(lines: List<String>, symbolLine: Int): Int {
+        var depth = 0
+        var foundOpenBrace = false
+        for (i in symbolLine until lines.size) {
+            for (ch in lines[i]) {
+                when (ch) {
+                    '{' -> { depth++; foundOpenBrace = true }
+                    '}' -> if (foundOpenBrace) {
+                        depth--
+                        if (depth == 0) return i
+                    }
+                }
+            }
+        }
+        return if (foundOpenBrace) lines.size - 1 else symbolLine
     }
 
     private fun deduplicate(steps: List<FlowStep>): List<FlowStep> {
