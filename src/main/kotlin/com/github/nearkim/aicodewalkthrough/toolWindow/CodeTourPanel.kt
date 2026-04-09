@@ -13,6 +13,7 @@ import com.github.nearkim.aicodewalkthrough.service.LlmProviderService
 import com.github.nearkim.aicodewalkthrough.service.TourSessionService
 import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.github.nearkim.aicodewalkthrough.util.FlowMapMarkdownExporter
+import com.github.nearkim.aicodewalkthrough.util.FlowStepMetaFormatter
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.components.service
 import com.intellij.openapi.ide.CopyPasteManager
@@ -1956,7 +1957,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 ipad = JBUI.insets(0, 0, 2, 0)
                 isOpaque = false
             }
-            val metaLabel = JBLabel(buildMetaText(value)).apply {
+            val metaLabel = JBLabel(FlowStepMetaFormatter.format(value)).apply {
                 font = JBUI.Fonts.smallFont()
             }
             val panel = JPanel(BorderLayout()).apply {
@@ -1997,25 +1998,6 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             panel.add(metaLabel, BorderLayout.SOUTH)
             return panel
         }
-
-        private fun buildMetaText(step: FlowStep): String = buildList {
-            add(step.filePath)
-            add("L${step.startLine}-L${step.endLine}")
-            step.severity?.takeIf { it.isNotBlank() }?.let { add("severity: $it") }
-            (step.confidence?.takeIf { it.isNotBlank() } ?: if (step.uncertain) "uncertain" else null)?.let {
-                add("confidence: $it")
-            }
-            step.riskType?.takeIf { it.isNotBlank() }?.let { add("risk: $it") }
-            if (step.evidence.isNotEmpty()) {
-                add("evidence: ${step.evidence.size}")
-            }
-            if (!step.testGap.isNullOrBlank()) {
-                add("test gap")
-            }
-            if (!step.suggestedAction.isNullOrBlank()) {
-                add("action")
-            }
-        }.joinToString("  ·  ").ifBlank { step.filePath }
     }
 
     // ── Command History ──────────────────────────────────────────────────
