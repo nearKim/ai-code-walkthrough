@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.toolwindow
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.github.nearkim.aicodewalkthrough.model.TourState
@@ -162,6 +163,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var currentMode: ReviewMode = ReviewMode.UNDERSTAND
     private var selectedStepSnapshot: FlowStep? = null
     private var currentStepFilter: StepFilter = StepFilter.ALL
+    private var recentWalkthroughsPanel: JPanel? = null
 
     // Command history
     private val history = mutableListOf<String>()
@@ -193,6 +195,10 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         refreshTourStepAnswer(answer, loading, errorMessage)
     }
 
+    override fun onRecentWalkthroughsChanged(items: List<RecentWalkthrough>) {
+        refreshInputCard()
+    }
+
     override fun onProgressLine(line: String) {
         loadingStatusLabel?.text = line
         progressLog?.let { log ->
@@ -213,6 +219,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             TourState.INPUT -> {
                 stopElapsedTimer()
                 showErrorBannerIfNeeded()
+                refreshInputCard()
                 cardLayout.show(cardPanel, CARD_INPUT)
             }
             TourState.LOADING -> {
@@ -286,11 +293,22 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
         panel.add(JBScrollPane(questionTextArea!!), BorderLayout.CENTER)
 
-        val bottomPanel = JPanel(BorderLayout())
+        val bottomPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        }
+
+        recentWalkthroughsPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(0, 0, 8, 0)
+            alignmentX = LEFT_ALIGNMENT
+            isVisible = false
+        }
+        bottomPanel.add(recentWalkthroughsPanel)
 
         val suggestionsPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             border = JBUI.Borders.empty(6, 0, 4, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
         val suggestionsTitle = JBLabel("Try asking:").apply {
             font = JBUI.Fonts.smallFont()
@@ -313,14 +331,15 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             chipsPanel.add(createSuggestionChip(suggestion))
         }
         suggestionsPanel.add(chipsPanel)
-        bottomPanel.add(suggestionsPanel, BorderLayout.CENTER)
+        bottomPanel.add(suggestionsPanel)
 
         val quickPanel = JPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(6, 0, 0, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
         quickPanel.add(createContextChipRow(), BorderLayout.CENTER)
         quickPanel.add(createInputActionRow(), BorderLayout.SOUTH)
-        bottomPanel.add(quickPanel, BorderLayout.SOUTH)
+        bottomPanel.add(quickPanel)
 
         panel.add(bottomPanel, BorderLayout.SOUTH)
         return panel
@@ -523,6 +542,85 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun currentEditorQueryContext() =
         project.service<EditorContextService>().currentContext()?.toQueryContext()
+
+    private fun refreshInputCard() {
+        val container = recentWalkthroughsPanel ?: return
+        container.removeAll()
+
+        val items = sessionService.recentWalkthroughs
+        container.isVisible = items.isNotEmpty()
+        if (items.isEmpty()) {
+            container.revalidate()
+            container.repaint()
+            return
+        }
+
+        val title = JBLabel("Recent walkthroughs").apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            alignmentX = LEFT_ALIGNMENT
+        }
+        container.add(title)
+        container.add(Box.createVerticalStrut(JBUI.scale(4)))
+
+        items.forEach { item ->
+            container.add(createRecentWalkthroughRow(item))
+            container.add(Box.createVerticalStrut(JBUI.scale(4)))
+        }
+        container.revalidate()
+        container.repaint()
+    }
+
+    private fun createRecentWalkthroughRow(item: RecentWalkthrough): JPanel {
+        val row = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.border()),
+                JBUI.Borders.empty(6, 8),
+            )
+            alignmentX = LEFT_ALIGNMENT
+        }
+
+        val textPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+        }
+        val title = JBLabel(item.displayTitle.truncateForDisplay(72)).apply {
+            font = JBUI.Fonts.label().asBold()
+            alignmentX = LEFT_ALIGNMENT
+        }
+        val meta = buildList {
+            add(item.mode.displayName)
+            add(item.flowMap.steps.size.toString() + " steps")
+            item.metadata?.fileCount?.let { add("$it files") }
+        }.joinToString("  ·  ")
+        val summary = JBLabel("<html>${escapeHtml(item.flowMap.summary.truncateForDisplay(140))}</html>").apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            alignmentX = LEFT_ALIGNMENT
+        }
+        val metaLabel = JBLabel(meta).apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            alignmentX = LEFT_ALIGNMENT
+        }
+        textPanel.add(title)
+        textPanel.add(metaLabel)
+        textPanel.add(summary)
+
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+        }
+        buttonPanel.add(JButton("Open").apply {
+            addActionListener { sessionService.restoreRecentWalkthrough(item.id) }
+        })
+        buttonPanel.add(JButton("Start Tour").apply {
+            addActionListener { sessionService.restoreRecentWalkthrough(item.id, startTour = true) }
+        })
+
+        row.add(textPanel, BorderLayout.CENTER)
+        row.add(buttonPanel, BorderLayout.EAST)
+        return row
+    }
 
     private fun createSuggestionChip(text: String): JPanel {
         val chip = JPanel(BorderLayout()).apply {
@@ -1842,6 +1940,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun escapeHtml(text: String): String =
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    private fun String.truncateForDisplay(maxChars: Int): String =
+        if (length <= maxChars) this else take(maxChars - 3).trimEnd() + "..."
 
     private class FlowStepCellRenderer : ListCellRenderer<FlowStep> {
         override fun getListCellRendererComponent(

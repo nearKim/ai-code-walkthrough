@@ -8,6 +8,7 @@ import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.FollowUpContext
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
+import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.github.nearkim.aicodewalkthrough.model.TourState
@@ -17,6 +18,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 @Service(Service.Level.PROJECT)
 class TourSessionService(private val project: Project, private val scope: CoroutineScope) {
@@ -26,6 +28,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         fun onProgressLine(line: String) {}
         fun onStepChanged(stepIndex: Int, step: FlowStep) {}
         fun onStepAnswerChanged(answer: StepAnswer?, loading: Boolean, errorMessage: String?) {}
+        fun onRecentWalkthroughsChanged(items: List<RecentWalkthrough>) {}
     }
 
     var state: TourState = TourState.INPUT
@@ -54,8 +57,11 @@ class TourSessionService(private val project: Project, private val scope: Corout
         private set
     var stepAnswerError: String? = null
         private set
+    val recentWalkthroughs: List<RecentWalkthrough>
+        get() = recentWalkthroughHistory.toList()
 
     private val listeners = mutableListOf<TourSessionListener>()
+    private val recentWalkthroughHistory = ArrayDeque<RecentWalkthrough>()
 
     fun addListener(listener: TourSessionListener) {
         listeners.add(listener)
@@ -81,6 +87,13 @@ class TourSessionService(private val project: Project, private val scope: Corout
     private fun notifyStepAnswerChanged() {
         ApplicationManager.getApplication().invokeLater {
             listeners.forEach { it.onStepAnswerChanged(currentStepAnswer, stepAnswerLoading, stepAnswerError) }
+        }
+    }
+
+    private fun notifyRecentWalkthroughsChanged() {
+        val snapshot = recentWalkthroughs
+        ApplicationManager.getApplication().invokeLater {
+            listeners.forEach { it.onRecentWalkthroughsChanged(snapshot) }
         }
     }
 
@@ -265,6 +278,27 @@ class TourSessionService(private val project: Project, private val scope: Corout
         transitionTo(TourState.INPUT)
     }
 
+    fun restoreRecentWalkthrough(id: String, startTour: Boolean = false) {
+        val snapshot = recentWalkthroughHistory.firstOrNull { it.id == id } ?: return
+        project.service<EditorDecorationController>().clearDecorations()
+        currentFlowMap = snapshot.flowMap
+        currentQuestion = snapshot.question
+        currentMode = snapshot.mode
+        currentContext = snapshot.queryContext
+        followUpContext = snapshot.followUpContext
+        clarificationQuestion = null
+        errorMessage = null
+        lastMetadata = snapshot.metadata
+        clearStepAnswer(notify = false)
+        currentStepIndex = -1
+
+        if (startTour) {
+            startTour()
+        } else {
+            transitionTo(TourState.OVERVIEW)
+        }
+    }
+
     fun askAboutCurrentStep(question: String) {
         val step = currentFlowMap?.steps?.getOrNull(currentStepIndex) ?: return
         currentStepAnswer = null
@@ -315,6 +349,14 @@ class TourSessionService(private val project: Project, private val scope: Corout
                                 originalQuestion = previousContext?.originalQuestion ?: currentQuestion ?: "",
                                 previousFlowMap = flowMap,
                                 clarificationHistory = previousContext?.clarificationHistory ?: emptyList(),
+                            )
+                            rememberWalkthrough(
+                                flowMap = flowMap,
+                                question = currentQuestion,
+                                mode = currentMode,
+                                queryContext = currentContext,
+                                followUpContext = followUpContext,
+                                metadata = lastMetadata,
                             )
                             transitionTo(TourState.OVERVIEW)
                         }
@@ -367,6 +409,60 @@ class TourSessionService(private val project: Project, private val scope: Corout
         if (notify) {
             notifyStepAnswerChanged()
         }
+    }
+
+    private fun rememberWalkthrough(
+        flowMap: FlowMap,
+        question: String?,
+        mode: AnalysisMode,
+        queryContext: QueryContext?,
+        followUpContext: FollowUpContext?,
+        metadata: ResponseMetadata?,
+    ) {
+        val normalizedQuestion = question?.trim().orEmpty()
+        if (normalizedQuestion.isEmpty()) return
+
+        recentWalkthroughHistory.removeAll {
+            it.question == normalizedQuestion && it.mode == mode && it.flowMap.summary == flowMap.summary
+        }
+        recentWalkthroughHistory.addFirst(
+            RecentWalkthrough(
+                id = UUID.randomUUID().toString(),
+                displayTitle = summarizeQuestion(normalizedQuestion),
+                question = normalizedQuestion,
+                mode = mode,
+                flowMap = flowMap,
+                queryContext = queryContext,
+                followUpContext = followUpContext,
+                metadata = metadata,
+            ),
+        )
+        while (recentWalkthroughHistory.size > 5) {
+            recentWalkthroughHistory.removeLast()
+        }
+        notifyRecentWalkthroughsChanged()
+    }
+
+    private fun summarizeQuestion(question: String): String {
+        val userRequestMarker = "User request:\n"
+        if (question.contains(userRequestMarker)) {
+            return question.substringAfter(userRequestMarker).trim().ifBlank { "Walkthrough" }
+        }
+
+        val action = question.lineSequence()
+            .firstOrNull { it.startsWith("Action: ") }
+            ?.removePrefix("Action: ")
+            ?.replace('-', ' ')
+            ?.trim()
+        if (!action.isNullOrBlank()) {
+            return action.replaceFirstChar { ch -> ch.uppercase() }
+        }
+
+        return question.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() }
+            ?.take(120)
+            ?: "Walkthrough"
     }
 }
 
