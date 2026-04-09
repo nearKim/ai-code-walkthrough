@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.editor
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
@@ -17,6 +18,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.Color
@@ -32,6 +34,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
     private val activeHighlighters = mutableListOf<RangeHighlighter>()
     private val activeInlays = mutableListOf<Inlay<*>>()
+    private val settings get() = project.service<CodeTourSettings>()
 
     fun showStep(step: FlowStep, stepIndex: Int, totalSteps: Int, nextStep: FlowStep? = null) {
         clearDecorations()
@@ -70,8 +73,9 @@ class EditorDecorationController(private val project: Project) : Disposable {
         activeHighlighters.add(highlighter)
 
         // Step header inlay (higher priority so it appears above any annotation at the same offset)
-        val severity = normalizedSeverity(step)
-        val confidence = normalizedConfidence(step)
+        val reviewBadgesEnabled = settings.state.enableReviewBadges
+        val severity = normalizedSeverity(step).takeIf { reviewBadgesEnabled }
+        val confidence = normalizedConfidence(step).takeIf { reviewBadgesEnabled }
         val stepRenderer = StepInlayRenderer(
             editor = editor,
             stepLabel = "Step ${stepIndex + 1}/$totalSteps \u2014 ${step.title}",

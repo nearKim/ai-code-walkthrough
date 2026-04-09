@@ -78,6 +78,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     TourSessionService.TourSessionListener {
 
     private val sessionService = project.service<TourSessionService>()
+    private val settings get() = project.service<CodeTourSettings>()
     private val cardLayout = CardLayout()
     private val cardPanel = JPanel(cardLayout)
 
@@ -91,6 +92,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     // Loading card components
     private var progressLog: JTextArea? = null
+    private var progressLogScrollPane: JBScrollPane? = null
+    private var loadingStatusLabel: JBLabel? = null
     private var elapsedLabel: JBLabel? = null
     private var loadingStartTime: Long = 0
     private var elapsedTimerThread: Thread? = null
@@ -121,6 +124,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var overviewRiskText: JTextArea? = null
     private var overviewCommentText: JTextArea? = null
     private var overviewTestsText: JTextArea? = null
+    private var commentTabIndex: Int = -1
     private var commentStyleCombo: JComboBox<CommentStyle>? = null
     private var commentTitleLabel: JBLabel? = null
     private var commentStatusLabel: JBLabel? = null
@@ -179,6 +183,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     override fun onProgressLine(line: String) {
+        loadingStatusLabel?.text = line
         progressLog?.let { log ->
             log.append("$line\n")
             log.caretPosition = log.document.length
@@ -192,6 +197,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun showCard(state: TourState) {
+        applyFeatureVisibility()
         when (state) {
             TourState.INPUT -> {
                 stopElapsedTimer()
@@ -201,6 +207,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             TourState.LOADING -> {
                 clearErrorBanner()
                 progressLog?.text = ""
+                loadingStatusLabel?.text = "Waiting for provider progress..."
                 startElapsedTimer()
                 cardLayout.show(cardPanel, CARD_LOADING)
             }
@@ -214,6 +221,24 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 stopElapsedTimer()
                 clearErrorBanner()
                 cardLayout.show(cardPanel, CARD_TOUR_ACTIVE)
+            }
+        }
+    }
+
+    private fun applyFeatureVisibility() {
+        val state = settings.state
+        progressLogScrollPane?.isVisible = state.showRawProgressLog
+        loadingStatusLabel?.isVisible = true
+
+        val commentComposerEnabled = state.enableCommentComposer
+        draftCommentButton?.isVisible = commentComposerEnabled
+        copyCommentButton?.isVisible = commentComposerEnabled
+        commentStyleCombo?.isEnabled = commentComposerEnabled
+        overviewCommentText?.isEditable = commentComposerEnabled
+        if (overviewTabs != null && commentTabIndex in 0 until overviewTabs!!.tabCount) {
+            overviewTabs!!.setEnabledAt(commentTabIndex, commentComposerEnabled)
+            if (!commentComposerEnabled && overviewTabs!!.selectedIndex == commentTabIndex) {
+                overviewTabs!!.selectedIndex = 0
             }
         }
     }
@@ -553,6 +578,13 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         headerPanel.add(elapsedLabel!!, BorderLayout.EAST)
         panel.add(headerPanel, BorderLayout.NORTH)
 
+        loadingStatusLabel = JBLabel("Waiting for provider progress...").apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            border = JBUI.Borders.empty(0, 0, 6, 0)
+        }
+        headerPanel.add(loadingStatusLabel!!, BorderLayout.SOUTH)
+
         // Live progress log
         progressLog = JTextArea().apply {
             isEditable = false
@@ -563,13 +595,13 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             background = UIUtil.getPanelBackground()
             border = JBUI.Borders.empty(4)
         }
-        val logScrollPane = JBScrollPane(progressLog!!).apply {
+        progressLogScrollPane = JBScrollPane(progressLog!!).apply {
             border = BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(JBColor.border()),
                 JBUI.Borders.empty(),
             )
         }
-        panel.add(logScrollPane, BorderLayout.CENTER)
+        panel.add(progressLogScrollPane!!, BorderLayout.CENTER)
 
         // Cancel button
         val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT)).apply {
@@ -979,11 +1011,12 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun updateOverviewSelectionActions(step: FlowStep?) {
         val enabled = step != null && !step.broken
+        val commentComposerEnabled = settings.state.enableCommentComposer
         previewSelectedButton?.isEnabled = enabled
         startTourButton?.isEnabled = enabled
         copyMarkdownButton?.isEnabled = sessionService.currentFlowMap != null
-        draftCommentButton?.isEnabled = enabled
-        copyCommentButton?.isEnabled = enabled && !overviewCommentText?.text.isNullOrBlank()
+        draftCommentButton?.isEnabled = commentComposerEnabled && enabled
+        copyCommentButton?.isEnabled = commentComposerEnabled && enabled && !overviewCommentText?.text.isNullOrBlank()
     }
 
     private fun createOverviewTabsPanel(): JTabbedPane {
@@ -996,6 +1029,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         tabs.addTab("Explain", JBScrollPane(overviewExplainText!!))
         tabs.addTab("Evidence", JBScrollPane(overviewEvidenceText!!))
         tabs.addTab("Risk", JBScrollPane(overviewRiskText!!))
+        commentTabIndex = tabs.tabCount
         tabs.addTab("Comment", createCommentComposerPanel())
         tabs.addTab("Tests", JBScrollPane(overviewTestsText!!))
 
@@ -1090,6 +1124,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun draftCommentForSelection(step: FlowStep? = selectedStepSnapshot, forceRefresh: Boolean = false) {
+        if (!settings.state.enableCommentComposer) return
         if (step == null || step.broken) return
         val commentStyle = commentStyleCombo?.selectedItem as? CommentStyle
         if (forceRefresh || overviewCommentText?.text.isNullOrBlank()) {

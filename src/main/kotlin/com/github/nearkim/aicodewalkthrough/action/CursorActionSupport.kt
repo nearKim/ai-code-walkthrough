@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.action
 
 import com.github.nearkim.aicodewalkthrough.service.TourSessionService
+import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -24,7 +25,10 @@ data class CursorContext(
 object CursorActionSupport {
     private const val TOOL_WINDOW_ID = "Code Tour"
 
+    fun isEnabled(project: Project): Boolean = project.service<CodeTourSettings>().state.enableCursorActions
+
     fun runAnalysis(project: Project, prompt: String) {
+        if (!isEnabled(project)) return
         ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID)?.show()
         project.service<TourSessionService>().startMapping(prompt)
     }

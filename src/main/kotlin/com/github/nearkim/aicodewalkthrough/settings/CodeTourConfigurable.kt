@@ -38,6 +38,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
     private lateinit var maxStepsSpinner: JSpinner
     private lateinit var enableMcpCheckBox: JBCheckBox
     private lateinit var mcpConfigPathField: JBTextField
+    private lateinit var enableCursorActionsCheckBox: JBCheckBox
+    private lateinit var enableReviewBadgesCheckBox: JBCheckBox
+    private lateinit var enableCommentComposerCheckBox: JBCheckBox
+    private lateinit var showRawProgressLogCheckBox: JBCheckBox
     private lateinit var codexPanel: JPanel
     private lateinit var claudeCliPanel: JPanel
     private lateinit var openAiPanel: JPanel
@@ -80,6 +84,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         enableMcpCheckBox.addChangeListener {
             mcpConfigPathField.isEnabled = enableMcpCheckBox.isSelected
         }
+        enableCursorActionsCheckBox = JBCheckBox("Enable editor cursor actions")
+        enableReviewBadgesCheckBox = JBCheckBox("Show severity/confidence review badges in the editor")
+        enableCommentComposerCheckBox = JBCheckBox("Enable comment composer in walkthrough overview")
+        showRawProgressLogCheckBox = JBCheckBox("Show raw provider progress log while mapping")
 
         codexPanel = providerSection(
             FormBuilder.createFormBuilder()
@@ -137,6 +145,11 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
             .addLabeledComponent("Max steps:", maxStepsSpinner)
             .addSeparator()
             .addComponent(providerSettingsPanel)
+            .addSeparator()
+            .addComponent(enableCursorActionsCheckBox)
+            .addComponent(enableReviewBadgesCheckBox)
+            .addComponent(enableCommentComposerCheckBox)
+            .addComponent(showRawProgressLogCheckBox)
             .addComponentFillVertically(JPanel(), 0)
             .panel
 
@@ -156,6 +169,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
             maxStepsSpinner.value as Int != settings.maxSteps ||
             enableMcpCheckBox.isSelected != settings.enableMcp ||
             mcpConfigPathField.text != settings.mcpConfigPath ||
+            enableCursorActionsCheckBox.isSelected != settings.enableCursorActions ||
+            enableReviewBadgesCheckBox.isSelected != settings.enableReviewBadges ||
+            enableCommentComposerCheckBox.isSelected != settings.enableCommentComposer ||
+            showRawProgressLogCheckBox.isSelected != settings.showRawProgressLog ||
             openAiApiKeyField.password.isNotEmpty() ||
             claudeApiKeyField.password.isNotEmpty() ||
             geminiApiKeyField.password.isNotEmpty() ||
@@ -188,6 +205,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
                 maxSteps = maxStepsSpinner.value as Int,
                 enableMcp = enableMcpCheckBox.isSelected,
                 mcpConfigPath = mcpConfigPathField.text.trim(),
+                enableCursorActions = enableCursorActionsCheckBox.isSelected,
+                enableReviewBadges = enableReviewBadgesCheckBox.isSelected,
+                enableCommentComposer = enableCommentComposerCheckBox.isSelected,
+                showRawProgressLog = showRawProgressLogCheckBox.isSelected,
             ),
         )
 
@@ -225,6 +246,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         enableMcpCheckBox.isSelected = settings.enableMcp
         mcpConfigPathField.text = settings.mcpConfigPath
         mcpConfigPathField.isEnabled = settings.enableMcp
+        enableCursorActionsCheckBox.isSelected = settings.enableCursorActions
+        enableReviewBadgesCheckBox.isSelected = settings.enableReviewBadges
+        enableCommentComposerCheckBox.isSelected = settings.enableCommentComposer
+        showRawProgressLogCheckBox.isSelected = settings.showRawProgressLog
         updateStoredKeyStatusLabels(settings)
         refreshProviderSections()
     }

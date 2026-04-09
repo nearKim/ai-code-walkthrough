@@ -22,6 +22,8 @@ class AskAboutCursorAction : AnAction() {
     override fun update(e: AnActionEvent) {
         val project = e.project
         val editor = e.getData(CommonDataKeys.EDITOR)
-        e.presentation.isEnabledAndVisible = project != null && editor != null
+        e.presentation.isEnabledAndVisible = project != null &&
+            editor != null &&
+            CursorActionSupport.isEnabled(project)
     }
 }
