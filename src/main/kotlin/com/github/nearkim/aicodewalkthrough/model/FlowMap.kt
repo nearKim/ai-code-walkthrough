@@ -65,6 +65,7 @@ data class FlowStep(
     @SerialName("comment_drafts") val commentDrafts: List<CommentDraft> = emptyList(),
     @kotlinx.serialization.Transient val broken: Boolean = false,
     @kotlinx.serialization.Transient val breakReason: String? = null,
+    @kotlinx.serialization.Transient val validationNote: String? = null,
 )
 
 @Serializable

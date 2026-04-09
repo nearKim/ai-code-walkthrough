@@ -102,6 +102,7 @@ object FlowMapMarkdownExporter {
             builder.appendLine("- Status: needs repair")
             step.breakReason?.takeIf { it.isNotBlank() }?.let { builder.appendLine("- Repair note: $it") }
         }
+        step.validationNote?.takeIf { it.isNotBlank() }?.let { builder.appendLine("- Grounding note: $it") }
 
         builder.appendLine()
         builder.appendLine(step.explanation)

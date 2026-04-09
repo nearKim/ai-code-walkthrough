@@ -1084,6 +1084,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             detailLines += "Repair note:"
             detailLines += step.breakReason
         }
+        if (step.validationNote != null) {
+            detailLines += ""
+            detailLines += "Grounding note:"
+            detailLines += step.validationNote
+        }
         step.suggestedAction?.takeIf { it.isNotBlank() }?.let {
             detailLines += ""
             detailLines += "Suggested action:"
@@ -1202,6 +1207,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         overviewCommentText?.text = buildCommentDraft(step, commentStyleCombo?.selectedItem as? CommentStyle)
         commentStatusLabel?.text = if (step.broken) {
             "This step needs repair before it can be toured."
+        } else if (step.validationNote != null) {
+            "This step was adjusted during validation; keep the comment grounded to the shown range."
         } else if (step.uncertain) {
             "This step is inferred; the comment draft should stay cautious."
         } else {
@@ -1231,6 +1238,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         appendLine()
         appendLine("Why this step matters:")
         append(step.whyIncluded)
+        step.validationNote?.takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            appendLine()
+            appendLine("Grounding note: $it")
+        }
         if (step.symbol != null) {
             appendLine()
             appendLine()
@@ -1243,6 +1255,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         appendLine("Range: L${step.startLine}-L${step.endLine}")
         step.symbol?.takeIf { it.isNotBlank() }?.let {
             appendLine("Symbol: $it")
+        }
+        step.validationNote?.takeIf { it.isNotBlank() }?.let {
+            appendLine("Grounding note: $it")
         }
         if (step.evidence.isNotEmpty()) {
             appendLine()
@@ -1291,6 +1306,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             return@buildString
         }
         appendLine("Risk signal: ${step.severity ?: if (step.uncertain) "uncertain" else "directly traced"}")
+        step.validationNote?.takeIf { it.isNotBlank() }?.let {
+            appendLine("Grounding note: $it")
+        }
         step.riskType?.takeIf { it.isNotBlank() }?.let {
             appendLine("Risk type: $it")
         }
@@ -1874,6 +1892,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 component.append(value.title, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                 if (value.uncertain) {
                     component.append(" (uncertain)", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+                }
+                if (value.validationNote != null) {
+                    component.append(" [adjusted]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
                 component.append("  ${value.filePath}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }

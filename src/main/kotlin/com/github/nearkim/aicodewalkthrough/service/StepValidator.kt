@@ -23,14 +23,24 @@ class StepValidator(private val projectBasePath: String) {
         val lines = Files.readAllLines(filePath)
         val fileLineCount = lines.size
 
+        val validationNotes = mutableListOf<String>()
+
         if (step.symbol != null) {
             val matchLine = findSymbolLine(lines, step.symbol)
             if (matchLine != null) {
                 val newStartLine = matchLine + 1
                 val symbolEndLine = findSymbolEndLine(lines, matchLine)
                 val newEndLine = (symbolEndLine + 1).coerceAtMost(fileLineCount)
-                return step.copy(startLine = newStartLine, endLine = newEndLine)
+                if (newStartLine != step.startLine || newEndLine != step.endLine) {
+                    validationNotes += "Re-anchored to symbol ${step.symbol} at L$newStartLine-L$newEndLine."
+                }
+                return step.copy(
+                    startLine = newStartLine,
+                    endLine = newEndLine,
+                    validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+                )
             }
+            validationNotes += "Symbol ${step.symbol} was not found in ${step.filePath}; kept the requested line range."
         }
 
         if (step.startLine > fileLineCount && step.endLine > fileLineCount) {
@@ -42,7 +52,18 @@ class StepValidator(private val projectBasePath: String) {
 
         val clampedStart = step.startLine.coerceIn(1, fileLineCount)
         val clampedEnd = step.endLine.coerceIn(clampedStart, fileLineCount)
-        return step.copy(startLine = clampedStart, endLine = clampedEnd)
+        if (clampedStart != step.startLine || clampedEnd != step.endLine) {
+            validationNotes += "Clamped the range to L$clampedStart-L$clampedEnd to fit the file."
+        }
+
+        val validatorDowngradedConfidence = validationNotes.isNotEmpty()
+        return step.copy(
+            startLine = clampedStart,
+            endLine = clampedEnd,
+            uncertain = step.uncertain || validatorDowngradedConfidence,
+            confidence = if (validatorDowngradedConfidence) "uncertain" else step.confidence,
+            validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+        )
     }
 
     private fun findSymbolLine(lines: List<String>, symbol: String): Int? {
@@ -77,9 +98,18 @@ class StepValidator(private val projectBasePath: String) {
     }
 
     private fun deduplicate(steps: List<FlowStep>): List<FlowStep> {
-        val seen = mutableSetOf<Triple<String, Int, Int>>()
-        return steps.filter { step ->
-            seen.add(Triple(step.filePath, step.startLine, step.endLine))
-        }
+        return steps
+            .groupBy { Triple(it.filePath, it.startLine, it.endLine) }
+            .values
+            .map { duplicates ->
+                duplicates.maxWithOrNull(
+                    compareBy<FlowStep> { if (it.broken) 0 else 1 }
+                        .thenBy { if (it.uncertain) 0 else 1 }
+                        .thenBy { if (it.symbol.isNullOrBlank()) 0 else 1 }
+                        .thenBy { it.evidence.size },
+                ) ?: duplicates.first()
+            }
     }
+
+    private fun String.orNullIfBlank(): String? = takeIf { it.isNotBlank() }
 }

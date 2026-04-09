@@ -36,6 +36,7 @@ class FlowMapMarkdownExporterTest {
                     lineAnnotations = listOf(
                         LineAnnotation(startLine = 14, endLine = 14, text = "Normalizes the route")
                     ),
+                    validationNote = "Re-anchored to symbol handleRequest at L12-L30.",
                 )
             ),
         )
@@ -63,6 +64,7 @@ class FlowMapMarkdownExporterTest {
         assertTrue(markdown.contains("- Duration: 2.5s"))
         assertTrue(markdown.contains("- Cost: $0.0312"))
         assertTrue(markdown.contains("- Focus: active step in the IDE"))
+        assertTrue(markdown.contains("- Grounding note: Re-anchored to symbol handleRequest at L12-L30."))
         assertTrue(markdown.contains("Line annotations:"))
         assertTrue(markdown.contains("- L14: Normalizes the route"))
     }
