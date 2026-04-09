@@ -73,6 +73,14 @@ private enum class CommentStyle(val displayName: String, val leadIn: String) {
     APPROVAL("Approval", "Looks good because"),
 }
 
+private enum class StepFilter(val displayName: String) {
+    ALL("All"),
+    FINDINGS("Findings"),
+    UNCERTAIN("Uncertain"),
+    BROKEN("Broken"),
+    TEST_GAPS("Tests"),
+}
+
 class CodeTourPanel(private val project: Project, private val scope: CoroutineScope) :
     JPanel(BorderLayout()),
     TourSessionService.TourSessionListener {
@@ -111,6 +119,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var metadataBar: JPanel? = null
     private var metadataLabel: JBLabel? = null
     private var overviewInsightsLabel: JBLabel? = null
+    private var overviewFilterButtons = mutableMapOf<StepFilter, JToggleButton>()
     private var overviewGlobalNotesText: JTextArea? = null
     private var overviewSelectionTitle: JBLabel? = null
     private var overviewSelectionMeta: JBLabel? = null
@@ -151,6 +160,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var providerCombo: JComboBox<AiProvider>? = null
     private var currentMode: ReviewMode = ReviewMode.UNDERSTAND
     private var selectedStepSnapshot: FlowStep? = null
+    private var currentStepFilter: StepFilter = StepFilter.ALL
 
     // Command history
     private val history = mutableListOf<String>()
@@ -678,6 +688,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             topSection.add(metadataBar!!)
             topSection.add(summaryLabel!!)
             topSection.add(overviewInsightsLabel!!)
+            topSection.add(createOverviewFilterRow())
             topSection.add(overviewGlobalNotesText!!)
             add(topSection, BorderLayout.NORTH)
 
@@ -854,14 +865,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             panel.add(clarificationPanel!!, BorderLayout.CENTER)
         } else if (flowMap != null) {
             summaryLabel!!.text = "<html>${escapeHtml(flowMap.summary)}</html>"
-            stepListModel!!.clear()
-            flowMap.steps.forEach { stepListModel!!.addElement(it) }
 
             updateMetadataBar(sessionService.lastMetadata)
             updateOverviewInsights(flowMap.steps)
             updateOverviewGlobalNotes(flowMap)
-            ensureOverviewSelection()
-            refreshSelectedStepDetails()
+            rebuildOverviewStepList()
 
             panel.removeAll()
             panel.add(overviewContentPanel!!, BorderLayout.CENTER)
@@ -908,6 +916,84 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             parts.add("$brokenCount needs repair")
         }
         overviewInsightsLabel?.text = parts.joinToString("  ·  ")
+    }
+
+    private fun createOverviewFilterRow(): JPanel {
+        val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            border = JBUI.Borders.empty(0, 0, 8, 0)
+        }
+        val group = ButtonGroup()
+        row.add(JBLabel("Filter:").apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+        })
+        StepFilter.entries.forEach { filter ->
+            val button = JToggleButton(filter.displayName).apply {
+                isFocusable = false
+                font = JBUI.Fonts.smallFont()
+                addActionListener { selectStepFilter(filter) }
+            }
+            group.add(button)
+            overviewFilterButtons[filter] = button
+            row.add(button)
+        }
+        selectStepFilter(currentStepFilter, rebuild = false)
+        return row
+    }
+
+    private fun selectStepFilter(filter: StepFilter, rebuild: Boolean = true) {
+        currentStepFilter = filter
+        overviewFilterButtons.forEach { (entryFilter, button) ->
+            button.isSelected = entryFilter == filter
+        }
+        if (rebuild) {
+            rebuildOverviewStepList()
+        }
+    }
+
+    private fun rebuildOverviewStepList() {
+        val flowMap = sessionService.currentFlowMap ?: return
+        val filteredSteps = filterSteps(flowMap)
+        stepListModel?.clear()
+        filteredSteps.forEach { stepListModel?.addElement(it) }
+        updateOverviewFilterLabels(flowMap)
+        ensureOverviewSelection()
+        refreshSelectedStepDetails()
+    }
+
+    private fun filterSteps(flowMap: FlowMap): List<FlowStep> {
+        return flowMap.steps.filter { step ->
+            when (currentStepFilter) {
+                StepFilter.ALL -> true
+                StepFilter.FINDINGS -> step.broken ||
+                    step.severity?.let { it.equals("high", true) || it.equals("medium", true) } == true ||
+                    step.evidence.isNotEmpty() ||
+                    !step.testGap.isNullOrBlank() ||
+                    !step.suggestedAction.isNullOrBlank()
+                StepFilter.UNCERTAIN -> step.uncertain
+                StepFilter.BROKEN -> step.broken
+                StepFilter.TEST_GAPS -> !step.testGap.isNullOrBlank()
+            }
+        }
+    }
+
+    private fun updateOverviewFilterLabels(flowMap: FlowMap) {
+        val counts = mapOf(
+            StepFilter.ALL to flowMap.steps.size,
+            StepFilter.FINDINGS to flowMap.steps.count { step ->
+                step.broken ||
+                    step.severity?.let { it.equals("high", true) || it.equals("medium", true) } == true ||
+                    step.evidence.isNotEmpty() ||
+                    !step.testGap.isNullOrBlank() ||
+                    !step.suggestedAction.isNullOrBlank()
+            },
+            StepFilter.UNCERTAIN to flowMap.steps.count { it.uncertain },
+            StepFilter.BROKEN to flowMap.steps.count { it.broken },
+            StepFilter.TEST_GAPS to flowMap.steps.count { !it.testGap.isNullOrBlank() },
+        )
+        overviewFilterButtons.forEach { (filter, button) ->
+            button.text = "${filter.displayName} (${counts[filter] ?: 0})"
+        }
     }
 
     private fun updateOverviewGlobalNotes(flowMap: FlowMap) {
@@ -1362,12 +1448,17 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private fun selectedStepIndex(): Int? =
         stepList?.selectedIndex?.takeIf { it >= 0 }
 
+    private fun selectedStepOriginalIndex(): Int? {
+        val selected = selectedStepSnapshot ?: return null
+        return sessionService.currentFlowMap?.steps?.indexOfFirst { it.id == selected.id }?.takeIf { it >= 0 }
+    }
+
     private fun previewSelectedStep() {
-        selectedStepIndex()?.let { sessionService.previewStep(it) }
+        selectedStepOriginalIndex()?.let { sessionService.previewStep(it) }
     }
 
     private fun startTourFromSelection() {
-        selectedStepIndex()?.let { sessionService.startTour(it) }
+        selectedStepOriginalIndex()?.let { sessionService.startTour(it) }
     }
 
     private fun copyFlowMapMarkdown() {
