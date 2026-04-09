@@ -1952,40 +1952,70 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             isSelected: Boolean,
             cellHasFocus: Boolean,
         ): java.awt.Component {
-            val component = SimpleColoredComponent()
-            component.ipad = JBUI.insets(4)
-            component.isOpaque = true
+            val title = SimpleColoredComponent().apply {
+                ipad = JBUI.insets(0, 0, 2, 0)
+                isOpaque = false
+            }
+            val metaLabel = JBLabel(buildMetaText(value)).apply {
+                font = JBUI.Fonts.smallFont()
+            }
+            val panel = JPanel(BorderLayout()).apply {
+                border = JBUI.Borders.empty(4, 6)
+                isOpaque = true
+            }
 
             if (isSelected) {
-                component.background = list.selectionBackground
-                component.foreground = list.selectionForeground
+                panel.background = list.selectionBackground
+                title.foreground = list.selectionForeground
+                metaLabel.foreground = list.selectionForeground
             } else {
-                component.background = list.background
-                component.foreground = list.foreground
+                panel.background = list.background
+                title.foreground = list.foreground
+                metaLabel.foreground = UIUtil.getLabelDisabledForeground()
             }
 
             val stepNumber = "${index + 1}. "
             if (value.broken) {
-                component.append(stepNumber, SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                component.append(
+                title.append(stepNumber, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                title.append(
                     value.title,
                     SimpleTextAttributes(SimpleTextAttributes.STYLE_STRIKEOUT, UIUtil.getLabelDisabledForeground()),
                 )
-                component.append("  ${value.filePath}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                title.append("  needs repair", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             } else {
-                component.append(stepNumber, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                component.append(value.title, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                title.append(stepNumber, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                title.append(value.title, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                 if (value.uncertain) {
-                    component.append(" (uncertain)", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+                    title.append(" (uncertain)", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
                 }
                 if (value.validationNote != null) {
-                    component.append(" [adjusted]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    title.append(" [adjusted]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
-                component.append("  ${value.filePath}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
 
-            return component
+            panel.add(title, BorderLayout.NORTH)
+            panel.add(metaLabel, BorderLayout.SOUTH)
+            return panel
         }
+
+        private fun buildMetaText(step: FlowStep): String = buildList {
+            add(step.filePath)
+            add("L${step.startLine}-L${step.endLine}")
+            step.severity?.takeIf { it.isNotBlank() }?.let { add("severity: $it") }
+            (step.confidence?.takeIf { it.isNotBlank() } ?: if (step.uncertain) "uncertain" else null)?.let {
+                add("confidence: $it")
+            }
+            step.riskType?.takeIf { it.isNotBlank() }?.let { add("risk: $it") }
+            if (step.evidence.isNotEmpty()) {
+                add("evidence: ${step.evidence.size}")
+            }
+            if (!step.testGap.isNullOrBlank()) {
+                add("test gap")
+            }
+            if (!step.suggestedAction.isNullOrBlank()) {
+                add("action")
+            }
+        }.joinToString("  ·  ").ifBlank { step.filePath }
     }
 
     // ── Command History ──────────────────────────────────────────────────
