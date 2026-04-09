@@ -614,7 +614,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         buttonPanel.add(JButton("Open").apply {
             addActionListener { sessionService.restoreRecentWalkthrough(item.id) }
         })
-        buttonPanel.add(JButton("Start Tour").apply {
+        val startLabel = if (item.followUpContext?.activeStepId != null) "Resume Tour" else "Start Tour"
+        buttonPanel.add(JButton(startLabel).apply {
             addActionListener { sessionService.restoreRecentWalkthrough(item.id, startTour = true) }
         })
 

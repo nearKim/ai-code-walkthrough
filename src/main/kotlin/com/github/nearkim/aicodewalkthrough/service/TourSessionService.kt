@@ -62,6 +62,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
     private val listeners = mutableListOf<TourSessionListener>()
     private val recentWalkthroughHistory = ArrayDeque<RecentWalkthrough>()
+    private var currentRecentWalkthroughId: String? = null
 
     fun addListener(listener: TourSessionListener) {
         listeners.add(listener)
@@ -181,6 +182,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         mode: AnalysisMode = AnalysisMode.UNDERSTAND,
         queryContext: QueryContext? = null,
     ) {
+        currentRecentWalkthroughId = null
         currentQuestion = question
         currentMode = mode
         currentContext = queryContext
@@ -204,6 +206,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         mode: AnalysisMode = currentMode,
         queryContext: QueryContext? = currentContext,
     ) {
+        currentRecentWalkthroughId = null
         currentQuestion = question
         currentMode = mode
         currentContext = queryContext
@@ -266,6 +269,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
     fun reset() {
         project.service<EditorDecorationController>().clearDecorations()
+        currentRecentWalkthroughId = null
         currentFlowMap = null
         currentQuestion = null
         currentMode = AnalysisMode.UNDERSTAND
@@ -281,6 +285,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
     fun restoreRecentWalkthrough(id: String, startTour: Boolean = false) {
         val snapshot = recentWalkthroughHistory.firstOrNull { it.id == id } ?: return
         project.service<EditorDecorationController>().clearDecorations()
+        currentRecentWalkthroughId = snapshot.id
         currentFlowMap = snapshot.flowMap
         currentQuestion = snapshot.question
         currentMode = snapshot.mode
@@ -293,7 +298,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         currentStepIndex = -1
 
         if (startTour) {
-            startTour()
+            startTour(resolveRecentStartIndex(snapshot))
         } else {
             transitionTo(TourState.OVERVIEW)
         }
@@ -380,6 +385,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
     private fun updateActiveStepContext(stepId: String?) {
         followUpContext = followUpContext?.copy(activeStepId = stepId)
+        syncCurrentRecentWalkthrough()
     }
 
     private fun findNextNavigableStepIndex(startIndex: Int): Int? {
@@ -437,9 +443,24 @@ class TourSessionService(private val project: Project, private val scope: Corout
                 metadata = metadata,
             ),
         )
+        currentRecentWalkthroughId = recentWalkthroughHistory.firstOrNull()?.id
         while (recentWalkthroughHistory.size > 5) {
             recentWalkthroughHistory.removeLast()
         }
+        notifyRecentWalkthroughsChanged()
+    }
+
+    private fun resolveRecentStartIndex(snapshot: RecentWalkthrough): Int {
+        val activeStepId = snapshot.followUpContext?.activeStepId ?: return 0
+        return snapshot.flowMap.steps.indexOfFirst { it.id == activeStepId }.takeIf { it >= 0 } ?: 0
+    }
+
+    private fun syncCurrentRecentWalkthrough() {
+        val recentId = currentRecentWalkthroughId ?: return
+        val index = recentWalkthroughHistory.indexOfFirst { it.id == recentId }
+        if (index < 0) return
+        val existing = recentWalkthroughHistory.removeAt(index)
+        recentWalkthroughHistory.add(index, existing.copy(followUpContext = followUpContext))
         notifyRecentWalkthroughsChanged()
     }
 
