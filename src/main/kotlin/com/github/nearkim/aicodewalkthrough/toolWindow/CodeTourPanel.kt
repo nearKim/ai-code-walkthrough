@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.toolwindow
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
@@ -1579,6 +1580,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         submitFieldText(followUpField) { text ->
             sessionService.submitFollowUp(
                 buildPromptWithContext(text, currentMode, selectedStepContext()),
+                queryContext = selectedOverviewQueryContext(),
             )
         }
     }
@@ -1604,6 +1606,20 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             appendLine("Explanation: ${step.explanation}")
             appendLine("Why included: ${step.whyIncluded}")
         }.trim()
+    }
+
+    private fun selectedOverviewQueryContext(): QueryContext? {
+        val step = selectedStepSnapshot
+        return if (step != null) {
+            QueryContext(
+                filePath = step.filePath,
+                symbol = step.symbol,
+                selectionStartLine = step.startLine,
+                selectionEndLine = step.endLine,
+            )
+        } else {
+            currentEditorQueryContext()
+        }
     }
 
     private fun submitFieldText(field: JBTextField?, onSubmit: (String) -> Unit) {
