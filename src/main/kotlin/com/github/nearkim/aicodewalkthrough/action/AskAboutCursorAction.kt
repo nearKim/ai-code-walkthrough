@@ -16,6 +16,7 @@ class AskAboutCursorAction : AnAction() {
         CursorActionSupport.runAnalysis(
             project = project,
             prompt = CursorActionSupport.buildCursorQuestionPrompt(context),
+            context = context,
         )
     }
 

@@ -16,6 +16,7 @@ class ComposeCommentFromCursorAction : AnAction() {
         CursorActionSupport.runAnalysis(
             project = project,
             prompt = CursorActionSupport.buildCommentPrompt(context),
+            context = context,
         )
     }
 

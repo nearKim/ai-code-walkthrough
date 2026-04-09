@@ -16,6 +16,7 @@ class ReviewCurrentFileAction : AnAction() {
         CursorActionSupport.runAnalysis(
             project = project,
             prompt = CursorActionSupport.buildReviewPrompt(context),
+            context = context,
         )
     }
 

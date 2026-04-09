@@ -19,6 +19,7 @@
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.OpenAiApiService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.ClaudeApiService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.GeminiApiService"/>
+        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.EditorContextService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.LlmProviderService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.FlowPlannerService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.TourSessionService"/>

@@ -6,6 +6,8 @@ import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.github.nearkim.aicodewalkthrough.model.TourState
+import com.github.nearkim.aicodewalkthrough.service.EditorContextFormatter
+import com.github.nearkim.aicodewalkthrough.service.EditorContextService
 import com.github.nearkim.aicodewalkthrough.service.LlmProviderService
 import com.github.nearkim.aicodewalkthrough.service.TourSessionService
 import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
@@ -13,7 +15,6 @@ import com.github.nearkim.aicodewalkthrough.util.FlowMapMarkdownExporter
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.components.service
 import com.intellij.openapi.ide.CopyPasteManager
-import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.AnimatedIcon
@@ -484,7 +485,10 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         val question = questionTextArea?.text?.trim().orEmpty()
         if (question.isEmpty()) return
         addToHistory(question)
-        sessionService.startMapping(buildPromptWithContext(question, currentMode))
+        sessionService.startMapping(
+            question = buildPromptWithContext(question, currentMode),
+            queryContext = currentEditorQueryContext(),
+        )
     }
 
     private fun buildPromptWithContext(
@@ -513,32 +517,12 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun collectEditorContext(): String {
-        val basePath = project.basePath
-        val editorManager = FileEditorManager.getInstance(project)
-        val selectedFile = editorManager.selectedFiles.firstOrNull()
-        val editor = editorManager.selectedTextEditor
-        val parts = mutableListOf<String>()
-
-        selectedFile?.let { file ->
-            val relativePath = when {
-                basePath.isNullOrBlank() -> file.path
-                file.path.startsWith(basePath) -> file.path.removePrefix(basePath).trimStart('/', '\\')
-                else -> file.path
-            }
-            parts.add("Current file: $relativePath")
-        }
-
-        editor?.let {
-            val selection = it.selectionModel.selectedText?.trim().orEmpty()
-            if (selection.isNotBlank()) {
-                parts.add("Selected text:\n$selection")
-            }
-            val caretLine = it.caretModel.logicalPosition.line + 1
-            parts.add("Caret line: $caretLine")
-        }
-
-        return parts.joinToString("\n")
+        val context = project.service<EditorContextService>().currentContext() ?: return ""
+        return EditorContextFormatter.toPanelText(context)
     }
+
+    private fun currentEditorQueryContext() =
+        project.service<EditorContextService>().currentContext()?.toQueryContext()
 
     private fun createSuggestionChip(text: String): JPanel {
         val chip = JPanel(BorderLayout()).apply {
