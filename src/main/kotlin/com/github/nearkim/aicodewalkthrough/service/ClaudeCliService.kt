@@ -22,6 +22,11 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
     private val settings get() = project.service<CodeTourSettings>()
     private val json = Json { ignoreUnknownKeys = true }
     override val provider: AiProvider = AiProvider.CLAUDE_CLI
+    override val capabilities: ProviderCapabilities = ProviderCapabilities(
+        supportsRepoGroundedWalkthrough = true,
+        supportsSemanticNavigationHints = true,
+        supportsDelegatedAnalysisHints = true,
+    )
 
     @Volatile
     private var activeProcess: Process? = null
@@ -168,6 +173,11 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
             "Write", "Edit" -> {
                 val filePath = input["file_path"]?.jsonPrimitive?.content ?: return "$name..."
                 "$name $filePath"
+            }
+            "find_symbol", "get_symbols_overview", "find_referencing_symbols" -> {
+                val symbol = input["name_path"]?.jsonPrimitive?.content
+                val filePath = input["relative_path"]?.jsonPrimitive?.content
+                listOfNotNull(name, symbol, filePath).joinToString(" ")
             }
             else -> name
         }

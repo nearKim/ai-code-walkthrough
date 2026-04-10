@@ -6,6 +6,7 @@ import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
+import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.github.nearkim.aicodewalkthrough.model.TourState
 import com.github.nearkim.aicodewalkthrough.service.EditorContextFormatter
@@ -383,7 +384,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         providerPanel.add(JBLabel("Provider:"))
         providerCombo = JComboBox(AiProvider.entries.toTypedArray()).apply {
             selectedItem = project.service<CodeTourSettings>().state.provider
-            toolTipText = "Select which AI provider maps the walkthrough"
+            toolTipText = "Select which AI provider maps the walkthrough. CLI providers are required for grounded repo analysis."
             addActionListener {
                 val selected = selectedItem as? AiProvider ?: return@addActionListener
                 project.service<CodeTourSettings>().state.providerId = selected.id
@@ -1083,11 +1084,44 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun updateOverviewGlobalNotes(flowMap: FlowMap) {
         val sections = buildList {
+            val entryStepTitle = flowMap.steps.firstOrNull { it.id == flowMap.entryStepId }?.title
+            val terminalStepTitles = flowMap.terminalStepIds.mapNotNull { terminalId ->
+                flowMap.steps.firstOrNull { it.id == terminalId }?.title
+            }
+            val pathOverview = buildList {
+                flowMap.entryStepId?.let { entryId ->
+                    add("Entrypoint: ${entryStepTitle ?: entryId}")
+                }
+                if (terminalStepTitles.isNotEmpty()) {
+                    add("Path ends at: ${terminalStepTitles.joinToString(", ")}")
+                }
+                if (flowMap.edges.isNotEmpty()) {
+                    add("Validated hops: ${flowMap.edges.size}")
+                }
+            }.joinToString("\n")
+            if (pathOverview.isNotBlank()) {
+                add("Execution path:\n$pathOverview")
+            }
             flowMap.reviewSummary?.takeIf { it.isNotBlank() }?.let {
                 add("Review summary:\n$it")
             }
             flowMap.overallRisk?.takeIf { it.isNotBlank() }?.let {
                 add("Overall risk:\n$it")
+            }
+            flowMap.analysisTrace?.let { trace ->
+                val traceLines = buildList {
+                    trace.entrypointReason?.takeIf { it.isNotBlank() }?.let { add("Entrypoint reason: $it") }
+                    trace.pathEndReason?.takeIf { it.isNotBlank() }?.let { add("Path end reason: $it") }
+                    if (trace.semanticToolsUsed.isNotEmpty()) {
+                        add("Semantic tools: ${trace.semanticToolsUsed.joinToString(", ")}")
+                    }
+                    if (trace.delegatedAgents.isNotEmpty()) {
+                        add("Delegated analysis: ${trace.delegatedAgents.joinToString(" | ")}")
+                    }
+                }
+                if (traceLines.isNotEmpty()) {
+                    add("Grounding trace:\n${traceLines.joinToString("\n")}")
+                }
             }
             if (flowMap.suggestedTests.isNotEmpty()) {
                 val suggested = flowMap.suggestedTests.joinToString("\n") { test ->
@@ -1141,17 +1175,30 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             "L${step.startLine}-L${step.endLine}",
         )
         step.symbol?.takeIf { it.isNotBlank() }?.let { metaParts.add(it) }
+        step.stepType?.takeIf { it.isNotBlank() }?.let { metaParts.add("type: $it") }
+        step.importance?.takeIf { it.isNotBlank() }?.let { metaParts.add("importance: $it") }
         step.severity?.takeIf { it.isNotBlank() }?.let { metaParts.add("severity: $it") }
         (step.confidence?.takeIf { it.isNotBlank() } ?: if (step.uncertain) "uncertain" else null)?.let {
             metaParts.add("confidence: $it")
         }
         step.riskType?.takeIf { it.isNotBlank() }?.let { metaParts.add("risk: $it") }
+        if (sessionService.isEntryStep(step.id)) {
+            metaParts.add("entrypoint")
+        }
+        if (sessionService.isTerminalStep(step.id)) {
+            metaParts.add("terminal")
+        }
         overviewSelectionMeta?.text = metaParts.joinToString("  ·  ")
 
         val detailLines = mutableListOf(step.explanation)
         detailLines += ""
         detailLines += "Why this step matters:"
         detailLines += step.whyIncluded
+        buildHopSummary(step)?.let { hopSummary ->
+            detailLines += ""
+            detailLines += "Path grounding:"
+            detailLines += hopSummary
+        }
         if (step.lineAnnotations.isNotEmpty()) {
             detailLines += ""
             detailLines += "Annotations:"
@@ -1323,6 +1370,17 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         appendLine()
         appendLine("Why this step matters:")
         append(step.whyIncluded)
+        val roleLine = buildList {
+            step.stepType?.takeIf { it.isNotBlank() }?.let { add("type: $it") }
+            step.importance?.takeIf { it.isNotBlank() }?.let { add("importance: $it") }
+            if (sessionService.isEntryStep(step.id)) add("entrypoint")
+            if (sessionService.isTerminalStep(step.id)) add("terminal")
+        }.joinToString("  ·  ")
+        if (roleLine.isNotBlank()) {
+            appendLine()
+            appendLine()
+            appendLine("Path role: $roleLine")
+        }
         step.validationNote?.takeIf { it.isNotBlank() }?.let {
             appendLine()
             appendLine()
@@ -1343,6 +1401,14 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
         step.validationNote?.takeIf { it.isNotBlank() }?.let {
             appendLine("Grounding note: $it")
+        }
+        val incoming = sessionService.incomingHops(step.id)
+        val outgoing = sessionService.outgoingHops(step.id)
+        if (incoming.isNotEmpty() || outgoing.isNotEmpty()) {
+            appendLine()
+            appendLine("Path hops:")
+            incoming.forEach { edge -> appendLine("- From: ${formatHop(edge, showTarget = false)}") }
+            outgoing.forEach { edge -> appendLine("- To: ${formatHop(edge, showTarget = true)}") }
         }
         if (step.evidence.isNotEmpty()) {
             appendLine()
@@ -1400,6 +1466,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         step.confidence?.takeIf { it.isNotBlank() }?.let {
             appendLine("Confidence: $it")
         }
+        buildHopSummary(step)?.let {
+            appendLine()
+            appendLine("Path grounding:")
+            appendLine(it)
+        }
         appendLine()
         appendLine("Why this is in the tour:")
         appendLine(step.whyIncluded)
@@ -1443,6 +1514,49 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 val hint = test.fileHint?.takeIf { it.isNotBlank() }?.let { " (${it})" }.orEmpty()
                 appendLine("- ${test.title}$hint: ${test.description}")
             }
+        }
+    }
+
+    private fun buildHopSummary(step: FlowStep): String? {
+        val incoming = sessionService.incomingHops(step.id)
+        val preferredOutgoing = sessionService.preferredNextHop(step.id, visitedStepIds = emptySet())
+        val summaryLines = buildList {
+            if (incoming.isEmpty() && sessionService.isEntryStep(step.id)) {
+                add("This is the grounded entrypoint for the traced path.")
+            } else {
+                incoming.firstOrNull()?.let { add("Arrives from ${formatHop(it, showTarget = false)}") }
+            }
+            preferredOutgoing?.let { add("Next important hop is ${formatHop(it, showTarget = true)}") }
+            if (preferredOutgoing == null && sessionService.isTerminalStep(step.id)) {
+                add("The validated path terminates at this step.")
+            }
+        }
+        return summaryLines.joinToString("\n").takeIf { it.isNotBlank() }
+    }
+
+    private fun formatHop(edge: StepEdge, showTarget: Boolean): String {
+        val flowMap = sessionService.currentFlowMap
+        val peerStepId = if (showTarget) edge.toStepId else edge.fromStepId
+        val peerTitle = flowMap?.steps?.firstOrNull { it.id == peerStepId }?.title ?: peerStepId
+        val callSite = edge.callSiteStartLine?.let { start ->
+            val lineRange = if (edge.callSiteEndLine != null && edge.callSiteEndLine != start) {
+                "L$start-L${edge.callSiteEndLine}"
+            } else {
+                "L$start"
+            }
+            listOfNotNull(edge.callSiteFilePath, lineRange).joinToString(":")
+        }
+        val details = buildList {
+            edge.kind.takeIf { it.isNotBlank() }?.let { add(it) }
+            edge.importance?.takeIf { it.isNotBlank() }?.let { add("importance: $it") }
+            callSite?.takeIf { it.isNotBlank() }?.let { add(it) }
+            edge.callSiteLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
+            if (edge.uncertain) add("uncertain")
+        }.joinToString("  ·  ")
+        return if (details.isNotBlank()) {
+            "$peerTitle ($details)"
+        } else {
+            peerTitle
         }
     }
 
@@ -1603,8 +1717,18 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             step.symbol?.takeIf { it.isNotBlank() }?.let {
                 appendLine("Symbol: $it")
             }
+            step.stepType?.takeIf { it.isNotBlank() }?.let {
+                appendLine("Type: $it")
+            }
+            step.importance?.takeIf { it.isNotBlank() }?.let {
+                appendLine("Importance: $it")
+            }
             appendLine("Explanation: ${step.explanation}")
             appendLine("Why included: ${step.whyIncluded}")
+            buildHopSummary(step)?.let {
+                appendLine("Path grounding:")
+                appendLine(it)
+            }
         }.trim()
     }
 
@@ -1790,9 +1914,18 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private fun refreshTourActiveCard(stepIndex: Int, step: FlowStep) {
         val totalSteps = sessionService.currentFlowMap?.steps?.size ?: 0
         tourStepHeader?.text = "Step ${stepIndex + 1}/$totalSteps \u2014 ${step.title}"
-        tourStepFilePath?.text = step.filePath
+        tourStepFilePath?.text = buildList {
+            add(step.filePath)
+            step.stepType?.takeIf { it.isNotBlank() }?.let { add("type: $it") }
+            step.importance?.takeIf { it.isNotBlank() }?.let { add("importance: $it") }
+            if (sessionService.isEntryStep(step.id)) add("entrypoint")
+            if (sessionService.isTerminalStep(step.id)) add("terminal")
+        }.joinToString("  ·  ")
         tourStepExplanation?.text = step.explanation
-        tourWhyText?.text = step.whyIncluded
+        tourWhyText?.text = listOfNotNull(
+            step.whyIncluded,
+            buildHopSummary(step)?.let { "\nPath grounding:\n$it" },
+        ).joinToString("\n")
         tourWhySection?.isVisible = false
         tourUncertainLabel?.isVisible = step.uncertain
         tourFollowUpField?.toolTipText = "Ask a follow-up about ${step.title}"
@@ -1914,20 +2047,31 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         scope.launch {
             val status = project.service<LlmProviderService>().checkAvailability()
             javax.swing.SwingUtilities.invokeLater {
-                if (status.available) {
-                    statusDot?.icon = AllIcons.General.InspectionsOK
-                    statusDot?.text = status.message
-                    statusDot?.foreground = JBColor.namedColor(
-                        "Label.successForeground",
-                        JBColor(0x3D8F58, 0x499C54),
-                    )
-                } else {
-                    statusDot?.icon = AllIcons.General.Error
-                    statusDot?.text = status.message
-                    statusDot?.foreground = JBColor.namedColor(
-                        "Label.errorForeground",
-                        JBColor.RED,
-                    )
+                when {
+                    status.available && status.walkthroughSupported -> {
+                        statusDot?.icon = AllIcons.General.InspectionsOK
+                        statusDot?.text = status.message
+                        statusDot?.foreground = JBColor.namedColor(
+                            "Label.successForeground",
+                            JBColor(0x3D8F58, 0x499C54),
+                        )
+                    }
+                    status.available -> {
+                        statusDot?.icon = AllIcons.General.WarningDialog
+                        statusDot?.text = status.message
+                        statusDot?.foreground = JBColor.namedColor(
+                            "Label.warningForeground",
+                            JBColor(0xA36A00, 0xD8A657),
+                        )
+                    }
+                    else -> {
+                        statusDot?.icon = AllIcons.General.Error
+                        statusDot?.text = status.message
+                        statusDot?.foreground = JBColor.namedColor(
+                            "Label.errorForeground",
+                            JBColor.RED,
+                        )
+                    }
                 }
             }
         }

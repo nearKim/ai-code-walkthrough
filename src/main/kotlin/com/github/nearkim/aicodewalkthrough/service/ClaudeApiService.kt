@@ -18,6 +18,9 @@ import java.time.Duration
 class ClaudeApiService(project: Project) : JsonHttpProviderSupport(project) {
 
     override val provider: AiProvider = AiProvider.CLAUDE_API
+    override val capabilities: ProviderCapabilities = ProviderCapabilities(
+        supportsRepoGroundedWalkthrough = false,
+    )
 
     override suspend fun query(
         prompt: String,

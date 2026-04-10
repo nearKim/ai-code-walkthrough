@@ -8,6 +8,8 @@ object FlowStepMetaFormatter {
         buildList {
             add(step.filePath)
             add("L${step.startLine}-L${step.endLine}")
+            step.stepType?.takeIf { it.isNotBlank() }?.let { add("type: $it") }
+            step.importance?.takeIf { it.isNotBlank() }?.let { add("importance: $it") }
             step.severity?.takeIf { it.isNotBlank() }?.let { add("severity: $it") }
             (step.confidence?.takeIf { it.isNotBlank() } ?: if (step.uncertain) "uncertain" else null)?.let {
                 add("confidence: $it")

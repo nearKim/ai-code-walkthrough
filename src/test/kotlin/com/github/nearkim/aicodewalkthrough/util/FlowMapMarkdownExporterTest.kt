@@ -1,9 +1,11 @@
 package com.github.nearkim.aicodewalkthrough.util
 
+import com.github.nearkim.aicodewalkthrough.model.AnalysisTrace
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
+import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.github.nearkim.aicodewalkthrough.model.SuggestedTest
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -14,8 +16,30 @@ class FlowMapMarkdownExporterTest {
     fun `build includes question metadata and active step`() {
         val flowMap = FlowMap(
             summary = "Entry point delegates into a service.",
+            entryStepId = "step-1",
+            terminalStepIds = listOf("step-1"),
+            edges = listOf(
+                StepEdge(
+                    id = "edge-1",
+                    fromStepId = "step-1",
+                    toStepId = "step-1",
+                    kind = "return",
+                    rationale = "The walkthrough terminates at the handler for this simple example.",
+                    callSiteFilePath = "src/App.kt",
+                    callSiteStartLine = 28,
+                    callSiteEndLine = 28,
+                    callSiteLabel = "returns response",
+                    uncertain = true,
+                ),
+            ),
             reviewSummary = "The handler is straightforward but worth testing around route normalization.",
             overallRisk = "Low risk unless normalization changes request semantics.",
+            analysisTrace = AnalysisTrace(
+                entrypointReason = "The request first enters the app through handleRequest.",
+                pathEndReason = "No further internal hop is needed after the response is produced.",
+                semanticToolsUsed = listOf("find_symbol", "find_referencing_symbols"),
+                delegatedAgents = listOf("symbol-resolution worker"),
+            ),
             suggestedTests = listOf(
                 SuggestedTest(
                     title = "route normalization preserves canonical paths",
@@ -59,11 +83,19 @@ class FlowMapMarkdownExporterTest {
         assertTrue(markdown.contains("How does request handling work?"))
         assertTrue(markdown.contains("## Review Summary"))
         assertTrue(markdown.contains("## Overall Risk"))
+        assertTrue(markdown.contains("## Execution Path"))
+        assertTrue(markdown.contains("- Entrypoint: Parse request"))
+        assertTrue(markdown.contains("- Path ends at: Parse request"))
+        assertTrue(markdown.contains("## Grounding Trace"))
+        assertTrue(markdown.contains("- Semantic tools: find_symbol, find_referencing_symbols"))
         assertTrue(markdown.contains("## Suggested Tests"))
         assertTrue(markdown.contains("route normalization preserves canonical paths"))
         assertTrue(markdown.contains("- Duration: 2.5s"))
         assertTrue(markdown.contains("- Cost: $0.0312"))
         assertTrue(markdown.contains("- Focus: active step in the IDE"))
+        assertTrue(markdown.contains("- Path role: entrypoint"))
+        assertTrue(markdown.contains("- Path role: terminal"))
+        assertTrue(markdown.contains("Path hops:"))
         assertTrue(markdown.contains("- Grounding note: Re-anchored to symbol handleRequest at L12-L30."))
         assertTrue(markdown.contains("Line annotations:"))
         assertTrue(markdown.contains("- L14: Normalizes the route"))

@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.util
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
+import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import java.util.Locale
 
 object FlowMapMarkdownExporter {
@@ -27,6 +28,23 @@ object FlowMapMarkdownExporter {
         builder.appendLine("## Summary")
         builder.appendLine()
         builder.appendLine(flowMap.summary)
+
+        val entryTitle = flowMap.steps.firstOrNull { it.id == flowMap.entryStepId }?.title
+        val terminalTitles = flowMap.terminalStepIds.mapNotNull { terminalId ->
+            flowMap.steps.firstOrNull { it.id == terminalId }?.title
+        }
+        if (flowMap.entryStepId != null || terminalTitles.isNotEmpty() || flowMap.edges.isNotEmpty()) {
+            builder.appendLine()
+            builder.appendLine("## Execution Path")
+            builder.appendLine()
+            flowMap.entryStepId?.let { builder.appendLine("- Entrypoint: ${entryTitle ?: it}") }
+            if (terminalTitles.isNotEmpty()) {
+                builder.appendLine("- Path ends at: ${terminalTitles.joinToString(", ")}")
+            }
+            if (flowMap.edges.isNotEmpty()) {
+                builder.appendLine("- Validated hops: ${flowMap.edges.size}")
+            }
+        }
 
         flowMap.reviewSummary?.takeIf { it.isNotBlank() }?.let {
             builder.appendLine()
@@ -63,12 +81,32 @@ object FlowMapMarkdownExporter {
             }
         }
 
+        flowMap.analysisTrace?.let { trace ->
+            val traceLines = buildList {
+                trace.entrypointReason?.takeIf { it.isNotBlank() }?.let { add("- Entrypoint reason: $it") }
+                trace.pathEndReason?.takeIf { it.isNotBlank() }?.let { add("- Path end reason: $it") }
+                if (trace.semanticToolsUsed.isNotEmpty()) {
+                    add("- Semantic tools: ${trace.semanticToolsUsed.joinToString(", ")}")
+                }
+                if (trace.delegatedAgents.isNotEmpty()) {
+                    add("- Delegated analysis: ${trace.delegatedAgents.joinToString(" | ")}")
+                }
+            }
+            if (traceLines.isNotEmpty()) {
+                builder.appendLine()
+                builder.appendLine("## Grounding Trace")
+                builder.appendLine()
+                traceLines.forEach(builder::appendLine)
+            }
+        }
+
         builder.appendLine()
         builder.appendLine("## Steps")
 
         flowMap.steps.forEachIndexed { index, step ->
             appendStep(
                 builder = builder,
+                flowMap = flowMap,
                 step = step,
                 stepNumber = index + 1,
                 activeStepId = activeStepId,
@@ -80,6 +118,7 @@ object FlowMapMarkdownExporter {
 
     private fun appendStep(
         builder: StringBuilder,
+        flowMap: FlowMap,
         step: FlowStep,
         stepNumber: Int,
         activeStepId: String?,
@@ -90,10 +129,18 @@ object FlowMapMarkdownExporter {
         builder.appendLine("- File: `${step.filePath}`")
         builder.appendLine("- Lines: ${step.startLine}-${step.endLine}")
         step.symbol?.takeIf { it.isNotBlank() }?.let { builder.appendLine("- Symbol: `$it`") }
+        step.stepType?.takeIf { it.isNotBlank() }?.let { builder.appendLine("- Type: $it") }
+        step.importance?.takeIf { it.isNotBlank() }?.let { builder.appendLine("- Importance: $it") }
         step.severity?.takeIf { it.isNotBlank() }?.let { builder.appendLine("- Severity: $it") }
         step.riskType?.takeIf { it.isNotBlank() }?.let { builder.appendLine("- Risk: $it") }
         if (step.id == activeStepId) {
             builder.appendLine("- Focus: active step in the IDE")
+        }
+        if (step.id == flowMap.entryStepId) {
+            builder.appendLine("- Path role: entrypoint")
+        }
+        if (step.id in flowMap.terminalStepIds) {
+            builder.appendLine("- Path role: terminal")
         }
         if (step.uncertain) {
             builder.appendLine("- Confidence: uncertain")
@@ -108,6 +155,19 @@ object FlowMapMarkdownExporter {
         builder.appendLine(step.explanation)
         builder.appendLine()
         builder.appendLine("Why it matters: ${step.whyIncluded}")
+
+        val incomingEdges = flowMap.edges.filter { it.toStepId == step.id }
+        val outgoingEdges = flowMap.edges.filter { it.fromStepId == step.id }
+        if (incomingEdges.isNotEmpty() || outgoingEdges.isNotEmpty()) {
+            builder.appendLine()
+            builder.appendLine("Path hops:")
+            incomingEdges.forEach { edge ->
+                builder.appendLine("- From: ${formatEdge(flowMap, edge, showTarget = false)}")
+            }
+            outgoingEdges.forEach { edge ->
+                builder.appendLine("- To: ${formatEdge(flowMap, edge, showTarget = true)}")
+            }
+        }
 
         if (step.lineAnnotations.isNotEmpty()) {
             builder.appendLine()
@@ -162,6 +222,27 @@ object FlowMapMarkdownExporter {
                 builder.appendLine("- [${draft.type}/${draft.tone}] ${draft.text}")
             }
         }
+    }
+
+    private fun formatEdge(flowMap: FlowMap, edge: StepEdge, showTarget: Boolean): String {
+        val peerStepId = if (showTarget) edge.toStepId else edge.fromStepId
+        val peerTitle = flowMap.steps.firstOrNull { it.id == peerStepId }?.title ?: peerStepId
+        val callSite = edge.callSiteStartLine?.let { start ->
+            if (edge.callSiteEndLine != null && edge.callSiteEndLine != start) {
+                "${edge.callSiteFilePath ?: ""}:L$start-L${edge.callSiteEndLine}"
+            } else {
+                "${edge.callSiteFilePath ?: ""}:L$start"
+            }
+        }?.trimStart(':')
+        val details = buildList {
+            edge.kind.takeIf { it.isNotBlank() }?.let { add(it) }
+            edge.importance?.takeIf { it.isNotBlank() }?.let { add("importance: $it") }
+            callSite?.takeIf { it.isNotBlank() }?.let { add(it) }
+            edge.callSiteLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
+            if (edge.uncertain) add("uncertain")
+            edge.validationNote?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }.joinToString("  ·  ")
+        return if (details.isNotBlank()) "$peerTitle ($details)" else peerTitle
     }
 
     private fun formatDuration(durationMs: Long): String =

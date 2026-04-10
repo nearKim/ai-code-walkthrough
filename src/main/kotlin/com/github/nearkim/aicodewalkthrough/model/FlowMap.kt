@@ -21,6 +21,32 @@ data class EvidenceItem(
 )
 
 @Serializable
+data class StepEdge(
+    val id: String,
+    @SerialName("from_step_id") val fromStepId: String,
+    @SerialName("to_step_id") val toStepId: String,
+    val kind: String,
+    val rationale: String,
+    val importance: String? = null,
+    @SerialName("call_site_file_path") val callSiteFilePath: String? = null,
+    @SerialName("call_site_start_line") val callSiteStartLine: Int? = null,
+    @SerialName("call_site_end_line") val callSiteEndLine: Int? = null,
+    @SerialName("call_site_label") val callSiteLabel: String? = null,
+    val evidence: List<EvidenceItem> = emptyList(),
+    val uncertain: Boolean = false,
+    @kotlinx.serialization.Transient val broken: Boolean = false,
+    @kotlinx.serialization.Transient val validationNote: String? = null,
+)
+
+@Serializable
+data class AnalysisTrace(
+    @SerialName("entrypoint_reason") val entrypointReason: String? = null,
+    @SerialName("path_end_reason") val pathEndReason: String? = null,
+    @SerialName("semantic_tools_used") val semanticToolsUsed: List<String> = emptyList(),
+    @SerialName("delegated_agents") val delegatedAgents: List<String> = emptyList(),
+)
+
+@Serializable
 data class CommentDraft(
     val type: String,
     val tone: String,
@@ -54,6 +80,8 @@ data class FlowStep(
     @SerialName("end_line") val endLine: Int,
     val explanation: String,
     @SerialName("why_included") val whyIncluded: String,
+    @SerialName("step_type") val stepType: String? = null,
+    val importance: String? = null,
     val uncertain: Boolean = false,
     @SerialName("line_annotations") val lineAnnotations: List<LineAnnotation> = emptyList(),
     val severity: String? = null,
@@ -73,9 +101,13 @@ data class FlowMap(
     val mode: String? = null,
     val summary: String,
     val steps: List<FlowStep>,
+    @SerialName("entry_step_id") val entryStepId: String? = null,
+    @SerialName("terminal_step_ids") val terminalStepIds: List<String> = emptyList(),
+    val edges: List<StepEdge> = emptyList(),
     @SerialName("overall_risk") val overallRisk: String? = null,
     @SerialName("review_summary") val reviewSummary: String? = null,
     @SerialName("suggested_tests") val suggestedTests: List<SuggestedTest> = emptyList(),
+    @SerialName("analysis_trace") val analysisTrace: AnalysisTrace? = null,
 )
 
 @Serializable
@@ -89,6 +121,9 @@ data class LlmResponse(
     val mode: String? = null,
     val summary: String? = null,
     val steps: List<FlowStep>? = null,
+    @SerialName("entry_step_id") val entryStepId: String? = null,
+    @SerialName("terminal_step_ids") val terminalStepIds: List<String>? = null,
+    val edges: List<StepEdge>? = null,
     val answer: String? = null,
     @SerialName("why_it_matters") val whyItMatters: String? = null,
     @SerialName("important_lines") val importantLines: List<LineAnnotation>? = null,
@@ -99,6 +134,7 @@ data class LlmResponse(
     @SerialName("overall_risk") val overallRisk: String? = null,
     @SerialName("review_summary") val reviewSummary: String? = null,
     @SerialName("suggested_tests") val suggestedTests: List<SuggestedTest>? = null,
+    @SerialName("analysis_trace") val analysisTrace: AnalysisTrace? = null,
 ) {
     fun toFlowMap(): FlowMap? {
         if (type != "flow_map" || summary == null || steps == null) return null
@@ -106,9 +142,13 @@ data class LlmResponse(
             mode = mode,
             summary = summary,
             steps = steps,
+            entryStepId = entryStepId,
+            terminalStepIds = terminalStepIds ?: emptyList(),
+            edges = edges ?: emptyList(),
             overallRisk = overallRisk,
             reviewSummary = reviewSummary,
             suggestedTests = suggestedTests ?: emptyList(),
+            analysisTrace = analysisTrace,
         )
     }
 

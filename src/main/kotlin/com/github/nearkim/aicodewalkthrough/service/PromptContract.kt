@@ -9,6 +9,14 @@ object PromptContract {
           "type": "flow_map",
           "mode": "understand|review|trace|risk|comment",
           "summary": "One-paragraph high-level answer.",
+          "entry_step_id": "step-1",
+          "terminal_step_ids": ["step-6"],
+          "analysis_trace": {
+            "entrypoint_reason": "Why this is the entrypoint for the requested path.",
+            "path_end_reason": "Why the path ends here.",
+            "semantic_tools_used": ["find_symbol", "find_referencing_symbols"],
+            "delegated_agents": ["Optional short note for any delegated/subagent work."]
+          },
           "overall_risk": "Optional overall risk summary for review/risk mode.",
           "review_summary": "Optional concise review summary focused on findings.",
           "suggested_tests": [
@@ -28,6 +36,8 @@ object PromptContract {
               "end_line": 50,
               "explanation": "1-2 sentence explanation of the overall purpose of this code.",
               "why_included": "Why this step matters in the flow.",
+              "step_type": "entrypoint|method|class|module|branch|async_hop|sink",
+              "importance": "high|medium|low",
               "uncertain": false,
               "severity": "optional: high|medium|low|info",
               "risk_type": "optional short label such as correctness, performance, security, api, tests",
@@ -55,6 +65,31 @@ object PromptContract {
                   "start_line": 10,
                   "end_line": 15,
                   "text": "Short annotation explaining what this specific block does."
+                }
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "id": "edge-1",
+              "from_step_id": "step-1",
+              "to_step_id": "step-2",
+              "kind": "call|branch|async_hop|instantiation|data_flow|return",
+              "rationale": "Why this hop is the next important transition in the path.",
+              "importance": "high|medium|low",
+              "call_site_file_path": "relative/path/to/file.kt",
+              "call_site_start_line": 20,
+              "call_site_end_line": 20,
+              "call_site_label": "Optional label for the call site or branch condition.",
+              "uncertain": false,
+              "evidence": [
+                {
+                  "kind": "symbol|reference|line_range|diff|test|note",
+                  "label": "What grounds this edge",
+                  "file_path": "relative/path/to/file.kt",
+                  "start_line": 20,
+                  "end_line": 20,
+                  "text": "Optional short supporting text."
                 }
               ]
             }
@@ -98,28 +133,35 @@ object PromptContract {
         2. Explore the codebase thoroughly before answering.
         3. Use file paths relative to the project root.
         4. Return type "clarification" when the question is ambiguous or you need more information to give a useful answer.
-        5. Order steps by execution sequence or reviewer priority depending on the requested mode. For review/risk mode, order by severity and relevance rather than strict file order.
-        6. Keep explanation to 1-2 sentences covering the overall purpose. Put deeper reasoning in why_included.
-        7. Mark uncertain: true for steps that are inferred rather than directly traced from code.
-        8. Always populate the symbol field when the step targets a specific function, class, or method.
-        9. Use line_annotations to annotate noteworthy sub-regions within the step's start_line..end_line range.
+        5. Return a grounded execution path, not a bag of related files. Identify the entrypoint, the important hops, and where the path terminates.
+        6. Order steps by execution sequence or reviewer priority depending on the requested mode. For review/risk mode, order by severity and relevance rather than strict file order.
+        7. Populate entry_step_id and terminal_step_ids. entry_step_id must point to the first real step in the path.
+        8. Include edges for the important path transitions. Every non-terminal step should usually have at least one outgoing edge unless the path legitimately stops there.
+        9. Prefer call-site grounded edges. When possible, populate call_site_* for the exact line or branch that leads to the next step.
+        10. Keep explanation to 1-2 sentences covering the overall purpose. Put deeper reasoning in why_included.
+        11. Mark uncertain: true for steps or edges that are inferred rather than directly traced from code.
+        12. Always populate the symbol field when the step targets a specific function, class, or method.
+        13. Populate step_type and importance for each step.
+        14. Use line_annotations to annotate noteworthy sub-regions within the step's start_line..end_line range.
            ADD annotations for: branches (if/else/when/try-catch) explaining which path is taken and why, complex or business-critical variable declarations, non-obvious expressions or algorithm steps.
            SKIP annotations for: trivial assignments, boilerplate, obvious getters/setters.
            line_annotations may be empty. All annotation start_line/end_line must be within the step's own start_line..end_line range.
-        10. Populate mode with the requested mode.
-        11. For review, risk, and comment modes, include severity whenever there is any non-trivial concern.
-        12. For review, risk, and comment modes, provide evidence entries for every substantive finding.
-        13. For comment mode, include at least one grounded comment_draft per relevant step.
-        14. For risk and review mode, include suggested_action when there is a clear next step.
-        15. For review and risk mode, include suggested_tests or per-step test_gap when test coverage appears weak.
-        16. For type "step_answer", answer the user's question about the current step without remapping the whole repo.
-        17. For type "step_answer", explain the whole symbol or code region first, then annotate only the important lines.
-        18. For type "step_answer", use evidence for claims about callers, callees, side effects, invariants, or risks.
+        15. Populate mode with the requested mode.
+        16. For review, risk, and comment modes, include severity whenever there is any non-trivial concern.
+        17. For review, risk, and comment modes, provide evidence entries for every substantive finding.
+        18. For comment mode, include at least one grounded comment_draft per relevant step.
+        19. For risk and review mode, include suggested_action when there is a clear next step.
+        20. For review and risk mode, include suggested_tests or per-step test_gap when test coverage appears weak.
+        21. For type "step_answer", answer the user's question about the current step without remapping the whole repo.
+        22. For type "step_answer", explain the whole symbol or code region first, then annotate only the important lines.
+        23. For type "step_answer", use evidence for claims about callers, callees, side effects, invariants, or risks.
+        24. If your environment can delegate work to subagents or specialized workers, use that only when it materially improves grounding, and report it briefly in analysis_trace.delegated_agents.
+        25. Keep the path focused. Include side branches only when they materially change execution, risk, or review outcome.
     """.trimIndent()
 
     private val mcpAddendum = """
 
-        19. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
+        26. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
             - get_symbols_overview(relative_path): understand a file's full symbol structure without reading every line. Start here when opening any file.
             - find_symbol(name_path, relative_path, depth=1, include_body=true): use this to locate the exact symbol and get precise start/end lines.
             - find_referencing_symbols(name_path, relative_path): use this to trace call flow between symbols.

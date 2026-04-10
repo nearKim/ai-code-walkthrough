@@ -17,6 +17,9 @@ import java.time.Duration
 class OpenAiApiService(project: Project) : JsonHttpProviderSupport(project) {
 
     override val provider: AiProvider = AiProvider.CHATGPT_API
+    override val capabilities: ProviderCapabilities = ProviderCapabilities(
+        supportsRepoGroundedWalkthrough = false,
+    )
 
     override suspend fun query(
         prompt: String,

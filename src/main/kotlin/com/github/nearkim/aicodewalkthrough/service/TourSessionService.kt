@@ -10,6 +10,7 @@ import com.github.nearkim.aicodewalkthrough.model.FollowUpContext
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
+import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.github.nearkim.aicodewalkthrough.model.TourState
 import com.intellij.openapi.application.ApplicationManager
@@ -62,6 +63,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
     private val listeners = mutableListOf<TourSessionListener>()
     private val recentWalkthroughHistory = ArrayDeque<RecentWalkthrough>()
+    private val tourStepHistory = mutableListOf<Int>()
     private var currentRecentWalkthroughId: String? = null
 
     fun addListener(listener: TourSessionListener) {
@@ -101,7 +103,9 @@ class TourSessionService(private val project: Project, private val scope: Corout
     fun startTour(startIndex: Int = 0) {
         val resolvedIndex = findNextNavigableStepIndex(startIndex) ?: return
         clearStepAnswer(notify = false)
+        tourStepHistory.clear()
         currentStepIndex = resolvedIndex
+        tourStepHistory += resolvedIndex
         currentContext = currentFlowMap?.steps?.getOrNull(resolvedIndex)?.toQueryContext()
         transitionTo(TourState.TOUR_ACTIVE)
         navigateToCurrentStep()
@@ -117,26 +121,33 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
         updateActiveStepContext(step.id)
 
-        val upcomingStep = findNextNavigableStepIndex(stepIndex + 1)?.let { steps[it] }
+        val upcomingEdge = preferredNextHop(step.id, visitedStepIds = emptySet())
+        val upcomingStep = upcomingEdge?.let { edge -> steps.firstOrNull { it.id == edge.toStepId } }
+            ?: findNextNavigableStepIndex(stepIndex + 1)?.let { steps[it] }
         val decorationController = project.service<EditorDecorationController>()
         ApplicationManager.getApplication().invokeLater {
-            decorationController.showStep(step, stepIndex, steps.size, upcomingStep)
+            decorationController.showStep(step, stepIndex, steps.size, upcomingStep, upcomingEdge)
         }
     }
 
     fun nextStep() {
-        val next = findNextNavigableStepIndex(currentStepIndex + 1)
+        val next = findPreferredNextNavigableStepIndex(currentStepIndex)
+            ?: findNextNavigableStepIndex(currentStepIndex + 1)
         if (next == null) {
             stopTour()
             return
         }
         currentStepIndex = next
+        if (tourStepHistory.lastOrNull() != next) {
+            tourStepHistory += next
+        }
         navigateToCurrentStep()
     }
 
     fun prevStep() {
-        val prev = findPreviousNavigableStepIndex(currentStepIndex - 1) ?: return
-        currentStepIndex = prev
+        if (tourStepHistory.size <= 1) return
+        tourStepHistory.removeLastOrNull()
+        currentStepIndex = tourStepHistory.lastOrNull() ?: return
         navigateToCurrentStep()
     }
 
@@ -148,6 +159,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         updateActiveStepContext(currentFlowMap?.steps?.getOrNull(currentStepIndex)?.id)
         project.service<EditorDecorationController>().clearDecorations()
         clearStepAnswer(notify = false)
+        tourStepHistory.clear()
         currentStepIndex = -1
         transitionTo(TourState.OVERVIEW)
     }
@@ -166,13 +178,15 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
         updateActiveStepContext(step.id)
 
-        // Find next non-broken step so the decoration controller can preview it
-        val upcomingStep = findNextNavigableStepIndex(currentStepIndex + 1)?.let { steps[it] }
+        val visitedStepIds = visitedStepIds()
+        val upcomingEdge = preferredNextHop(step.id, visitedStepIds)
+        val upcomingStep = upcomingEdge?.let { edge -> steps.firstOrNull { it.id == edge.toStepId } }
+            ?: findNextNavigableStepIndex(currentStepIndex + 1)?.let { steps[it] }
 
         val totalSteps = steps.size
         val decorationController = project.service<EditorDecorationController>()
         ApplicationManager.getApplication().invokeLater {
-            decorationController.showStep(step, currentStepIndex, totalSteps, upcomingStep)
+            decorationController.showStep(step, currentStepIndex, totalSteps, upcomingStep, upcomingEdge)
             listeners.forEach { it.onStepChanged(currentStepIndex, step) }
         }
     }
@@ -189,6 +203,8 @@ class TourSessionService(private val project: Project, private val scope: Corout
         errorMessage = null
         lastMetadata = null
         clearStepAnswer(notify = false)
+        currentStepIndex = -1
+        tourStepHistory.clear()
         project.service<EditorDecorationController>().clearDecorations()
         transitionTo(TourState.LOADING)
 
@@ -213,6 +229,8 @@ class TourSessionService(private val project: Project, private val scope: Corout
         errorMessage = null
         lastMetadata = null
         clearStepAnswer(notify = false)
+        currentStepIndex = -1
+        tourStepHistory.clear()
         project.service<EditorDecorationController>().clearDecorations()
         transitionTo(TourState.LOADING)
 
@@ -264,6 +282,8 @@ class TourSessionService(private val project: Project, private val scope: Corout
         val planner = project.service<FlowPlannerService>()
         planner.cancel()
         project.service<EditorDecorationController>().clearDecorations()
+        currentStepIndex = -1
+        tourStepHistory.clear()
         transitionTo(TourState.INPUT)
     }
 
@@ -279,6 +299,8 @@ class TourSessionService(private val project: Project, private val scope: Corout
         errorMessage = null
         lastMetadata = null
         clearStepAnswer(notify = false)
+        currentStepIndex = -1
+        tourStepHistory.clear()
         transitionTo(TourState.INPUT)
     }
 
@@ -296,6 +318,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         lastMetadata = snapshot.metadata
         clearStepAnswer(notify = false)
         currentStepIndex = -1
+        tourStepHistory.clear()
 
         if (startTour) {
             startTour(resolveRecentStartIndex(snapshot))
@@ -388,6 +411,32 @@ class TourSessionService(private val project: Project, private val scope: Corout
         syncCurrentRecentWalkthrough()
     }
 
+    fun preferredNextHop(stepId: String, visitedStepIds: Set<String> = visitedStepIds()): StepEdge? {
+        val flowMap = currentFlowMap ?: return null
+        val candidateEdges = flowMap.edges
+            .filter { !it.broken && it.fromStepId == stepId }
+            .filter { edge ->
+                flowMap.steps.any { step -> step.id == edge.toStepId && !step.broken } &&
+                    edge.toStepId !in visitedStepIds
+            }
+        return candidateEdges.maxWithOrNull(
+            compareBy<StepEdge> { importanceRank(it.importance) }
+                .thenBy { if (it.uncertain) 0 else 1 }
+                .thenBy { it.evidence.size }
+                .thenBy { -flowMap.steps.indexOfFirst { step -> step.id == it.toStepId } },
+        )
+    }
+
+    fun outgoingHops(stepId: String): List<StepEdge> =
+        currentFlowMap?.edges.orEmpty().filter { !it.broken && it.fromStepId == stepId }
+
+    fun incomingHops(stepId: String): List<StepEdge> =
+        currentFlowMap?.edges.orEmpty().filter { !it.broken && it.toStepId == stepId }
+
+    fun isEntryStep(stepId: String): Boolean = currentFlowMap?.entryStepId == stepId
+
+    fun isTerminalStep(stepId: String): Boolean = stepId in currentFlowMap?.terminalStepIds.orEmpty()
+
     private fun findNextNavigableStepIndex(startIndex: Int): Int? {
         val steps = currentFlowMap?.steps ?: return null
         var index = startIndex.coerceAtLeast(0)
@@ -406,6 +455,17 @@ class TourSessionService(private val project: Project, private val scope: Corout
             index--
         }
         return null
+    }
+
+    private fun findPreferredNextNavigableStepIndex(fromIndex: Int): Int? {
+        val flowMap = currentFlowMap ?: return null
+        val step = flowMap.steps.getOrNull(fromIndex) ?: return null
+        val preferredEdge = preferredNextHop(step.id, visitedStepIds())
+            ?: return null
+        val nextIndex = flowMap.steps.indexOfFirst { candidate ->
+            candidate.id == preferredEdge.toStepId && !candidate.broken
+        }
+        return nextIndex.takeIf { it >= 0 }
     }
 
     private fun clearStepAnswer(notify: Boolean = true) {
@@ -462,6 +522,18 @@ class TourSessionService(private val project: Project, private val scope: Corout
         val existing = recentWalkthroughHistory.removeAt(index)
         recentWalkthroughHistory.add(index, existing.copy(followUpContext = followUpContext))
         notifyRecentWalkthroughsChanged()
+    }
+
+    private fun visitedStepIds(): Set<String> {
+        val flowMap = currentFlowMap ?: return emptySet()
+        return tourStepHistory.mapNotNull { index -> flowMap.steps.getOrNull(index)?.id }.toSet()
+    }
+
+    private fun importanceRank(value: String?): Int = when (value?.trim()?.lowercase()) {
+        "critical", "high" -> 3
+        "medium" -> 2
+        "low" -> 1
+        else -> 0
     }
 
     private fun summarizeQuestion(question: String): String {

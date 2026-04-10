@@ -1,9 +1,13 @@
 package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
+import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
+import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -143,6 +147,157 @@ class StepValidatorTest {
 
             assertEquals(1, validated.size)
             assertEquals("grounded", validated.single().id)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `validate flow map synthesizes a grounded path when edges are missing`() {
+        val root = Files.createTempDirectory("step-validator")
+        try {
+            val sourceDir = root.resolve("src")
+            Files.createDirectories(sourceDir)
+            Files.writeString(
+                sourceDir.resolve("Pipeline.kt"),
+                """
+                class Pipeline {
+                    fun start() {
+                        process()
+                    }
+
+                    fun process() {
+                        finish()
+                    }
+
+                    fun finish() {}
+                }
+                """.trimIndent(),
+            )
+
+            val validator = StepValidator(root.toString())
+            val validated = validator.validate(
+                FlowMap(
+                    summary = "Simple pipeline.",
+                    steps = listOf(
+                        FlowStep(
+                            id = "start",
+                            title = "Start",
+                            filePath = "src/Pipeline.kt",
+                            symbol = "start",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Starts the pipeline.",
+                            whyIncluded = "This is the user-visible entrypoint.",
+                        ),
+                        FlowStep(
+                            id = "process",
+                            title = "Process",
+                            filePath = "src/Pipeline.kt",
+                            symbol = "process",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Continues the work.",
+                            whyIncluded = "It is the next important hop.",
+                        ),
+                        FlowStep(
+                            id = "finish",
+                            title = "Finish",
+                            filePath = "src/Pipeline.kt",
+                            symbol = "finish",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Terminates the pipeline.",
+                            whyIncluded = "The path ends here.",
+                        ),
+                    ),
+                ),
+            )
+
+            assertEquals("start", validated.entryStepId)
+            assertEquals(listOf("finish"), validated.terminalStepIds)
+            assertEquals(2, validated.edges.size)
+            assertTrue(validated.edges.all { it.kind == "implied_order" })
+            assertTrue(validated.edges.all { it.uncertain })
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `validate clamps annotations and edge call sites to the current step`() {
+        val root = Files.createTempDirectory("step-validator")
+        try {
+            val sourceDir = root.resolve("src")
+            Files.createDirectories(sourceDir)
+            Files.writeString(
+                sourceDir.resolve("Handler.kt"),
+                """
+                class Handler {
+                    fun handleRequest() {
+                        helper()
+                    }
+
+                    fun helper() {}
+                }
+                """.trimIndent(),
+            )
+
+            val validator = StepValidator(root.toString())
+            val validated = validator.validate(
+                FlowMap(
+                    summary = "Handler path.",
+                    entryStepId = "handle",
+                    terminalStepIds = listOf("helper"),
+                    steps = listOf(
+                        FlowStep(
+                            id = "handle",
+                            title = "Handle request",
+                            filePath = "src/Handler.kt",
+                            symbol = "handleRequest",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Handles the request.",
+                            whyIncluded = "This is the entrypoint.",
+                            lineAnnotations = listOf(
+                                LineAnnotation(startLine = 99, endLine = 101, text = "Out of bounds annotation"),
+                            ),
+                        ),
+                        FlowStep(
+                            id = "helper",
+                            title = "Helper",
+                            filePath = "src/Handler.kt",
+                            symbol = "helper",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Helper body.",
+                            whyIncluded = "The path reaches the helper.",
+                        ),
+                    ),
+                    edges = listOf(
+                        StepEdge(
+                            id = "edge-1",
+                            fromStepId = "handle",
+                            toStepId = "helper",
+                            kind = "call",
+                            rationale = "helper() is invoked from handleRequest().",
+                            callSiteFilePath = "src/Handler.kt",
+                            callSiteStartLine = 50,
+                            callSiteEndLine = 51,
+                            evidence = listOf(EvidenceItem(kind = "symbol", label = "helper() call")),
+                        ),
+                    ),
+                ),
+            )
+
+            val handleStep = validated.steps.first { it.id == "handle" }
+            assertEquals(4, handleStep.lineAnnotations.single().startLine)
+            assertEquals(4, handleStep.lineAnnotations.single().endLine)
+            assertTrue(handleStep.uncertain)
+            val edge = validated.edges.single()
+            assertEquals(4, edge.callSiteStartLine)
+            assertEquals(4, edge.callSiteEndLine)
+            assertNotNull(edge.validationNote)
         } finally {
             root.toFile().deleteRecursively()
         }

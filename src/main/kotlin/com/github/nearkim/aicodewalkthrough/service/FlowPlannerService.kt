@@ -44,17 +44,24 @@ class FlowPlannerService(private val project: Project) {
         onProgress: ((String) -> Unit)? = null,
     ): Result<MappingResult> {
         return try {
-            val prompt = buildPrompt(question, mode, queryContext, followUpContext)
-            val providerResponse = providerService.currentProvider().query(prompt, onProgress = onProgress)
+            val provider = providerService.currentProvider()
+            providerService.requireRepoGroundedWalkthroughSupport(provider)
+            val prompt = buildPrompt(question, mode, queryContext, followUpContext, provider)
+            val providerResponse = provider.query(prompt, onProgress = onProgress)
             val cleaned = stripMarkdownFences(providerResponse.content)
             val llmResponse = json.decodeFromString<LlmResponse>(cleaned)
 
             val finalResponse = if (llmResponse.type == "flow_map" && llmResponse.steps != null) {
-                val basePath = project.basePath
-                    ?: return Result.failure(IllegalStateException("Project base path is not available"))
-                val validator = StepValidator(basePath)
-                val validatedSteps = validator.validate(llmResponse.steps)
-                llmResponse.copy(steps = validatedSteps)
+                val flowMap = llmResponse.toFlowMap()
+                    ?: return Result.failure(IllegalStateException("Unexpected flow map response from LLM"))
+                val validatedFlow = validator().validate(flowMap)
+                llmResponse.copy(
+                    steps = validatedFlow.steps,
+                    entryStepId = validatedFlow.entryStepId,
+                    terminalStepIds = validatedFlow.terminalStepIds,
+                    edges = validatedFlow.edges,
+                    analysisTrace = validatedFlow.analysisTrace,
+                )
             } else {
                 llmResponse
             }
@@ -86,8 +93,10 @@ class FlowPlannerService(private val project: Project) {
         onProgress: ((String) -> Unit)? = null,
     ): Result<StepAnswerResult> {
         return try {
-            val prompt = buildStepPrompt(question, step, mode, queryContext, followUpContext)
-            val providerResponse = providerService.currentProvider().query(prompt, onProgress = onProgress)
+            val provider = providerService.currentProvider()
+            providerService.requireRepoGroundedWalkthroughSupport(provider)
+            val prompt = buildStepPrompt(question, step, mode, queryContext, followUpContext, provider)
+            val providerResponse = provider.query(prompt, onProgress = onProgress)
             val cleaned = stripMarkdownFences(providerResponse.content)
             val llmResponse = json.decodeFromString<LlmResponse>(cleaned)
             val stepAnswer = llmResponse.toStepAnswer()
@@ -129,11 +138,17 @@ class FlowPlannerService(private val project: Project) {
         mode: AnalysisMode,
         queryContext: QueryContext?,
         followUpContext: FollowUpContext?,
+        provider: LlmProvider,
     ): String {
         val wrapper = buildJsonObject {
             put("mode", mode.id)
             put("max_steps", settings.state.maxSteps)
             put("question", question)
+            put("grounding_capabilities", buildJsonObject {
+                put("repo_grounded_walkthrough", provider.capabilities.supportsRepoGroundedWalkthrough)
+                put("semantic_navigation_hints", provider.capabilities.supportsSemanticNavigationHints)
+                put("delegated_analysis_hints", provider.capabilities.supportsDelegatedAnalysisHints)
+            })
             queryContext?.let { context ->
                 put("query_context", buildJsonObject {
                     context.filePath?.let { put("file_path", it) }
@@ -173,12 +188,18 @@ class FlowPlannerService(private val project: Project) {
         mode: AnalysisMode,
         queryContext: QueryContext?,
         followUpContext: FollowUpContext?,
+        provider: LlmProvider,
     ): String {
         val wrapper = buildJsonObject {
             put("request_type", "step_question")
             put("mode", mode.id)
             put("question", question)
             put("current_step", json.encodeToJsonElement(step))
+            put("grounding_capabilities", buildJsonObject {
+                put("repo_grounded_walkthrough", provider.capabilities.supportsRepoGroundedWalkthrough)
+                put("semantic_navigation_hints", provider.capabilities.supportsSemanticNavigationHints)
+                put("delegated_analysis_hints", provider.capabilities.supportsDelegatedAnalysisHints)
+            })
             queryContext?.let { context ->
                 put("query_context", buildJsonObject {
                     context.filePath?.let { put("file_path", it) }
@@ -240,5 +261,11 @@ class FlowPlannerService(private val project: Project) {
             }
         }
         return answer.copy(importantLines = importantLines)
+    }
+
+    private fun validator(): StepValidator {
+        val basePath = project.basePath
+            ?: throw IllegalStateException("Project base path is not available")
+        return StepValidator(basePath)
     }
 }

@@ -8,14 +8,22 @@ data class ProviderResponse(
     val metadata: ResponseMetadata? = null,
 )
 
+data class ProviderCapabilities(
+    val supportsRepoGroundedWalkthrough: Boolean,
+    val supportsSemanticNavigationHints: Boolean = false,
+    val supportsDelegatedAnalysisHints: Boolean = false,
+)
+
 data class ProviderStatus(
     val provider: AiProvider,
     val available: Boolean,
     val message: String,
+    val walkthroughSupported: Boolean = true,
 )
 
 interface LlmProvider {
     val provider: AiProvider
+    val capabilities: ProviderCapabilities
 
     suspend fun query(
         prompt: String,

@@ -22,6 +22,10 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
     private val settings get() = project.service<CodeTourSettings>()
     private val json = Json { ignoreUnknownKeys = true }
     override val provider: AiProvider = AiProvider.CODEX_CLI
+    override val capabilities: ProviderCapabilities = ProviderCapabilities(
+        supportsRepoGroundedWalkthrough = true,
+        supportsDelegatedAnalysisHints = true,
+    )
 
     @Volatile
     private var activeProcess: Process? = null

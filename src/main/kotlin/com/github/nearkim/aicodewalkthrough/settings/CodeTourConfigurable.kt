@@ -92,7 +92,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         codexPanel = providerSection(
             FormBuilder.createFormBuilder()
                 .addLabeledComponent("Codex CLI path:", codexCliPathField)
-                .addComponent(JBLabel("Codex CLI uses your local Codex login or API-key setup."))
+                .addComponent(JBLabel("Codex CLI uses your local Codex login or API-key setup and supports grounded repo walkthroughs."))
                 .panel,
         )
         claudeCliPanel = providerSection(
@@ -100,6 +100,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
                 .addLabeledComponent("Claude CLI path:", claudePathField)
                 .addComponent(enableMcpCheckBox)
                 .addLabeledComponent("MCP config path (optional):", mcpConfigPathField)
+                .addComponent(JBLabel("Claude CLI is the other grounded walkthrough option; enable MCP for tighter symbol tracing."))
                 .panel,
         )
         openAiPanel = providerSection(

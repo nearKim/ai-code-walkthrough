@@ -22,10 +22,28 @@ class LlmProviderService(private val project: Project) {
     }
 
     suspend fun checkAvailability(provider: AiProvider = settings.state.provider): ProviderStatus {
-        return providerFor(provider).checkAvailability()
+        val implementation = providerFor(provider)
+        val status = implementation.checkAvailability()
+        return if (status.available && !implementation.capabilities.supportsRepoGroundedWalkthrough) {
+            status.copy(
+                walkthroughSupported = false,
+                message = "${status.message} · use Codex CLI or Claude CLI for repo-grounded walkthroughs",
+            )
+        } else {
+            status.copy(walkthroughSupported = implementation.capabilities.supportsRepoGroundedWalkthrough)
+        }
     }
 
     fun cancel() {
         currentProvider().cancel()
+    }
+
+    fun requireRepoGroundedWalkthroughSupport(provider: LlmProvider = currentProvider()) {
+        if (!provider.capabilities.supportsRepoGroundedWalkthrough) {
+            throw IllegalStateException(
+                "${provider.provider.displayName} cannot safely inspect the local repository. " +
+                    "Use Codex CLI or Claude CLI for grounded walkthroughs.",
+            )
+        }
     }
 }

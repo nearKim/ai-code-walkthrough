@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.editor
 
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -36,7 +37,13 @@ class EditorDecorationController(private val project: Project) : Disposable {
     private val activeInlays = mutableListOf<Inlay<*>>()
     private val settings get() = project.service<CodeTourSettings>()
 
-    fun showStep(step: FlowStep, stepIndex: Int, totalSteps: Int, nextStep: FlowStep? = null) {
+    fun showStep(
+        step: FlowStep,
+        stepIndex: Int,
+        totalSteps: Int,
+        nextStep: FlowStep? = null,
+        nextEdge: StepEdge? = null,
+    ) {
         clearDecorations()
 
         if (step.broken) return
@@ -82,6 +89,10 @@ class EditorDecorationController(private val project: Project) : Disposable {
             explanation = step.explanation,
             severityLabel = severity?.let { "Severity: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
             confidenceLabel = confidence?.let { "Confidence: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
+            nextHopLabel = nextStep?.let { resolvedNextStep ->
+                "Next hop: ${resolvedNextStep.title}" +
+                    nextEdge?.kind?.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+            },
             backgroundColor = backgroundColorForSeverity(severity, step.broken),
             accentColor = accentColorForSeverity(severity, step.broken),
         )
@@ -97,28 +108,58 @@ class EditorDecorationController(private val project: Project) : Disposable {
             if (annotInlay != null) activeInlays.add(annotInlay)
         }
 
-        // Next-step preview: highlight occurrences of the upcoming step's symbol within this step's range
-        val nextSymbol = nextStep?.symbol
-        if (nextSymbol != null) {
-            val stepText = document.getText(TextRange(startOffset, endOffset))
-            // Word-boundary match: symbol must not be immediately preceded/followed by word chars or $
-            val pattern = Regex("(?<![\\w$])${Regex.escape(nextSymbol)}(?![\\w$])")
-            val nextStepAttrs = TextAttributes().apply {
-                foregroundColor = JBColor(Color(160, 90, 0), Color(220, 160, 60))
-                effectColor = JBColor(Color(180, 110, 0), Color(220, 160, 60))
-                effectType = EffectType.BOLD_LINE_UNDERSCORE
-            }
-            for (match in pattern.findAll(stepText)) {
-                val matchStart = startOffset + match.range.first
-                val matchEnd = startOffset + match.range.last + 1
-                val h = editor.markupModel.addRangeHighlighter(
-                    matchStart, matchEnd,
-                    HighlighterLayer.SELECTION,
-                    nextStepAttrs,
-                    HighlighterTargetArea.EXACT_RANGE,
-                )
-                h.errorStripeTooltip = "Next: ${nextStep.title}"
-                activeHighlighters.add(h)
+        // Next-step preview: prefer the validated hop call site, then fall back to symbol matching.
+        val nextStepAttrs = TextAttributes().apply {
+            foregroundColor = JBColor(Color(160, 90, 0), Color(220, 160, 60))
+            effectColor = JBColor(Color(180, 110, 0), Color(220, 160, 60))
+            effectType = EffectType.BOLD_LINE_UNDERSCORE
+        }
+
+        val resolvedNextEdge = nextEdge
+        val previewRendered = if (
+            nextStep != null &&
+            resolvedNextEdge != null &&
+            resolvedNextEdge.callSiteFilePath == step.filePath &&
+            resolvedNextEdge.callSiteStartLine != null &&
+            resolvedNextEdge.callSiteEndLine != null
+        ) {
+            val callStartLine = (resolvedNextEdge.callSiteStartLine - 1).coerceIn(startLine, endLine)
+            val callEndLine = (resolvedNextEdge.callSiteEndLine - 1).coerceIn(callStartLine, endLine)
+            val callStartOffset = document.getLineStartOffset(callStartLine)
+            val callEndOffset = document.getLineEndOffset(callEndLine)
+            val highlighter = editor.markupModel.addRangeHighlighter(
+                callStartOffset,
+                callEndOffset,
+                HighlighterLayer.SELECTION,
+                nextStepAttrs,
+                HighlighterTargetArea.LINES_IN_RANGE,
+            )
+            highlighter.errorStripeTooltip = buildNextStepTooltip(nextStep, resolvedNextEdge)
+            activeHighlighters.add(highlighter)
+            true
+        } else {
+            false
+        }
+
+        if (!previewRendered) {
+            val nextSymbol = nextStep?.symbol
+            if (nextSymbol != null) {
+                val stepText = document.getText(TextRange(startOffset, endOffset))
+                // Word-boundary match: symbol must not be immediately preceded/followed by word chars or $
+                val pattern = Regex("(?<![\\w$])${Regex.escape(nextSymbol)}(?![\\w$])")
+                for (match in pattern.findAll(stepText)) {
+                    val matchStart = startOffset + match.range.first
+                    val matchEnd = startOffset + match.range.last + 1
+                    val highlighter = editor.markupModel.addRangeHighlighter(
+                        matchStart,
+                        matchEnd,
+                        HighlighterLayer.SELECTION,
+                        nextStepAttrs,
+                        HighlighterTargetArea.EXACT_RANGE,
+                    )
+                    highlighter.errorStripeTooltip = buildNextStepTooltip(nextStep, resolvedNextEdge)
+                    activeHighlighters.add(highlighter)
+                }
             }
         }
     }
@@ -141,6 +182,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
         private val explanation: String,
         private val severityLabel: String?,
         private val confidenceLabel: String?,
+        private val nextHopLabel: String?,
         private val backgroundColor: JBColor,
         private val accentColor: JBColor,
     ) : EditorCustomElementRenderer {
@@ -217,7 +259,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
         }
 
         private fun buildMetaText(): String =
-            listOfNotNull(severityLabel, confidenceLabel).joinToString("  ·  ")
+            listOfNotNull(severityLabel, confidenceLabel, nextHopLabel).joinToString("  ·  ")
     }
 
     private class LineAnnotationInlayRenderer(
@@ -269,6 +311,16 @@ class EditorDecorationController(private val project: Project) : Disposable {
     }
 
     companion object {
+        private fun buildNextStepTooltip(nextStep: FlowStep, nextEdge: StepEdge?): String {
+            val detail = nextEdge?.rationale?.takeIf { it.isNotBlank() }
+                ?: nextEdge?.validationNote?.takeIf { it.isNotBlank() }
+            return if (detail != null) {
+                "Next: ${nextStep.title}\n$detail"
+            } else {
+                "Next: ${nextStep.title}"
+            }
+        }
+
         private fun normalizedSeverity(step: FlowStep): String? {
             val severity = step.severity?.trim()?.lowercase()
             return when (severity) {
