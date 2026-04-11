@@ -14,6 +14,11 @@ data class ProviderCapabilities(
     val supportsDelegatedAnalysisHints: Boolean = false,
 )
 
+enum class PromptKind {
+    WALKTHROUGH,
+    REPOSITORY_REVIEW,
+}
+
 data class ProviderStatus(
     val provider: AiProvider,
     val available: Boolean,
@@ -27,6 +32,7 @@ interface LlmProvider {
 
     suspend fun query(
         prompt: String,
+        promptKind: PromptKind = PromptKind.WALKTHROUGH,
         onProgress: ((String) -> Unit)? = null,
     ): ProviderResponse
 

@@ -23,6 +23,7 @@ class OpenAiApiService(project: Project) : JsonHttpProviderSupport(project) {
 
     override suspend fun query(
         prompt: String,
+        promptKind: PromptKind,
         onProgress: ((String) -> Unit)?,
     ): ProviderResponse = io {
         val apiKey = secrets.getApiKey(provider)
@@ -35,7 +36,7 @@ class OpenAiApiService(project: Project) : JsonHttpProviderSupport(project) {
             put("messages", buildJsonArray {
                 add(buildJsonObject {
                     put("role", "system")
-                    put("content", PromptContract.buildSystemPrompt(enableSemanticTools = false))
+                    put("content", PromptContract.buildSystemPrompt(promptKind, enableSemanticTools = false))
                 })
                 add(buildJsonObject {
                     put("role", "user")

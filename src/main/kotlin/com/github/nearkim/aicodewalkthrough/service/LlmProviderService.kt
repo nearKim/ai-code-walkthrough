@@ -38,11 +38,28 @@ class LlmProviderService(private val project: Project) {
         currentProvider().cancel()
     }
 
+    fun supportsRepositoryReview(provider: LlmProvider = currentProvider()): Boolean {
+        return when (provider.provider) {
+            AiProvider.CLAUDE_CLI -> settings.state.enableMcp
+            else -> provider.capabilities.supportsSemanticNavigationHints
+        }
+    }
+
     fun requireRepoGroundedWalkthroughSupport(provider: LlmProvider = currentProvider()) {
         if (!provider.capabilities.supportsRepoGroundedWalkthrough) {
             throw IllegalStateException(
                 "${provider.provider.displayName} cannot safely inspect the local repository. " +
                     "Use Codex CLI or Claude CLI for grounded walkthroughs.",
+            )
+        }
+    }
+
+    fun requireRepositoryReviewSupport(provider: LlmProvider = currentProvider()) {
+        requireRepoGroundedWalkthroughSupport(provider)
+        if (!supportsRepositoryReview(provider)) {
+            throw IllegalStateException(
+                "Thorough repository review requires symbolic analysis. " +
+                    "Use Claude CLI with MCP semantic navigation enabled.",
             )
         }
     }

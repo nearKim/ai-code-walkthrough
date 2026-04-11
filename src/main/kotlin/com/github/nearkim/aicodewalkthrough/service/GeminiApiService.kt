@@ -26,6 +26,7 @@ class GeminiApiService(project: Project) : JsonHttpProviderSupport(project) {
 
     override suspend fun query(
         prompt: String,
+        promptKind: PromptKind,
         onProgress: ((String) -> Unit)?,
     ): ProviderResponse = io {
         val apiKey = secrets.getApiKey(provider)
@@ -35,7 +36,7 @@ class GeminiApiService(project: Project) : JsonHttpProviderSupport(project) {
         val requestBody = buildJsonObject {
             put("systemInstruction", buildJsonObject {
                 put("parts", buildJsonArray {
-                    add(buildJsonObject { put("text", PromptContract.buildSystemPrompt(enableSemanticTools = false)) })
+                    add(buildJsonObject { put("text", PromptContract.buildSystemPrompt(promptKind, enableSemanticTools = false)) })
                 })
             })
             put("contents", buildJsonArray {

@@ -8,6 +8,7 @@ data class RecentWalkthrough(
     val flowMap: FlowMap,
     val queryContext: QueryContext? = null,
     val followUpContext: FollowUpContext? = null,
+    val featureScope: FeatureScopeContext? = null,
     val metadata: ResponseMetadata? = null,
     val createdAtMs: Long = System.currentTimeMillis(),
 )

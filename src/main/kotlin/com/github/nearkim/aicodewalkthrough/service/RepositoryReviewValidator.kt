@@ -63,6 +63,8 @@ class RepositoryReviewValidator(private val projectBasePath: String) {
         val sanitizedSharedPaths = sanitizeRelativePaths(feature.sharedPaths, notes)
         val sanitizedEntryHints = feature.entryHints.mapNotNull { sanitizeEntrypoint(it, sanitizedFilePaths.firstOrNull(), notes) }
         val sanitizedEntrypoints = feature.entrypoints.mapNotNull { sanitizeEntrypoint(it, sanitizedFilePaths.firstOrNull(), notes) }
+        val canonicalEntrypoints = (sanitizedEntrypoints + sanitizedEntryHints)
+            .distinctBy { "${it.id}:${it.filePath}:${it.symbol}:${it.startLine}:${it.endLine}" }
         val sanitizedFindings = feature.findings.map { finding ->
             sanitizeFinding(finding, sanitizedFilePaths.firstOrNull(), notes)
         }
@@ -74,15 +76,20 @@ class RepositoryReviewValidator(private val projectBasePath: String) {
                     summary = "Trace the main execution path and major risks in ${feature.name}.",
                     rationale = "Fallback review path generated because the model did not provide feature paths.",
                     promptSeed = "Review the ${feature.name} feature thoroughly. Trace the primary execution path, highlight the main risks, and stay bounded to this feature unless you need to note a boundary dependency.",
+                    filePaths = sanitizedFilePaths,
                     focusFiles = sanitizedFilePaths,
                     likelyEntryFiles = sanitizedFilePaths,
-                    startingPoints = sanitizedEntrypoints.ifEmpty { sanitizedEntryHints },
+                    startingPoints = canonicalEntrypoints,
+                    entryFilePath = canonicalEntrypoints.firstOrNull()?.filePath ?: sanitizedFilePaths.firstOrNull(),
+                    entrySymbol = canonicalEntrypoints.firstOrNull()?.symbol,
+                    supportingSymbols = canonicalEntrypoints.mapNotNull { it.symbol }.distinct(),
+                    boundaryNotes = emptyList(),
                     mode = "review",
                     uncertain = sanitizedFilePaths.isEmpty(),
                 ),
             )
         } else {
-            feature.paths.map { path -> sanitizePath(path, feature.name, sanitizedFilePaths, notes) }
+            feature.paths.map { path -> sanitizePath(path, feature.name, sanitizedFilePaths, canonicalEntrypoints, notes) }
         }
 
         val sanitizedFeature = feature.copy(
@@ -93,7 +100,7 @@ class RepositoryReviewValidator(private val projectBasePath: String) {
             ownedPaths = sanitizedOwnedPaths,
             sharedPaths = sanitizedSharedPaths,
             entryHints = sanitizedEntryHints,
-            entrypoints = sanitizedEntrypoints,
+            entrypoints = canonicalEntrypoints,
             findings = sanitizedFindings,
             paths = sanitizedPaths,
             uncertain = feature.uncertain || sanitizedFilePaths.isEmpty(),
@@ -126,11 +133,35 @@ class RepositoryReviewValidator(private val projectBasePath: String) {
         path: FeaturePath,
         featureName: String,
         fallbackFiles: List<String>,
+        featureEntrypoints: List<FeatureEntrypoint>,
         notes: MutableList<String>,
     ): FeaturePath {
-        val sanitizedFiles = sanitizeRelativePaths(path.filePaths.ifEmpty { path.focusFiles }, notes)
+        val sanitizedFiles = sanitizeRelativePaths(
+            path.filePaths
+                .ifEmpty { path.focusFiles }
+                .ifEmpty { path.likelyEntryFiles },
+            notes,
+        )
             .ifEmpty { fallbackFiles }
         val startingPoints = path.startingPoints.mapNotNull { sanitizeEntrypoint(it, sanitizedFiles.firstOrNull(), notes) }
+        val selectedEntrypoint = path.entrypointId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { entrypointId -> featureEntrypoints.firstOrNull { it.id == entrypointId } }
+            ?: startingPoints.firstOrNull()
+            ?: featureEntrypoints.firstOrNull()
+        val entryFilePath = sanitizeRelativePath(path.entryFilePath, notes)
+            ?: selectedEntrypoint?.filePath
+            ?: sanitizedFiles.firstOrNull()
+        val boundaryNotes = (path.boundaryNotes + listOfNotNull(path.boundaryNote))
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        val supportingSymbols = (
+            path.supportingSymbols +
+                listOfNotNull(path.entrySymbol, selectedEntrypoint?.symbol)
+            ).map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
         val promptSeed = path.promptSeed.ifBlank {
             "Trace and review the ${path.title.ifBlank { featureName }} path. Stay bounded to this feature and explain the important hops."
         }
@@ -140,13 +171,15 @@ class RepositoryReviewValidator(private val projectBasePath: String) {
             summary = path.summary.ifBlank { "Trace the most relevant path through $featureName." },
             rationale = path.rationale?.takeIf { it.isNotBlank() } ?: "Feature-bounded walkthrough path.",
             promptSeed = promptSeed,
+            filePaths = sanitizedFiles,
             focusFiles = sanitizedFiles,
             likelyEntryFiles = sanitizedFiles,
-            startingPoints = startingPoints,
-            boundaryNote = path.boundaryNote?.takeIf { it.isNotBlank() },
-            entryFilePath = sanitizedFiles.firstOrNull() ?: path.entryFilePath?.takeIf { it.isNotBlank() },
-            entrySymbol = path.entrySymbol?.takeIf { it.isNotBlank() },
-            supportingSymbols = path.supportingSymbols.distinct(),
+            startingPoints = startingPoints.ifEmpty { selectedEntrypoint?.let(::listOf) ?: emptyList() },
+            boundaryNotes = boundaryNotes,
+            boundaryNote = boundaryNotes.firstOrNull(),
+            entryFilePath = entryFilePath,
+            entrySymbol = path.entrySymbol?.takeIf { it.isNotBlank() } ?: selectedEntrypoint?.symbol,
+            supportingSymbols = supportingSymbols,
             mode = path.mode?.takeIf { it.isNotBlank() } ?: "review",
             uncertain = path.uncertain || sanitizedFiles.isEmpty(),
         )

@@ -24,6 +24,7 @@ class ClaudeApiService(project: Project) : JsonHttpProviderSupport(project) {
 
     override suspend fun query(
         prompt: String,
+        promptKind: PromptKind,
         onProgress: ((String) -> Unit)?,
     ): ProviderResponse = io {
         val apiKey = secrets.getApiKey(provider)
@@ -33,7 +34,7 @@ class ClaudeApiService(project: Project) : JsonHttpProviderSupport(project) {
         val requestBody = buildJsonObject {
             put("model", settings.state.claudeApiModel)
             put("max_tokens", 4096)
-            put("system", PromptContract.buildSystemPrompt(enableSemanticTools = false))
+            put("system", PromptContract.buildSystemPrompt(promptKind, enableSemanticTools = false))
             put("messages", buildJsonArray {
                 add(buildJsonObject {
                     put("role", "user")

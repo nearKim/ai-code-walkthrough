@@ -32,13 +32,14 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
 
     override suspend fun query(
         prompt: String,
+        promptKind: PromptKind,
         onProgress: ((String) -> Unit)?,
     ): ProviderResponse = withContext(Dispatchers.IO) {
         val basePath = project.basePath
             ?: throw IllegalStateException("Project base path is not available")
 
         val outputFile = Files.createTempFile("codex-last-message", ".json").toFile()
-        val wrappedPrompt = buildPrompt(prompt)
+        val wrappedPrompt = buildPrompt(prompt, promptKind)
         val command = listOf(
             settings.state.codexCliPath,
             "exec",
@@ -128,9 +129,9 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
         cancel()
     }
 
-    private fun buildPrompt(prompt: String): String {
+    private fun buildPrompt(prompt: String, promptKind: PromptKind): String {
         return buildString {
-            appendLine(PromptContract.buildSystemPrompt(enableSemanticTools = false))
+            appendLine(PromptContract.buildSystemPrompt(promptKind, enableSemanticTools = false))
             appendLine()
             appendLine("User question:")
             append(prompt)

@@ -4,11 +4,13 @@ import com.github.nearkim.aicodewalkthrough.editor.EditorDecorationController
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.github.nearkim.aicodewalkthrough.model.CommentTone
 import com.github.nearkim.aicodewalkthrough.model.CursorActionType
+import com.github.nearkim.aicodewalkthrough.model.FeatureScopeContext
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.FollowUpContext
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
+import com.github.nearkim.aicodewalkthrough.model.RepositoryReviewSnapshot
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
@@ -30,11 +32,14 @@ class TourSessionService(private val project: Project, private val scope: Corout
         fun onStepChanged(stepIndex: Int, step: FlowStep) {}
         fun onStepAnswerChanged(answer: StepAnswer?, loading: Boolean, errorMessage: String?) {}
         fun onRecentWalkthroughsChanged(items: List<RecentWalkthrough>) {}
+        fun onRepositoryReviewChanged(snapshot: RepositoryReviewSnapshot?) {}
     }
 
     var state: TourState = TourState.INPUT
         private set
     var currentFlowMap: FlowMap? = null
+        private set
+    var currentRepositoryReview: RepositoryReviewSnapshot? = null
         private set
     var currentQuestion: String? = null
         private set
@@ -44,11 +49,15 @@ class TourSessionService(private val project: Project, private val scope: Corout
         private set
     var followUpContext: FollowUpContext? = null
         private set
+    var currentFeatureScope: FeatureScopeContext? = null
+        private set
     var clarificationQuestion: String? = null
         private set
     var errorMessage: String? = null
         private set
     var lastMetadata: ResponseMetadata? = null
+        private set
+    var lastRepositoryReviewMetadata: ResponseMetadata? = null
         private set
     var currentStepIndex: Int = -1
         private set
@@ -65,6 +74,11 @@ class TourSessionService(private val project: Project, private val scope: Corout
     private val recentWalkthroughHistory = ArrayDeque<RecentWalkthrough>()
     private val tourStepHistory = mutableListOf<Int>()
     private var currentRecentWalkthroughId: String? = null
+    private val reviewArtifactStore = project.service<ReviewArtifactStore>()
+
+    init {
+        currentRepositoryReview = reviewArtifactStore.loadLatest()
+    }
 
     fun addListener(listener: TourSessionListener) {
         listeners.add(listener)
@@ -100,13 +114,20 @@ class TourSessionService(private val project: Project, private val scope: Corout
         }
     }
 
+    private fun notifyRepositoryReviewChanged() {
+        val snapshot = currentRepositoryReview
+        ApplicationManager.getApplication().invokeLater {
+            listeners.forEach { it.onRepositoryReviewChanged(snapshot) }
+        }
+    }
+
     fun startTour(startIndex: Int = 0) {
         val resolvedIndex = findNextNavigableStepIndex(startIndex) ?: return
         clearStepAnswer(notify = false)
         tourStepHistory.clear()
         currentStepIndex = resolvedIndex
         tourStepHistory += resolvedIndex
-        currentContext = currentFlowMap?.steps?.getOrNull(resolvedIndex)?.toQueryContext()
+        currentContext = currentFlowMap?.steps?.getOrNull(resolvedIndex)?.toQueryContext(currentFeatureScope)
         transitionTo(TourState.TOUR_ACTIVE)
         navigateToCurrentStep()
     }
@@ -117,7 +138,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
         val step = steps[stepIndex]
         if (step.broken) return
-        currentContext = step.toQueryContext()
+        currentContext = step.toQueryContext(currentFeatureScope)
 
         updateActiveStepContext(step.id)
 
@@ -174,7 +195,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
             return
         }
         clearStepAnswer(notify = false)
-        currentContext = step.toQueryContext()
+        currentContext = step.toQueryContext(currentFeatureScope)
 
         updateActiveStepContext(step.id)
 
@@ -195,11 +216,13 @@ class TourSessionService(private val project: Project, private val scope: Corout
         question: String,
         mode: AnalysisMode = AnalysisMode.UNDERSTAND,
         queryContext: QueryContext? = null,
+        featureScope: FeatureScopeContext? = currentFeatureScope,
     ) {
         currentRecentWalkthroughId = null
         currentQuestion = question
         currentMode = mode
         currentContext = queryContext
+        currentFeatureScope = featureScope
         errorMessage = null
         lastMetadata = null
         clearStepAnswer(notify = false)
@@ -210,7 +233,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
         scope.launch {
             val planner = project.service<FlowPlannerService>()
-            val result = planner.mapFlow(question, mode, queryContext, followUpContext) { line ->
+            val result = planner.mapFlow(question, mode, queryContext, followUpContext, featureScope) { line ->
                 notifyProgress(line)
             }
             handleMappingResult(result)
@@ -221,11 +244,13 @@ class TourSessionService(private val project: Project, private val scope: Corout
         question: String,
         mode: AnalysisMode = currentMode,
         queryContext: QueryContext? = currentContext,
+        featureScope: FeatureScopeContext? = currentFeatureScope,
     ) {
         currentRecentWalkthroughId = null
         currentQuestion = question
         currentMode = mode
         currentContext = queryContext
+        currentFeatureScope = featureScope
         errorMessage = null
         lastMetadata = null
         clearStepAnswer(notify = false)
@@ -236,7 +261,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
         scope.launch {
             val planner = project.service<FlowPlannerService>()
-            val result = planner.mapFlow(question, mode, queryContext, followUpContext) { line ->
+            val result = planner.mapFlow(question, mode, queryContext, followUpContext, featureScope) { line ->
                 notifyProgress(line)
             }
             handleMappingResult(result)
@@ -251,7 +276,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
             CursorActionType.SUGGEST_TESTS -> AnalysisMode.REVIEW
             CursorActionType.TRACE_USAGE -> AnalysisMode.TRACE
         }
-        startMapping(action.prompt, mode, context.copy(invokedFromCursor = true))
+        startMapping(action.prompt, mode, context.copy(invokedFromCursor = true), featureScope = null)
     }
 
     fun composeCommentForStep(stepId: String, tone: CommentTone = CommentTone.NEUTRAL) {
@@ -266,7 +291,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
                 append(it)
             }
         }
-        submitFollowUp(prompt, AnalysisMode.COMMENT, step.toQueryContext())
+        submitFollowUp(prompt, AnalysisMode.COMMENT, step.toQueryContext(currentFeatureScope))
     }
 
     fun answerClarification(answer: String) {
@@ -281,7 +306,9 @@ class TourSessionService(private val project: Project, private val scope: Corout
     fun cancelRequest() {
         val planner = project.service<FlowPlannerService>()
         planner.cancel()
+        project.service<RepositoryReviewPlannerService>().cancel()
         project.service<EditorDecorationController>().clearDecorations()
+        currentFlowMap = null
         currentStepIndex = -1
         tourStepHistory.clear()
         transitionTo(TourState.INPUT)
@@ -295,6 +322,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         currentMode = AnalysisMode.UNDERSTAND
         currentContext = null
         followUpContext = null
+        currentFeatureScope = null
         clarificationQuestion = null
         errorMessage = null
         lastMetadata = null
@@ -313,6 +341,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         currentMode = snapshot.mode
         currentContext = snapshot.queryContext
         followUpContext = snapshot.followUpContext
+        currentFeatureScope = snapshot.featureScope
         clarificationQuestion = null
         errorMessage = null
         lastMetadata = snapshot.metadata
@@ -325,6 +354,116 @@ class TourSessionService(private val project: Project, private val scope: Corout
         } else {
             transitionTo(TourState.OVERVIEW)
         }
+    }
+
+    fun startRepositoryReview() {
+        val providerService = project.service<LlmProviderService>()
+        currentQuestion = "Thorough repository review"
+        currentMode = AnalysisMode.REVIEW
+        currentContext = null
+        currentFeatureScope = null
+        errorMessage = null
+        lastRepositoryReviewMetadata = null
+        clearStepAnswer(notify = false)
+        currentStepIndex = -1
+        tourStepHistory.clear()
+        project.service<EditorDecorationController>().clearDecorations()
+        transitionTo(TourState.LOADING)
+
+        scope.launch {
+            val planner = project.service<RepositoryReviewPlannerService>()
+            val result = planner.reviewRepository { line ->
+                notifyProgress(line)
+            }
+            ApplicationManager.getApplication().invokeLater {
+                result.fold(
+                    onSuccess = { reviewResult ->
+                        currentRepositoryReview = reviewResult.snapshot
+                        lastRepositoryReviewMetadata = reviewResult.metadata
+                        errorMessage = null
+                        reviewArtifactStore.write(reviewResult.snapshot)
+                        notifyRepositoryReviewChanged()
+                        transitionTo(TourState.REPO_REVIEW)
+                    },
+                    onFailure = { error ->
+                        errorMessage = error.message ?: "Unknown error"
+                        val provider = providerService.currentProvider()
+                        if (!providerService.supportsRepositoryReview(provider)) {
+                            errorMessage = errorMessage ?: "Repository review requires symbolic analysis."
+                        }
+                        transitionTo(TourState.INPUT)
+                    },
+                )
+            }
+        }
+    }
+
+    fun restoreStoredRepositoryReview(): Boolean {
+        val snapshot = reviewArtifactStore.loadLatest() ?: return false
+        project.service<EditorDecorationController>().clearDecorations()
+        currentFlowMap = null
+        currentStepIndex = -1
+        tourStepHistory.clear()
+        currentQuestion = "Thorough repository review"
+        currentMode = AnalysisMode.REVIEW
+        currentContext = null
+        currentFeatureScope = null
+        followUpContext = null
+        currentRepositoryReview = snapshot
+        lastRepositoryReviewMetadata = null
+        errorMessage = null
+        notifyRepositoryReviewChanged()
+        transitionTo(TourState.REPO_REVIEW)
+        return true
+    }
+
+    fun repositoryReviewIsStale(): Boolean {
+        val snapshot = currentRepositoryReview ?: return true
+        return reviewArtifactStore.isStale(snapshot)
+    }
+
+    fun startFeatureWalkthrough(featureId: String, pathId: String) {
+        val review = currentRepositoryReview ?: return
+        val feature = review.features.firstOrNull { it.id == featureId } ?: return
+        val path = feature.paths.firstOrNull { it.id == pathId } ?: return
+        val entryPoint = feature.entrypoints.firstOrNull()
+        val allowedFiles = (
+            feature.filePaths +
+                path.filePaths +
+                listOfNotNull(path.entryFilePath)
+            ).distinct()
+        val scope = FeatureScopeContext(
+            featureId = feature.id,
+            featureName = feature.name,
+            featureSummary = feature.summary,
+            featureReviewSummary = feature.reviewSummary ?: feature.overallRisk,
+            allowedFilePaths = allowedFiles,
+            selectedPathId = path.id,
+            selectedPathName = path.title,
+            selectedPathDescription = path.description,
+            promptSeed = path.promptSeed,
+            ownedPaths = feature.ownedPaths.ifEmpty { feature.filePaths },
+            sharedPaths = feature.sharedPaths.ifEmpty { path.filePaths.filterNot { it in feature.filePaths } },
+            supportingSymbols = (
+                listOfNotNull(path.entrySymbol) +
+                    path.supportingSymbols +
+                    feature.entrypoints.mapNotNull { it.symbol }
+                ).distinct(),
+            boundaryNotes = path.boundaryNotes,
+        )
+        currentFeatureScope = scope
+        startMapping(
+            question = path.promptSeed,
+            mode = AnalysisMode.fromId(path.defaultMode),
+            queryContext = QueryContext(
+                filePath = path.entryFilePath ?: entryPoint?.filePath ?: allowedFiles.firstOrNull(),
+                symbol = path.entrySymbol ?: entryPoint?.symbol,
+                selectionStartLine = entryPoint?.startLine,
+                selectionEndLine = entryPoint?.endLine,
+                featureScope = scope,
+            ),
+            featureScope = scope,
+        )
     }
 
     fun askAboutCurrentStep(question: String) {
@@ -340,8 +479,9 @@ class TourSessionService(private val project: Project, private val scope: Corout
                 question = question,
                 step = step,
                 mode = currentMode,
-                queryContext = step.toQueryContext(),
+                queryContext = step.toQueryContext(currentFeatureScope),
                 followUpContext = followUpContext,
+                featureScope = currentFeatureScope,
             )
             ApplicationManager.getApplication().invokeLater {
                 stepAnswerLoading = false
@@ -384,6 +524,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
                                 mode = currentMode,
                                 queryContext = currentContext,
                                 followUpContext = followUpContext,
+                                featureScope = currentFeatureScope,
                                 metadata = lastMetadata,
                             )
                             transitionTo(TourState.OVERVIEW)
@@ -483,6 +624,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         mode: AnalysisMode,
         queryContext: QueryContext?,
         followUpContext: FollowUpContext?,
+        featureScope: FeatureScopeContext?,
         metadata: ResponseMetadata?,
     ) {
         val normalizedQuestion = question?.trim().orEmpty()
@@ -500,6 +642,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
                 flowMap = flowMap,
                 queryContext = queryContext,
                 followUpContext = followUpContext,
+                featureScope = featureScope,
                 metadata = metadata,
             ),
         )
@@ -559,10 +702,11 @@ class TourSessionService(private val project: Project, private val scope: Corout
     }
 }
 
-private fun FlowStep.toQueryContext(): QueryContext =
+private fun FlowStep.toQueryContext(featureScope: FeatureScopeContext? = null): QueryContext =
     QueryContext(
         filePath = filePath,
         symbol = symbol,
         selectionStartLine = startLine,
         selectionEndLine = endLine,
+        featureScope = featureScope,
     )

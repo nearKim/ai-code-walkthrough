@@ -33,6 +33,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
     override suspend fun query(
         prompt: String,
+        promptKind: PromptKind,
         onProgress: ((String) -> Unit)?,
     ): ProviderResponse = withContext(Dispatchers.IO) {
         val basePath = project.basePath
@@ -44,7 +45,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
             add("--print")
             add("--output-format"); add("stream-json")
             add("--verbose")
-            add("--system-prompt"); add(PromptContract.buildSystemPrompt(state.enableMcp))
+            add("--system-prompt"); add(PromptContract.buildSystemPrompt(promptKind, state.enableMcp))
             val mcpPath = state.mcpConfigPath.trim()
             if (mcpPath.isNotEmpty()) {
                 add("--mcp-config"); add(mcpPath)

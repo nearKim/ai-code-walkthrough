@@ -23,6 +23,7 @@ class CodeTourSettings : PersistentStateComponent<CodeTourSettings.State> {
         var geminiApiKeyConfigured: Boolean = false,
         var requestTimeout: Int = 120,
         var maxSteps: Int = 20,
+        var maxRepositoryFeatures: Int = 8,
         var defaultModeId: String = AnalysisMode.UNDERSTAND.id,
         var enableMcp: Boolean = false,
         var mcpConfigPath: String = "",

@@ -1,5 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.model
 
+import kotlinx.serialization.Serializable
+
 data class ClarificationExchange(
     val question: String,
     val answer: String,
@@ -54,6 +56,7 @@ data class QueryContext(
     val selectedText: String? = null,
     val diffSummary: String? = null,
     val failingTestName: String? = null,
+    val featureScope: FeatureScopeContext? = null,
     val invokedFromCursor: Boolean = false,
 ) {
     fun summaryParts(): List<String> = buildList {
@@ -63,8 +66,26 @@ data class QueryContext(
             add("L$selectionStartLine-L$selectionEndLine")
         }
         failingTestName?.takeIf { it.isNotBlank() }?.let { add("failing test: $it") }
+        featureScope?.featureName?.takeIf { it.isNotBlank() }?.let { add("feature: $it") }
     }
 }
+
+@Serializable
+data class FeatureScopeContext(
+    val featureId: String,
+    val featureName: String,
+    val featureSummary: String? = null,
+    val featureReviewSummary: String? = null,
+    val allowedFilePaths: List<String> = emptyList(),
+    val ownedPaths: List<String> = emptyList(),
+    val sharedPaths: List<String> = emptyList(),
+    val selectedPathId: String? = null,
+    val selectedPathName: String? = null,
+    val selectedPathDescription: String? = null,
+    val promptSeed: String? = null,
+    val supportingSymbols: List<String> = emptyList(),
+    val boundaryNotes: List<String> = emptyList(),
+)
 
 data class FollowUpContext(
     val originalQuestion: String,
@@ -91,5 +112,6 @@ enum class TourState {
     INPUT,
     LOADING,
     OVERVIEW,
+    REPO_REVIEW,
     TOUR_ACTIVE,
 }

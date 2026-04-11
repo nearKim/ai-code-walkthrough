@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
+import com.github.nearkim.aicodewalkthrough.model.FeatureScopeContext
 import com.github.nearkim.aicodewalkthrough.model.FollowUpContext
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LlmResponse
@@ -13,6 +14,7 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
@@ -41,13 +43,14 @@ class FlowPlannerService(private val project: Project) {
         mode: AnalysisMode = AnalysisMode.UNDERSTAND,
         queryContext: QueryContext? = null,
         followUpContext: FollowUpContext? = null,
+        featureScope: FeatureScopeContext? = null,
         onProgress: ((String) -> Unit)? = null,
     ): Result<MappingResult> {
         return try {
             val provider = providerService.currentProvider()
             providerService.requireRepoGroundedWalkthroughSupport(provider)
-            val prompt = buildPrompt(question, mode, queryContext, followUpContext, provider)
-            val providerResponse = provider.query(prompt, onProgress = onProgress)
+            val prompt = buildPrompt(question, mode, queryContext, followUpContext, featureScope, provider)
+            val providerResponse = provider.query(prompt, promptKind = PromptKind.WALKTHROUGH, onProgress = onProgress)
             val cleaned = stripMarkdownFences(providerResponse.content)
             val llmResponse = json.decodeFromString<LlmResponse>(cleaned)
 
@@ -90,13 +93,14 @@ class FlowPlannerService(private val project: Project) {
         mode: AnalysisMode = AnalysisMode.UNDERSTAND,
         queryContext: QueryContext? = null,
         followUpContext: FollowUpContext? = null,
+        featureScope: FeatureScopeContext? = null,
         onProgress: ((String) -> Unit)? = null,
     ): Result<StepAnswerResult> {
         return try {
             val provider = providerService.currentProvider()
             providerService.requireRepoGroundedWalkthroughSupport(provider)
-            val prompt = buildStepPrompt(question, step, mode, queryContext, followUpContext, provider)
-            val providerResponse = provider.query(prompt, onProgress = onProgress)
+            val prompt = buildStepPrompt(question, step, mode, queryContext, followUpContext, featureScope, provider)
+            val providerResponse = provider.query(prompt, promptKind = PromptKind.WALKTHROUGH, onProgress = onProgress)
             val cleaned = stripMarkdownFences(providerResponse.content)
             val llmResponse = json.decodeFromString<LlmResponse>(cleaned)
             val stepAnswer = llmResponse.toStepAnswer()
@@ -138,6 +142,7 @@ class FlowPlannerService(private val project: Project) {
         mode: AnalysisMode,
         queryContext: QueryContext?,
         followUpContext: FollowUpContext?,
+        featureScope: FeatureScopeContext?,
         provider: LlmProvider,
     ): String {
         val wrapper = buildJsonObject {
@@ -178,6 +183,9 @@ class FlowPlannerService(private val project: Project) {
                     put("previous_flow_map", json.encodeToJsonElement(followUp.previousFlowMap))
                 })
             }
+            featureScope?.let { scope ->
+                put("feature_scope", buildFeatureScopePayload(scope))
+            }
         }
         return wrapper.toString()
     }
@@ -188,6 +196,7 @@ class FlowPlannerService(private val project: Project) {
         mode: AnalysisMode,
         queryContext: QueryContext?,
         followUpContext: FollowUpContext?,
+        featureScope: FeatureScopeContext?,
         provider: LlmProvider,
     ): String {
         val wrapper = buildJsonObject {
@@ -229,8 +238,38 @@ class FlowPlannerService(private val project: Project) {
                     put("previous_flow_map", json.encodeToJsonElement(followUp.previousFlowMap))
                 })
             }
+            featureScope?.let { scope ->
+                put("feature_scope", buildFeatureScopePayload(scope))
+            }
         }
         return wrapper.toString()
+    }
+
+    private fun buildFeatureScopePayload(scope: FeatureScopeContext) = buildJsonObject {
+        put("feature_id", scope.featureId)
+        put("feature_name", scope.featureName)
+        scope.featureSummary?.takeIf { it.isNotBlank() }?.let { put("feature_summary", it) }
+        scope.featureReviewSummary?.takeIf { it.isNotBlank() }?.let { put("feature_review_summary", it) }
+        put("allowed_file_paths", buildJsonArray {
+            val allowedPaths = scope.allowedFilePaths.ifEmpty { (scope.ownedPaths + scope.sharedPaths).distinct() }
+            allowedPaths.forEach { add(JsonPrimitive(it)) }
+        })
+        put("owned_file_paths", buildJsonArray {
+            scope.ownedPaths.forEach { add(JsonPrimitive(it)) }
+        })
+        put("supporting_file_paths", buildJsonArray {
+            scope.sharedPaths.forEach { add(JsonPrimitive(it)) }
+        })
+        scope.selectedPathId?.takeIf { it.isNotBlank() }?.let { put("selected_path_id", it) }
+        scope.selectedPathName?.takeIf { it.isNotBlank() }?.let { put("selected_path_name", it) }
+        scope.selectedPathDescription?.takeIf { it.isNotBlank() }?.let { put("selected_path_description", it) }
+        scope.promptSeed?.takeIf { it.isNotBlank() }?.let { put("prompt_seed", it) }
+        put("supporting_symbols", buildJsonArray {
+            scope.supportingSymbols.forEach { add(JsonPrimitive(it)) }
+        })
+        put("boundary_notes", buildJsonArray {
+            scope.boundaryNotes.forEach { add(JsonPrimitive(it)) }
+        })
     }
 
     private fun stripMarkdownFences(text: String): String {

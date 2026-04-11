@@ -36,6 +36,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
     private lateinit var clearGeminiApiKeyCheckBox: JBCheckBox
     private lateinit var requestTimeoutSpinner: JSpinner
     private lateinit var maxStepsSpinner: JSpinner
+    private lateinit var maxRepositoryFeaturesSpinner: JSpinner
     private lateinit var enableMcpCheckBox: JBCheckBox
     private lateinit var mcpConfigPathField: JBTextField
     private lateinit var enableCursorActionsCheckBox: JBCheckBox
@@ -72,6 +73,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         clearGeminiApiKeyCheckBox = JBCheckBox("Clear stored API key")
         requestTimeoutSpinner = JSpinner(SpinnerNumberModel(120, 10, 600, 10))
         maxStepsSpinner = JSpinner(SpinnerNumberModel(20, 1, 100, 1))
+        maxRepositoryFeaturesSpinner = JSpinner(SpinnerNumberModel(8, 3, 20, 1))
 
         enableMcpCheckBox = JBCheckBox("Enable MCP semantic navigation for Claude CLI").apply {
             toolTipText = "Uses semantic tools (find_symbol, get_symbols_overview, find_referencing_symbols) " +
@@ -144,6 +146,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
             .addLabeledComponent("Provider:", providerCombo)
             .addLabeledComponent("Request timeout (seconds):", requestTimeoutSpinner)
             .addLabeledComponent("Max steps:", maxStepsSpinner)
+            .addLabeledComponent("Max repo review features:", maxRepositoryFeaturesSpinner)
             .addSeparator()
             .addComponent(providerSettingsPanel)
             .addSeparator()
@@ -168,6 +171,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
             geminiModelField.text != settings.geminiModel ||
             requestTimeoutSpinner.value as Int != settings.requestTimeout ||
             maxStepsSpinner.value as Int != settings.maxSteps ||
+            maxRepositoryFeaturesSpinner.value as Int != settings.maxRepositoryFeatures ||
             enableMcpCheckBox.isSelected != settings.enableMcp ||
             mcpConfigPathField.text != settings.mcpConfigPath ||
             enableCursorActionsCheckBox.isSelected != settings.enableCursorActions ||
@@ -204,6 +208,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
                 geminiApiKeyConfigured = geminiConfigured,
                 requestTimeout = requestTimeoutSpinner.value as Int,
                 maxSteps = maxStepsSpinner.value as Int,
+                maxRepositoryFeatures = maxRepositoryFeaturesSpinner.value as Int,
                 enableMcp = enableMcpCheckBox.isSelected,
                 mcpConfigPath = mcpConfigPathField.text.trim(),
                 enableCursorActions = enableCursorActionsCheckBox.isSelected,
@@ -244,6 +249,7 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         clearGeminiApiKeyCheckBox.isSelected = false
         requestTimeoutSpinner.value = settings.requestTimeout
         maxStepsSpinner.value = settings.maxSteps
+        maxRepositoryFeaturesSpinner.value = settings.maxRepositoryFeatures
         enableMcpCheckBox.isSelected = settings.enableMcp
         mcpConfigPathField.text = settings.mcpConfigPath
         mcpConfigPathField.isEnabled = settings.enableMcp

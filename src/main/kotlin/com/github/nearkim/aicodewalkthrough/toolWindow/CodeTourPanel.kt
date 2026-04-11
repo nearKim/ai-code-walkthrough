@@ -1,10 +1,14 @@
 package com.github.nearkim.aicodewalkthrough.toolwindow
 
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
+import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
+import com.github.nearkim.aicodewalkthrough.model.FeaturePath
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
+import com.github.nearkim.aicodewalkthrough.model.RepositoryFeature
+import com.github.nearkim.aicodewalkthrough.model.RepositoryReviewSnapshot
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
@@ -15,6 +19,7 @@ import com.github.nearkim.aicodewalkthrough.service.LlmProviderService
 import com.github.nearkim.aicodewalkthrough.service.TourSessionService
 import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.github.nearkim.aicodewalkthrough.util.FlowMapMarkdownExporter
+import com.github.nearkim.aicodewalkthrough.util.RepositoryReviewMarkdownExporter
 import com.github.nearkim.aicodewalkthrough.util.FlowStepMetaFormatter
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.components.service
@@ -167,6 +172,27 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var selectedStepSnapshot: FlowStep? = null
     private var currentStepFilter: StepFilter = StepFilter.ALL
     private var recentWalkthroughsPanel: JPanel? = null
+    private var repoReviewButton: JButton? = null
+    private var openRepoReviewButton: JButton? = null
+
+    // Repository review card components
+    private var repoReviewPanel: JPanel? = null
+    private var repoReviewSummaryLabel: JBLabel? = null
+    private var repoReviewMetadataLabel: JBLabel? = null
+    private var repoReviewStaleLabel: JBLabel? = null
+    private var repoFeatureListModel: DefaultListModel<RepositoryFeature>? = null
+    private var repoFeatureList: JBList<RepositoryFeature>? = null
+    private var repoFeatureTitleLabel: JBLabel? = null
+    private var repoFeatureMetaLabel: JBLabel? = null
+    private var repoFeatureBodyText: JTextArea? = null
+    private var repoFeatureFindingsText: JTextArea? = null
+    private var repoFeaturePathsModel: DefaultListModel<FeaturePath>? = null
+    private var repoFeaturePathsList: JBList<FeaturePath>? = null
+    private var repoPathDescriptionText: JTextArea? = null
+    private var repoCrossCuttingText: JTextArea? = null
+    private var startFeatureWalkthroughButton: JButton? = null
+    private var refreshRepoReviewButton: JButton? = null
+    private var copyRepoReviewButton: JButton? = null
 
     // Command history
     private val history = mutableListOf<String>()
@@ -177,6 +203,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         cardPanel.add(createInputCard(), CARD_INPUT)
         cardPanel.add(createLoadingCard(), CARD_LOADING)
         cardPanel.add(createOverviewCard(), CARD_OVERVIEW)
+        cardPanel.add(createRepositoryReviewCard(), CARD_REPO_REVIEW)
         cardPanel.add(createTourActiveCard(), CARD_TOUR_ACTIVE)
 
         add(cardPanel, BorderLayout.CENTER)
@@ -200,6 +227,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     override fun onRecentWalkthroughsChanged(items: List<RecentWalkthrough>) {
         refreshInputCard()
+    }
+
+    override fun onRepositoryReviewChanged(snapshot: RepositoryReviewSnapshot?) {
+        refreshInputCard()
+        refreshRepositoryReviewCard()
     }
 
     override fun onProgressLine(line: String) {
@@ -237,6 +269,12 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 clearErrorBanner()
                 refreshOverviewCard()
                 cardLayout.show(cardPanel, CARD_OVERVIEW)
+            }
+            TourState.REPO_REVIEW -> {
+                stopElapsedTimer()
+                clearErrorBanner()
+                refreshRepositoryReviewCard()
+                cardLayout.show(cardPanel, CARD_REPO_REVIEW)
             }
             TourState.TOUR_ACTIVE -> {
                 stopElapsedTimer()
@@ -439,6 +477,15 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         val row = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
             border = JBUI.Borders.empty(6, 0, 0, 0)
         }
+        repoReviewButton = JButton("Thorough Repo Review").apply {
+            toolTipText = "Run a repository-wide review using symbolic analysis and store feature slices for later walkthroughs."
+            addActionListener { sessionService.startRepositoryReview() }
+            row.add(this)
+        }
+        openRepoReviewButton = JButton("Open Last Repo Review").apply {
+            addActionListener { sessionService.restoreStoredRepositoryReview() }
+            row.add(this)
+        }
         JButton("Review Current File").apply {
             addActionListener { applyPromptPreset(ReviewMode.REVIEW, "Review the current file for bugs, regressions, missing tests, and comment-worthy issues.") }
             row.add(this)
@@ -510,6 +557,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         sessionService.startMapping(
             question = buildPromptWithContext(question, currentMode),
             queryContext = currentEditorQueryContext(),
+            featureScope = null,
         )
     }
 
@@ -547,6 +595,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         project.service<EditorContextService>().currentContext()?.toQueryContext()
 
     private fun refreshInputCard() {
+        openRepoReviewButton?.isEnabled = sessionService.currentRepositoryReview != null
         val container = recentWalkthroughsPanel ?: return
         container.removeAll()
 
@@ -664,7 +713,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             border = JBUI.Borders.empty(0, 0, 6, 0)
         }
         headerPanel.add(
-            JBLabel("Claude is exploring your codebase...", AnimatedIcon.Default(), SwingConstants.LEFT),
+            JBLabel("AI is exploring your codebase...", AnimatedIcon.Default(), SwingConstants.LEFT),
             BorderLayout.WEST,
         )
         elapsedLabel = JBLabel("0s").apply {
@@ -963,6 +1012,301 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
         panel.revalidate()
         panel.repaint()
+    }
+
+    // ── Repository Review Card ─────────────────────────────────────────
+
+    private fun createRepositoryReviewCard(): JPanel {
+        val panel = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(8)
+        }
+
+        val header = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        }
+        repoReviewSummaryLabel = JBLabel().apply {
+            border = JBUI.Borders.empty(0, 0, 6, 0)
+            verticalAlignment = SwingConstants.TOP
+        }
+        repoReviewMetadataLabel = JBLabel().apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            border = JBUI.Borders.empty(0, 0, 4, 0)
+        }
+        repoReviewStaleLabel = JBLabel().apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            border = JBUI.Borders.empty(0, 0, 8, 0)
+        }
+        header.add(repoReviewSummaryLabel!!)
+        header.add(repoReviewMetadataLabel!!)
+        header.add(repoReviewStaleLabel!!)
+        panel.add(header, BorderLayout.NORTH)
+
+        val split = JPanel(BorderLayout(JBUI.scale(8), 0))
+        repoFeatureListModel = DefaultListModel()
+        repoFeatureList = JBList(repoFeatureListModel!!).apply {
+            selectionMode = ListSelectionModel.SINGLE_SELECTION
+            cellRenderer = RepositoryFeatureCellRenderer()
+            addListSelectionListener {
+                if (!it.valueIsAdjusting) {
+                    refreshRepositoryFeatureDetails()
+                }
+            }
+        }
+        split.add(JBScrollPane(repoFeatureList!!).apply {
+            preferredSize = java.awt.Dimension(JBUI.scale(240), JBUI.scale(400))
+        }, BorderLayout.WEST)
+
+        val details = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        }
+        repoFeatureTitleLabel = JBLabel("Select a feature").apply {
+            font = JBUI.Fonts.label().asBold()
+            alignmentX = LEFT_ALIGNMENT
+        }
+        repoFeatureMetaLabel = JBLabel().apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            border = JBUI.Borders.empty(2, 0, 6, 0)
+            alignmentX = LEFT_ALIGNMENT
+        }
+        repoFeatureBodyText = createOverviewTextArea().apply {
+            alignmentX = LEFT_ALIGNMENT
+        }
+        repoFeatureFindingsText = createOverviewTextArea().apply {
+            border = BorderFactory.createTitledBorder("Findings")
+            alignmentX = LEFT_ALIGNMENT
+        }
+        repoCrossCuttingText = createOverviewTextArea().apply {
+            border = BorderFactory.createTitledBorder("Cross-cutting review notes")
+            alignmentX = LEFT_ALIGNMENT
+        }
+        repoFeaturePathsModel = DefaultListModel()
+        repoFeaturePathsList = JBList(repoFeaturePathsModel!!).apply {
+            selectionMode = ListSelectionModel.SINGLE_SELECTION
+            cellRenderer = FeaturePathCellRenderer()
+            addListSelectionListener {
+                if (!it.valueIsAdjusting) {
+                    refreshRepositoryPathDetails()
+                }
+            }
+        }
+        repoPathDescriptionText = createOverviewTextArea().apply {
+            border = BorderFactory.createTitledBorder("Selected path")
+            alignmentX = LEFT_ALIGNMENT
+        }
+
+        details.add(repoFeatureTitleLabel!!)
+        details.add(repoFeatureMetaLabel!!)
+        details.add(repoFeatureBodyText!!)
+        details.add(Box.createVerticalStrut(JBUI.scale(8)))
+        details.add(repoCrossCuttingText!!)
+        details.add(Box.createVerticalStrut(JBUI.scale(8)))
+        details.add(repoFeatureFindingsText!!)
+        details.add(Box.createVerticalStrut(JBUI.scale(8)))
+        details.add(JBScrollPane(repoFeaturePathsList!!).apply {
+            border = BorderFactory.createTitledBorder("Recommended bounded walkthrough paths")
+            alignmentX = LEFT_ALIGNMENT
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(180))
+        })
+        details.add(Box.createVerticalStrut(JBUI.scale(8)))
+        details.add(repoPathDescriptionText!!)
+        split.add(JBScrollPane(details), BorderLayout.CENTER)
+        panel.add(split, BorderLayout.CENTER)
+
+        val actions = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            border = JBUI.Borders.empty(8, 0, 0, 0)
+        }
+        startFeatureWalkthroughButton = JButton("Start Bounded Walkthrough").apply {
+            addActionListener { startSelectedFeatureWalkthrough() }
+        }
+        refreshRepoReviewButton = JButton("Refresh Repo Review").apply {
+            addActionListener { sessionService.startRepositoryReview() }
+        }
+        copyRepoReviewButton = JButton("Copy Review Markdown").apply {
+            addActionListener { copyRepositoryReviewMarkdown() }
+        }
+        actions.add(startFeatureWalkthroughButton!!)
+        actions.add(refreshRepoReviewButton!!)
+        actions.add(copyRepoReviewButton!!)
+        panel.add(actions, BorderLayout.SOUTH)
+
+        repoReviewPanel = panel
+        return panel
+    }
+
+    private fun refreshRepositoryReviewCard() {
+        val snapshot = sessionService.currentRepositoryReview
+        val panel = repoReviewPanel ?: return
+        if (snapshot == null) {
+            repoReviewSummaryLabel?.text = "<html><b>No stored repository review</b><br>Run a thorough repo review from the input card.</html>"
+            repoReviewMetadataLabel?.text = ""
+            repoReviewStaleLabel?.text = ""
+            repoFeatureListModel?.clear()
+            refreshRepositoryFeatureDetails()
+            panel.revalidate()
+            panel.repaint()
+            return
+        }
+
+        repoReviewSummaryLabel?.text = "<html>${escapeHtml(snapshot.summary)}</html>"
+        repoReviewMetadataLabel?.text = buildList {
+            add("${snapshot.features.size} feature slices")
+            add("${snapshot.crossCuttingFindings.size} cross-cutting findings")
+            snapshot.providerLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }.joinToString("  ·  ")
+        repoReviewStaleLabel?.text = if (sessionService.repositoryReviewIsStale()) {
+            "Stored review is stale relative to the current repository."
+        } else {
+            "Stored review matches the current repository fingerprint."
+        }
+        repoCrossCuttingText?.text = if (snapshot.crossCuttingFindings.isEmpty()) {
+            "No cross-cutting findings were returned."
+        } else {
+            snapshot.crossCuttingFindings.joinToString("\n\n") { finding ->
+                "[${finding.severity}] ${finding.title}\n${finding.summary}"
+            }
+        }
+
+        val model = repoFeatureListModel ?: return
+        model.clear()
+        snapshot.features.forEach(model::addElement)
+        if (model.size > 0 && repoFeatureList?.selectedIndex !in 0 until model.size) {
+            repoFeatureList?.selectedIndex = 0
+        }
+        refreshRepositoryFeatureDetails()
+        panel.revalidate()
+        panel.repaint()
+    }
+
+    private fun refreshRepositoryFeatureDetails() {
+        val feature = repoFeatureList?.selectedValue
+        if (feature == null) {
+            repoFeatureTitleLabel?.text = "Select a feature"
+            repoFeatureMetaLabel?.text = ""
+            repoFeatureBodyText?.text = ""
+            repoFeatureFindingsText?.text = ""
+            repoFeaturePathsModel?.clear()
+            refreshRepositoryPathDetails()
+            return
+        }
+
+        repoFeatureTitleLabel?.text = feature.name
+        repoFeatureMetaLabel?.text = buildList {
+            add("${feature.filePaths.size} files")
+            add("${feature.findings.size} findings")
+            feature.category?.takeIf { it.isNotBlank() }?.let { add(it) }
+            feature.overallRisk?.takeIf { it.isNotBlank() }?.let { add("risk: $it") }
+            if (feature.uncertain) add("uncertain")
+        }.joinToString("  ·  ")
+        repoFeatureBodyText?.text = buildString {
+            appendLine(feature.summary)
+            feature.businessValue?.takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine("Business value:")
+                appendLine(it)
+            }
+            feature.whyThisMatters?.takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine("Why this matters:")
+                appendLine(it)
+            }
+            if (feature.entrypoints.isNotEmpty()) {
+                appendLine()
+                appendLine("Entrypoints:")
+                feature.entrypoints.forEach { entry ->
+                    val symbol = entry.symbol?.takeIf { it.isNotBlank() }?.let { " :: $it" }.orEmpty()
+                    appendLine("- ${entry.filePath}$symbol")
+                }
+            }
+            if (feature.filePaths.isNotEmpty()) {
+                appendLine()
+                appendLine("Owned files:")
+                feature.filePaths.take(8).forEach { appendLine("- $it") }
+                if (feature.filePaths.size > 8) {
+                    appendLine("- ... and ${feature.filePaths.size - 8} more")
+                }
+            }
+            feature.validationNote?.takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine("Grounding note:")
+                appendLine(it)
+            }
+        }.trim()
+        repoFeatureFindingsText?.text = if (feature.findings.isEmpty()) {
+            "No feature-specific findings were returned."
+        } else {
+            feature.findings.joinToString("\n\n") { finding ->
+                buildString {
+                    append("[${finding.severity}] ${finding.title}\n")
+                    append(finding.summary)
+                    finding.suggestedAction?.takeIf { it.isNotBlank() }?.let { append("\nAction: $it") }
+                    finding.testGap?.takeIf { it.isNotBlank() }?.let { append("\nTest gap: $it") }
+                }
+            }
+        }
+
+        val pathModel = repoFeaturePathsModel ?: return
+        pathModel.clear()
+        feature.paths.forEach(pathModel::addElement)
+        if (pathModel.size > 0) {
+            repoFeaturePathsList?.selectedIndex = 0
+        }
+        refreshRepositoryPathDetails()
+    }
+
+    private fun refreshRepositoryPathDetails() {
+        val path = repoFeaturePathsList?.selectedValue
+        repoPathDescriptionText?.text = if (path == null) {
+            "Select a recommended path to start a bounded walkthrough."
+        } else {
+            buildString {
+                appendLine(path.description)
+                appendLine()
+                appendLine("Suggested mode: ${AnalysisMode.fromId(path.defaultMode).displayName}")
+                path.entryFilePath?.takeIf { it.isNotBlank() }?.let { appendLine("Entry file: $it") }
+                path.entrySymbol?.takeIf { it.isNotBlank() }?.let { appendLine("Entry symbol: $it") }
+                if (path.filePaths.isNotEmpty()) {
+                    appendLine()
+                    appendLine("Bounded files:")
+                    path.filePaths.take(8).forEach { appendLine("- $it") }
+                }
+                if (path.supportingSymbols.isNotEmpty()) {
+                    appendLine()
+                    appendLine("Supporting symbols:")
+                    path.supportingSymbols.forEach { appendLine("- $it") }
+                }
+                if (path.boundaryNotes.isNotEmpty()) {
+                    appendLine()
+                    appendLine("Boundary notes:")
+                    path.boundaryNotes.forEach { appendLine("- $it") }
+                }
+                appendLine()
+                appendLine("Prompt seed:")
+                append(path.promptSeed)
+                path.validationNote?.takeIf { it.isNotBlank() }?.let {
+                    appendLine()
+                    appendLine()
+                    appendLine("Grounding note:")
+                    append(it)
+                }
+            }.trim()
+        }
+        startFeatureWalkthroughButton?.isEnabled = path != null && path.broken.not()
+    }
+
+    private fun startSelectedFeatureWalkthrough() {
+        val feature = repoFeatureList?.selectedValue ?: return
+        val path = repoFeaturePathsList?.selectedValue ?: return
+        sessionService.startFeatureWalkthrough(feature.id, path.id)
+    }
+
+    private fun copyRepositoryReviewMarkdown() {
+        val snapshot = sessionService.currentRepositoryReview ?: return
+        val markdown = RepositoryReviewMarkdownExporter.build(snapshot)
+        CopyPasteManager.getInstance().setContents(StringSelection(markdown))
+        WindowManager.getInstance().getStatusBar(project)?.info = "Repository review copied to clipboard"
     }
 
     private fun updateMetadataBar(metadata: ResponseMetadata?) {
@@ -1740,6 +2084,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 symbol = step.symbol,
                 selectionStartLine = step.startLine,
                 selectionEndLine = step.endLine,
+                featureScope = sessionService.currentFeatureScope,
             )
         } else {
             currentEditorQueryContext()
@@ -2045,8 +2390,10 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun checkProviderStatus() {
         scope.launch {
-            val status = project.service<LlmProviderService>().checkAvailability()
+            val providerService = project.service<LlmProviderService>()
+            val status = providerService.checkAvailability()
             javax.swing.SwingUtilities.invokeLater {
+                repoReviewButton?.isEnabled = status.available && providerService.supportsRepositoryReview()
                 when {
                     status.available && status.walkthroughSupported -> {
                         statusDot?.icon = AllIcons.General.InspectionsOK
@@ -2161,6 +2508,92 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
     }
 
+    private class RepositoryFeatureCellRenderer : ListCellRenderer<RepositoryFeature> {
+        override fun getListCellRendererComponent(
+            list: JList<out RepositoryFeature>,
+            value: RepositoryFeature,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean,
+        ): java.awt.Component {
+            val title = SimpleColoredComponent().apply {
+                isOpaque = false
+            }
+            val metaLabel = JBLabel(
+                buildList {
+                    add("${value.filePaths.size} files")
+                    add("${value.findings.size} findings")
+                    value.overallRisk?.takeIf { it.isNotBlank() }?.let { add("risk: $it") }
+                }.joinToString("  ·  "),
+            ).apply {
+                font = JBUI.Fonts.smallFont()
+            }
+            val panel = JPanel(BorderLayout()).apply {
+                border = JBUI.Borders.empty(4, 6)
+                isOpaque = true
+            }
+            if (isSelected) {
+                panel.background = list.selectionBackground
+                title.foreground = list.selectionForeground
+                metaLabel.foreground = list.selectionForeground
+            } else {
+                panel.background = list.background
+                title.foreground = list.foreground
+                metaLabel.foreground = UIUtil.getLabelDisabledForeground()
+            }
+            title.append(value.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            if (value.uncertain) {
+                title.append(" (uncertain)", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+            }
+            panel.add(title, BorderLayout.NORTH)
+            panel.add(metaLabel, BorderLayout.SOUTH)
+            return panel
+        }
+    }
+
+    private class FeaturePathCellRenderer : ListCellRenderer<FeaturePath> {
+        override fun getListCellRendererComponent(
+            list: JList<out FeaturePath>,
+            value: FeaturePath,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean,
+        ): java.awt.Component {
+            val title = SimpleColoredComponent().apply {
+                isOpaque = false
+            }
+            val metaLabel = JBLabel(
+                buildList {
+                    add(AnalysisMode.fromId(value.defaultMode).displayName)
+                    if (value.filePaths.isNotEmpty()) add("${value.filePaths.size} files")
+                    if (value.uncertain) add("uncertain")
+                }.joinToString("  ·  "),
+            ).apply {
+                font = JBUI.Fonts.smallFont()
+            }
+            val panel = JPanel(BorderLayout()).apply {
+                border = JBUI.Borders.empty(4, 6)
+                isOpaque = true
+            }
+            if (isSelected) {
+                panel.background = list.selectionBackground
+                title.foreground = list.selectionForeground
+                metaLabel.foreground = list.selectionForeground
+            } else {
+                panel.background = list.background
+                title.foreground = list.foreground
+                metaLabel.foreground = UIUtil.getLabelDisabledForeground()
+            }
+            title.append(value.title, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            if (value.broken) {
+                title.append(" (unavailable)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            }
+            panel.add(title, BorderLayout.NORTH)
+            panel.add(metaLabel, BorderLayout.SOUTH)
+            return panel
+        }
+    }
+
     // ── Command History ──────────────────────────────────────────────────
 
     private fun addToHistory(text: String) {
@@ -2199,6 +2632,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         private const val CARD_INPUT = "INPUT"
         private const val CARD_LOADING = "LOADING"
         private const val CARD_OVERVIEW = "OVERVIEW"
+        private const val CARD_REPO_REVIEW = "REPO_REVIEW"
         private const val CARD_TOUR_ACTIVE = "TOUR_ACTIVE"
     }
 }

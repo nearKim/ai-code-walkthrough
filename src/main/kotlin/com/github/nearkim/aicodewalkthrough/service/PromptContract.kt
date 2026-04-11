@@ -96,6 +96,120 @@ object PromptContract {
           ]
         }
 
+        Repository review response:
+        {
+          "type": "repository_review",
+          "summary": "High-level assessment of the repository.",
+          "repository_summary": "Optional architecture summary for the repo.",
+          "overall_assessment": "Optional concise assessment covering quality, risk, and review posture.",
+          "overall_risk": "Optional overall risk summary.",
+          "analysis_trace": {
+            "semantic_tools_used": ["find_symbol", "find_referencing_symbols"],
+            "delegated_agents": ["Optional short note for delegated analysis."]
+          },
+          "cross_cutting_findings": [
+            {
+              "id": "cross-1",
+              "title": "Short finding title",
+              "summary": "Why this matters across the repo.",
+              "severity": "critical|high|medium|low|info",
+              "risk_type": "correctness|security|performance|concurrency|api|tests|maintainability",
+              "suggested_action": "Optional next step.",
+              "test_gap": "Optional missing-test note.",
+              "related_path_ids": ["feature-a-primary"],
+              "uncertain": false,
+              "evidence": [
+                {
+                  "kind": "symbol|reference|line_range|diff|test|note",
+                  "label": "What grounds this finding",
+                  "file_path": "relative/path/to/file.kt",
+                  "start_line": 10,
+                  "end_line": 18,
+                  "text": "Optional short supporting text."
+                }
+              ]
+            }
+          ],
+          "features": [
+            {
+              "id": "feature-provider-routing",
+              "name": "Provider routing and grounding",
+              "category": "business_feature|capability|shared_infrastructure|integration_surface",
+              "summary": "What this feature owns and why it exists.",
+              "business_value": "User or system value provided by this feature.",
+              "why_this_matters": "Why this slice deserves separate review and walkthroughs.",
+              "file_paths": ["relative/path/to/file.kt"],
+              "dependencies": ["feature-other"],
+              "entrypoints": [
+                {
+                  "file_path": "relative/path/to/file.kt",
+                  "symbol": "startMapping",
+                  "label": "Primary entrypoint",
+                  "start_line": 10,
+                  "end_line": 40
+                }
+              ],
+              "overall_risk": "Optional feature-level risk summary.",
+              "uncertain": false,
+              "findings": [
+                {
+                  "id": "feature-find-1",
+                  "title": "Short finding title",
+                  "summary": "Concrete issue or review note.",
+                  "severity": "critical|high|medium|low|info",
+                  "risk_type": "correctness|security|performance|concurrency|api|tests|maintainability",
+                  "suggested_action": "Optional next step.",
+                  "test_gap": "Optional missing-test note.",
+                  "related_path_ids": ["feature-provider-routing-primary"],
+                  "uncertain": false,
+                  "evidence": [
+                    {
+                      "kind": "symbol|reference|line_range|diff|test|note",
+                      "label": "What grounds this finding",
+                      "file_path": "relative/path/to/file.kt",
+                      "start_line": 10,
+                      "end_line": 18,
+                      "text": "Optional short supporting text."
+                    }
+                  ]
+                }
+              ],
+              "suggested_tests": [
+                {
+                  "title": "Short test title",
+                  "description": "Why this test matters.",
+                  "file_hint": "Optional relative/path/to/test/file"
+                }
+              ],
+              "paths": [
+                {
+                  "id": "feature-provider-routing-primary",
+                  "title": "Primary grounded walkthrough",
+                  "description": "What this bounded walkthrough will show.",
+                  "default_mode": "understand|review|trace|risk|comment",
+                  "prompt_seed": "Concrete bounded-walkthrough request to use when the user selects this path.",
+                  "entry_file_path": "relative/path/to/file.kt",
+                  "entry_symbol": "startMapping",
+                  "file_paths": ["relative/path/to/file.kt"],
+                  "supporting_symbols": ["FlowPlannerService.mapFlow"],
+                  "boundary_notes": ["Stop when the flow crosses into a different feature unless the boundary itself matters."],
+                  "uncertain": false,
+                  "evidence": [
+                    {
+                      "kind": "symbol|reference|line_range|diff|test|note",
+                      "label": "Why this path exists",
+                      "file_path": "relative/path/to/file.kt",
+                      "start_line": 10,
+                      "end_line": 18,
+                      "text": "Optional short supporting text."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+
         Clarification response:
         {
           "type": "clarification",
@@ -157,11 +271,16 @@ object PromptContract {
         23. For type "step_answer", use evidence for claims about callers, callees, side effects, invariants, or risks.
         24. If your environment can delegate work to subagents or specialized workers, use that only when it materially improves grounding, and report it briefly in analysis_trace.delegated_agents.
         25. Keep the path focused. Include side branches only when they materially change execution, risk, or review outcome.
+        26. When request_type is "repository_review", return type "repository_review" and split the repository into 4-10 meaningful business features or capability slices plus any truly shared infrastructure.
+        27. For repository review, every feature must include at least one bounded walkthrough path with a strong prompt_seed that can be reused later without restating the whole repository context.
+        28. For repository review, prefer a smaller number of high-signal findings over exhaustive noise. Every substantive finding must have evidence.
+        29. If a feature_scope is provided in the user request, keep the walkthrough bounded to that feature's allowed_file_paths and supporting_symbols unless you are explicitly documenting a boundary crossing.
+        30. If a feature_scope is provided, treat files outside the scope as external boundaries, not as primary steps, unless they are necessary to explain a dependency edge.
     """.trimIndent()
 
     private val mcpAddendum = """
 
-        26. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
+        31. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
             - get_symbols_overview(relative_path): understand a file's full symbol structure without reading every line. Start here when opening any file.
             - find_symbol(name_path, relative_path, depth=1, include_body=true): use this to locate the exact symbol and get precise start/end lines.
             - find_referencing_symbols(name_path, relative_path): use this to trace call flow between symbols.
@@ -171,5 +290,9 @@ object PromptContract {
 
     fun buildSystemPrompt(enableSemanticTools: Boolean): String {
         return if (enableSemanticTools) baseSystemPrompt + mcpAddendum else baseSystemPrompt
+    }
+
+    fun buildSystemPrompt(promptKind: PromptKind, enableSemanticTools: Boolean): String {
+        return buildSystemPrompt(enableSemanticTools)
     }
 }

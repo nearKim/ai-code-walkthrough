@@ -35,9 +35,9 @@ data class RepositoryFinding(
     val title: String,
     val summary: String,
     val severity: String,
-    val category: String? = null,
+    @SerialName("risk_type") val category: String? = null,
     @SerialName("affected_files") val affectedFiles: List<String> = emptyList(),
-    @SerialName("path_ids") val pathIds: List<String> = emptyList(),
+    @SerialName("related_path_ids") val pathIds: List<String> = emptyList(),
     val evidence: List<EvidenceItem> = emptyList(),
     @SerialName("suggested_action") val suggestedAction: String? = null,
     @SerialName("test_gap") val testGap: String? = null,
@@ -55,19 +55,22 @@ data class RepositoryFinding(
 data class FeaturePath(
     val id: String,
     val title: String,
-    val summary: String,
+    @SerialName("description") val summary: String,
     val rationale: String? = null,
+    @SerialName("default_mode") val mode: String? = null,
     @SerialName("prompt_seed") val promptSeed: String,
     @SerialName("entrypoint_id") val entrypointId: String? = null,
+    @SerialName("file_paths") val filePaths: List<String> = emptyList(),
     @SerialName("focus_files") val focusFiles: List<String> = emptyList(),
     @SerialName("likely_entry_files") val likelyEntryFiles: List<String> = emptyList(),
     @SerialName("starting_points") val startingPoints: List<FeatureEntrypoint> = emptyList(),
+    @SerialName("boundary_notes") val boundaryNotes: List<String> = emptyList(),
     @SerialName("boundary_note") val boundaryNote: String? = null,
     @SerialName("walkthrough_question") val walkthroughQuestion: String? = null,
     @SerialName("entry_file_path") val entryFilePath: String? = null,
     @SerialName("entry_symbol") val entrySymbol: String? = null,
     @SerialName("supporting_symbols") val supportingSymbols: List<String> = emptyList(),
-    @SerialName("mode") val mode: String? = null,
+    val evidence: List<EvidenceItem> = emptyList(),
     val uncertain: Boolean = false,
     @kotlinx.serialization.Transient val broken: Boolean = false,
     @kotlinx.serialization.Transient val validationNote: String? = null,
@@ -80,29 +83,25 @@ data class FeaturePath(
 
     val defaultMode: String?
         get() = mode
-
-    val filePaths: List<String>
-        get() = if (focusFiles.isNotEmpty()) focusFiles else likelyEntryFiles
-
-    val boundaryNotes: List<String>
-        get() = boundaryNote?.let { listOf(it) } ?: emptyList()
 }
 
 @Serializable
 data class RepositoryFeature(
     val id: String,
-    val title: String,
+    @SerialName("name") val title: String,
     val summary: String,
     val category: String? = null,
     @SerialName("business_value") val businessValue: String? = null,
-    @SerialName("why_important") val whyImportant: String? = null,
+    @SerialName("why_this_matters") val whyImportant: String? = null,
     @SerialName("file_paths") val filePaths: List<String> = emptyList(),
+    val dependencies: List<String> = emptyList(),
     @SerialName("owned_paths") val ownedPaths: List<String> = emptyList(),
     @SerialName("shared_paths") val sharedPaths: List<String> = emptyList(),
     @SerialName("entry_hints") val entryHints: List<FeatureEntrypoint> = emptyList(),
     val entrypoints: List<FeatureEntrypoint> = emptyList(),
     val paths: List<FeaturePath> = emptyList(),
     val findings: List<RepositoryFinding> = emptyList(),
+    @SerialName("suggested_tests") val suggestedTests: List<SuggestedTest> = emptyList(),
     @SerialName("review_summary") val reviewSummary: String? = null,
     @SerialName("overall_risk") val overallRisk: String? = null,
     @SerialName("primary_path_id") val primaryPathId: String? = null,
@@ -252,3 +251,4 @@ typealias ReviewEntrypoint = FeatureEntrypoint
 typealias ReviewFinding = RepositoryFinding
 typealias RepositoryReviewFinding = RepositoryFinding
 typealias FeatureSlice = RepositoryFeature
+typealias FeatureWalkthroughPath = FeaturePath
