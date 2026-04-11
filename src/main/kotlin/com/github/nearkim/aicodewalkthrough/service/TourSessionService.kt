@@ -379,10 +379,12 @@ class TourSessionService(private val project: Project, private val scope: Corout
                         transitionTo(TourState.REPO_REVIEW)
                     },
                     onFailure = { error ->
-                        errorMessage = error.message ?: "Unknown error"
                         val provider = providerService.currentProvider()
-                        if (!providerService.supportsRepositoryReview(provider)) {
-                            errorMessage = errorMessage ?: "Repository review requires symbolic analysis."
+                        errorMessage = if (!providerService.supportsRepositoryReview(provider)) {
+                            "Thorough repository review requires symbolic analysis. " +
+                                "Use Claude CLI with MCP semantic navigation enabled."
+                        } else {
+                            error.message ?: "Unknown error"
                         }
                         transitionTo(TourState.INPUT)
                     },

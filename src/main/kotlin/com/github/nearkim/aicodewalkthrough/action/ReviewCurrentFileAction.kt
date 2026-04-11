@@ -1,5 +1,6 @@
 package com.github.nearkim.aicodewalkthrough.action
 
+import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -16,6 +17,7 @@ class ReviewCurrentFileAction : AnAction() {
         CursorActionSupport.runAnalysis(
             project = project,
             prompt = CursorActionSupport.buildReviewPrompt(context),
+            mode = AnalysisMode.REVIEW,
             context = context,
         )
     }

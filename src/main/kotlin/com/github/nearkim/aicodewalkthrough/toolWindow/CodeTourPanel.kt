@@ -63,7 +63,7 @@ import javax.swing.ListSelectionModel
 import javax.swing.ListCellRenderer
 import javax.swing.SwingConstants
 
-private enum class ReviewMode(
+internal enum class ReviewMode(
     val displayName: String,
     val placeholder: String,
     val intro: String,
@@ -73,6 +73,25 @@ private enum class ReviewMode(
     TRACE("Trace", "Trace the execution path or call chain...", "Follow symbols and execution order with minimal speculation."),
     RISK("Risk", "Highlight blast radius and invariants...", "Analyze what can break, who depends on it, and why."),
     COMMENT("Comment", "Draft a review comment for the current code...", "Compose concise, evidence-backed review comments."),
+    ;
+
+    fun toAnalysisMode(): AnalysisMode = when (this) {
+        UNDERSTAND -> AnalysisMode.UNDERSTAND
+        REVIEW -> AnalysisMode.REVIEW
+        TRACE -> AnalysisMode.TRACE
+        RISK -> AnalysisMode.RISK
+        COMMENT -> AnalysisMode.COMMENT
+    }
+
+    companion object {
+        fun fromAnalysisMode(mode: AnalysisMode): ReviewMode = when (mode) {
+            AnalysisMode.UNDERSTAND -> UNDERSTAND
+            AnalysisMode.REVIEW -> REVIEW
+            AnalysisMode.TRACE -> TRACE
+            AnalysisMode.RISK -> RISK
+            AnalysisMode.COMMENT -> COMMENT
+        }
+    }
 }
 
 private enum class CommentStyle(val displayName: String, val leadIn: String) {
@@ -184,6 +203,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private val history = mutableListOf<String>()
     private var historyIndex = 0
     private var historyDraft = ""
+    private var listenerRegistered = false
 
     init {
         cardPanel.add(createInputCard(), CARD_INPUT)
@@ -194,9 +214,14 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
         add(cardPanel, BorderLayout.CENTER)
 
-        sessionService.addListener(this)
+        registerSessionListener()
         showCard(sessionService.state)
         checkProviderStatus()
+    }
+
+    override fun addNotify() {
+        super.addNotify()
+        registerSessionListener()
     }
 
     override fun onStateChanged(state: TourState) {
@@ -230,11 +255,12 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     override fun removeNotify() {
         super.removeNotify()
-        sessionService.removeListener(this)
+        unregisterSessionListener()
         stopElapsedTimer()
     }
 
     private fun showCard(state: TourState) {
+        syncModeWithSession()
         applyFeatureVisibility()
         when (state) {
             TourState.INPUT -> {
@@ -542,6 +568,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         addToHistory(question)
         sessionService.startMapping(
             question = buildPromptWithContext(question, currentMode),
+            mode = currentMode.toAnalysisMode(),
             queryContext = currentEditorQueryContext(),
             featureScope = null,
         )
@@ -677,6 +704,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         chip.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 questionTextArea?.text = text
+                questionTextArea?.caretPosition = text.length
+                questionTextArea?.requestFocusInWindow()
             }
             override fun mouseEntered(e: MouseEvent) {
                 chip.background = JBUI.CurrentTheme.ActionButton.hoverBackground()
@@ -1743,7 +1772,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private fun submitOverviewFollowUp() {
         submitFieldText(followUpField) { text ->
             sessionService.submitFollowUp(
-                buildPromptWithContext(text, currentMode, selectedStepContext()),
+                question = buildPromptWithContext(text, currentMode, selectedStepContext()),
+                mode = currentMode.toAnalysisMode(),
                 queryContext = selectedOverviewQueryContext(),
             )
         }
@@ -2127,6 +2157,25 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                     }
                 }
             }
+        }
+    }
+
+    private fun registerSessionListener() {
+        if (listenerRegistered) return
+        sessionService.addListener(this)
+        listenerRegistered = true
+    }
+
+    private fun unregisterSessionListener() {
+        if (!listenerRegistered) return
+        sessionService.removeListener(this)
+        listenerRegistered = false
+    }
+
+    private fun syncModeWithSession() {
+        val sessionMode = ReviewMode.fromAnalysisMode(sessionService.currentMode)
+        if (sessionMode != currentMode) {
+            selectMode(sessionMode, updatePromptPlaceholder = true)
         }
     }
 

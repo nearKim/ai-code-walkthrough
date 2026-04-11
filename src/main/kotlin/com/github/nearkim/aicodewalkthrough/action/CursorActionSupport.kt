@@ -1,5 +1,6 @@
 package com.github.nearkim.aicodewalkthrough.action
 
+import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.github.nearkim.aicodewalkthrough.model.EditorContextSnapshot
 import com.github.nearkim.aicodewalkthrough.service.EditorContextFormatter
 import com.github.nearkim.aicodewalkthrough.service.EditorContextService
@@ -15,11 +16,17 @@ object CursorActionSupport {
 
     fun isEnabled(project: Project): Boolean = project.service<CodeTourSettings>().state.enableCursorActions
 
-    fun runAnalysis(project: Project, prompt: String, context: EditorContextSnapshot? = null) {
+    fun runAnalysis(
+        project: Project,
+        prompt: String,
+        mode: AnalysisMode,
+        context: EditorContextSnapshot? = null,
+    ) {
         if (!isEnabled(project)) return
         ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID)?.show()
         project.service<TourSessionService>().startMapping(
             question = prompt,
+            mode = mode,
             queryContext = context?.toQueryContext(invokedFromCursor = true),
         )
     }
