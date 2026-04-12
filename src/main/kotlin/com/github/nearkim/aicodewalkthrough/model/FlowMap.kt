@@ -66,6 +66,7 @@ data class StepAnswer(
     @SerialName("why_it_matters") val whyItMatters: String? = null,
     @SerialName("important_lines") val importantLines: List<LineAnnotation> = emptyList(),
     val evidence: List<EvidenceItem> = emptyList(),
+    @SerialName("potential_bugs") val potentialBugs: List<RepositoryFinding> = emptyList(),
     val confidence: String? = null,
     val uncertain: Boolean = false,
 )
@@ -88,6 +89,7 @@ data class FlowStep(
     val confidence: String? = null,
     @SerialName("risk_type") val riskType: String? = null,
     val evidence: List<EvidenceItem> = emptyList(),
+    @SerialName("potential_bugs") val potentialBugs: List<RepositoryFinding> = emptyList(),
     @SerialName("suggested_action") val suggestedAction: String? = null,
     @SerialName("test_gap") val testGap: String? = null,
     @SerialName("comment_drafts") val commentDrafts: List<CommentDraft> = emptyList(),
@@ -128,6 +130,7 @@ data class LlmResponse(
     @SerialName("why_it_matters") val whyItMatters: String? = null,
     @SerialName("important_lines") val importantLines: List<LineAnnotation>? = null,
     val evidence: List<EvidenceItem>? = null,
+    @SerialName("potential_bugs") val potentialBugs: List<RepositoryFinding>? = null,
     val confidence: String? = null,
     val uncertain: Boolean? = null,
     @SerialName("clarification_question") val clarificationQuestion: String? = null,
@@ -164,6 +167,7 @@ data class LlmResponse(
             whyItMatters = whyItMatters,
             importantLines = importantLines ?: emptyList(),
             evidence = evidence ?: emptyList(),
+            potentialBugs = potentialBugs ?: emptyList(),
             confidence = confidence,
             uncertain = uncertain ?: false,
         )

@@ -90,7 +90,7 @@ class ReviewArtifactStore(private val project: Project) {
     }
 
     fun captureFingerprint(): RepositoryFingerprint {
-        return RepositoryFingerprintService(project).capture()
+        return RepositoryFingerprintService.capture(project.basePath)
     }
 
     fun isStale(snapshot: RepositoryReviewSnapshot): Boolean {

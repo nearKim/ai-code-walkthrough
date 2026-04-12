@@ -51,6 +51,28 @@ object PromptContract {
                   "text": "Optional short supporting text."
                 }
               ],
+              "potential_bugs": [
+                {
+                  "id": "bug-1",
+                  "title": "Short bug title",
+                  "summary": "Concrete bug, regression risk, or unsafe assumption in this step.",
+                  "severity": "critical|high|medium|low|info",
+                  "risk_type": "correctness|security|performance|concurrency|api|tests|maintainability",
+                  "suggested_action": "Optional reviewer-facing next step.",
+                  "test_gap": "Optional missing-test note.",
+                  "uncertain": false,
+                  "evidence": [
+                    {
+                      "kind": "symbol|reference|line_range|diff|test|note",
+                      "label": "What grounds this potential bug",
+                      "file_path": "relative/path/to/file.kt",
+                      "start_line": 12,
+                      "end_line": 18,
+                      "text": "Optional short supporting text."
+                    }
+                  ]
+                }
+              ],
               "suggested_action": "Optional reviewer-facing next step.",
               "test_gap": "Optional note about missing or weak tests.",
               "comment_drafts": [
@@ -238,6 +260,28 @@ object PromptContract {
               "text": "Optional short supporting text."
             }
           ],
+          "potential_bugs": [
+            {
+              "id": "bug-1",
+              "title": "Short bug title",
+              "summary": "Concrete bug, regression risk, or unsafe assumption visible in the current step.",
+              "severity": "critical|high|medium|low|info",
+              "risk_type": "correctness|security|performance|concurrency|api|tests|maintainability",
+              "suggested_action": "Optional next step.",
+              "test_gap": "Optional missing-test note.",
+              "uncertain": false,
+              "evidence": [
+                {
+                  "kind": "symbol|reference|line_range|diff|test|note",
+                  "label": "What grounds this potential bug",
+                  "file_path": "relative/path/to/file.kt",
+                  "start_line": 12,
+                  "end_line": 18,
+                  "text": "Optional short supporting text."
+                }
+              ]
+            }
+          ],
           "confidence": "optional: high|medium|low|uncertain",
           "uncertain": false
         }
@@ -269,18 +313,23 @@ object PromptContract {
         21. For type "step_answer", answer the user's question about the current step without remapping the whole repo.
         22. For type "step_answer", explain the whole symbol or code region first, then annotate only the important lines.
         23. For type "step_answer", use evidence for claims about callers, callees, side effects, invariants, or risks.
-        24. If your environment can delegate work to subagents or specialized workers, use that only when it materially improves grounding, and report it briefly in analysis_trace.delegated_agents.
-        25. Keep the path focused. Include side branches only when they materially change execution, risk, or review outcome.
-        26. When request_type is "repository_review", return type "repository_review" and split the repository into 4-10 meaningful business features or capability slices plus any truly shared infrastructure.
-        27. For repository review, every feature must include at least one bounded walkthrough path with a strong prompt_seed that can be reused later without restating the whole repository context.
-        28. For repository review, prefer a smaller number of high-signal findings over exhaustive noise. Every substantive finding must have evidence.
-        29. If a feature_scope is provided in the user request, keep the walkthrough bounded to that feature's allowed_file_paths and supporting_symbols unless you are explicitly documenting a boundary crossing.
-        30. If a feature_scope is provided, treat files outside the scope as external boundaries, not as primary steps, unless they are necessary to explain a dependency edge.
+        24. Use potential_bugs for grounded step-local bug findings. Keep this list short and high-signal, usually 0-3 items per step.
+        25. In review, risk, and comment modes, include potential_bugs whenever you see a concrete bug, regression risk, unsafe assumption, or missing guard in that step.
+        26. In understand or trace mode, you may still include potential_bugs, but only when the issue is concrete and grounded enough that a reviewer would want to see it immediately.
+        27. Every potential_bugs entry must include severity, summary, and evidence. Use suggested_action and test_gap when they are clear.
+        28. For type "step_answer", include potential_bugs when the current step contains a concrete risk the user should notice during the explanation.
+        29. If your environment can delegate work to subagents or specialized workers, use that only when it materially improves grounding, and report it briefly in analysis_trace.delegated_agents.
+        30. Keep the path focused. Include side branches only when they materially change execution, risk, or review outcome.
+        31. When request_type is "repository_review", return type "repository_review" and split the repository into 4-10 meaningful business features or capability slices plus any truly shared infrastructure.
+        32. For repository review, every feature must include at least one bounded walkthrough path with a strong prompt_seed that can be reused later without restating the whole repository context.
+        33. For repository review, prefer a smaller number of high-signal findings over exhaustive noise. Every substantive finding must have evidence.
+        34. If a feature_scope is provided in the user request, keep the walkthrough bounded to that feature's allowed_file_paths and supporting_symbols unless you are explicitly documenting a boundary crossing.
+        35. If a feature_scope is provided, treat files outside the scope as external boundaries, not as primary steps, unless they are necessary to explain a dependency edge.
     """.trimIndent()
 
     private val mcpAddendum = """
 
-        31. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
+        36. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
             - get_symbols_overview(relative_path): understand a file's full symbol structure without reading every line. Start here when opening any file.
             - find_symbol(name_path, relative_path, depth=1, include_body=true): use this to locate the exact symbol and get precise start/end lines.
             - find_referencing_symbols(name_path, relative_path): use this to trace call flow between symbols.

@@ -4,6 +4,7 @@ import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
+import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import java.nio.file.Files
 import java.nio.file.Path
@@ -89,11 +90,15 @@ class StepValidator(private val projectBasePath: String) {
         val evidenceResult = sanitizeEvidence(step.evidence, step.filePath, validationNotes)
         if (evidenceResult.changed) downgradeConfidence = true
 
+        val bugResult = sanitizePotentialBugs(step.potentialBugs, step.filePath, validationNotes)
+        if (bugResult.changed) downgradeConfidence = true
+
         return step.copy(
             startLine = validatedStart,
             endLine = validatedEnd,
             lineAnnotations = annotationResult.value,
             evidence = evidenceResult.value,
+            potentialBugs = bugResult.value,
             uncertain = step.uncertain || downgradeConfidence,
             confidence = if (downgradeConfidence) "uncertain" else step.confidence,
             validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
@@ -168,6 +173,56 @@ class StepValidator(private val projectBasePath: String) {
                     endLine = end,
                 )
             }
+        }
+        return ValidationResult(sanitized, changed)
+    }
+
+    fun sanitizeEvidenceItems(
+        evidence: List<EvidenceItem>,
+        defaultFilePath: String,
+    ): List<EvidenceItem> = sanitizeEvidence(evidence, defaultFilePath, mutableListOf()).value
+
+    fun sanitizePotentialBugFindings(
+        findings: List<RepositoryFinding>,
+        defaultFilePath: String,
+    ): List<RepositoryFinding> = sanitizePotentialBugs(findings, defaultFilePath, mutableListOf()).value
+
+    private fun sanitizePotentialBugs(
+        findings: List<RepositoryFinding>,
+        defaultFilePath: String,
+        validationNotes: MutableList<String>,
+    ): ValidationResult<List<RepositoryFinding>> {
+        var changed = false
+        val sanitized = findings.map { finding ->
+            val findingNotes = mutableListOf<String>()
+            val evidenceResult = sanitizeEvidence(finding.evidence, defaultFilePath, findingNotes)
+            if (evidenceResult.changed) changed = true
+
+            val affectedFiles = finding.affectedFiles
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .ifEmpty { listOf(defaultFilePath) }
+            if (affectedFiles != finding.affectedFiles) {
+                changed = true
+                findingNotes += "Normalized affected files to the validated step scope."
+            }
+
+            val missingEvidence = evidenceResult.value.isEmpty()
+            if (missingEvidence) {
+                changed = true
+                findingNotes += "Potential bug ${finding.title.quote()} has no grounding evidence."
+            }
+
+            if (findingNotes.isNotEmpty()) {
+                validationNotes += findingNotes.map { note -> "Potential bug ${finding.title.quote()}: $note" }
+            }
+
+            finding.copy(
+                affectedFiles = affectedFiles,
+                evidence = evidenceResult.value,
+                uncertain = finding.uncertain || evidenceResult.changed || missingEvidence,
+                validationNote = (listOfNotNull(finding.validationNote) + findingNotes).joinToString(" ").orNullIfBlank(),
+            )
         }
         return ValidationResult(sanitized, changed)
     }

@@ -64,12 +64,17 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
         activeProcess = process
 
         try {
-            val stderrLines = mutableListOf<String>()
+            val stderrLines = ArrayDeque<String>()
             val stderrThread = Thread.ofVirtual().start {
                 process.errorStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
                         thisLogger().debug("claude stderr: $line")
-                        stderrLines.add(line)
+                        synchronized(stderrLines) {
+                            stderrLines.addLast(line)
+                            while (stderrLines.size > MAX_STDERR_LINES) {
+                                stderrLines.removeFirst()
+                            }
+                        }
                     }
                 }
             }
@@ -117,7 +122,9 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
             val exitCode = process.exitValue()
             if (exitCode != 0) {
-                val stderrOutput = stderrLines.joinToString("\n").take(500)
+                val stderrOutput = synchronized(stderrLines) {
+                    stderrLines.joinToString("\n").take(500)
+                }
                 throw IllegalStateException(
                     "Claude CLI exited with code $exitCode${if (stderrOutput.isNotBlank()) ": $stderrOutput" else ""}"
                 )
@@ -230,5 +237,9 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
         if (missing.isNotEmpty()) {
             env["PATH"] = (listOf(currentPath) + missing).joinToString(":")
         }
+    }
+
+    companion object {
+        private const val MAX_STDERR_LINES = 64
     }
 }

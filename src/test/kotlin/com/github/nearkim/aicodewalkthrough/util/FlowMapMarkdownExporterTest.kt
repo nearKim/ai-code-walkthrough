@@ -1,9 +1,11 @@
 package com.github.nearkim.aicodewalkthrough.util
 
 import com.github.nearkim.aicodewalkthrough.model.AnalysisTrace
+import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
+import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.github.nearkim.aicodewalkthrough.model.SuggestedTest
@@ -60,6 +62,24 @@ class FlowMapMarkdownExporterTest {
                     lineAnnotations = listOf(
                         LineAnnotation(startLine = 14, endLine = 14, text = "Normalizes the route")
                     ),
+                    potentialBugs = listOf(
+                        RepositoryFinding(
+                            id = "bug-1",
+                            title = "Normalization can drop an empty route",
+                            summary = "The branch returns early without surfacing whether the empty route is valid input.",
+                            severity = "medium",
+                            evidence = listOf(
+                                EvidenceItem(
+                                    kind = "line_range",
+                                    label = "early return after normalization",
+                                    filePath = "src/App.kt",
+                                    startLine = 14,
+                                    endLine = 15,
+                                ),
+                            ),
+                            suggestedAction = "Add an explicit guard or test for the empty normalized route.",
+                        ),
+                    ),
                     validationNote = "Re-anchored to symbol handleRequest at L12-L30.",
                 )
             ),
@@ -99,6 +119,9 @@ class FlowMapMarkdownExporterTest {
         assertTrue(markdown.contains("- Grounding note: Re-anchored to symbol handleRequest at L12-L30."))
         assertTrue(markdown.contains("Line annotations:"))
         assertTrue(markdown.contains("- L14: Normalizes the route"))
+        assertTrue(markdown.contains("Potential bugs:"))
+        assertTrue(markdown.contains("[medium] Normalization can drop an empty route"))
+        assertTrue(markdown.contains("Evidence: early return after normalization"))
     }
 
     @Test

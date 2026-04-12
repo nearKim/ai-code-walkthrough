@@ -2,6 +2,7 @@ package com.github.nearkim.aicodewalkthrough.util
 
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import java.util.Locale
@@ -205,6 +206,18 @@ object FlowMapMarkdownExporter {
             }
         }
 
+        if (step.potentialBugs.isNotEmpty()) {
+            builder.appendLine()
+            builder.appendLine("Potential bugs:")
+            step.potentialBugs.forEach { finding ->
+                builder.appendLine("- [${finding.severity}] ${finding.title}: ${finding.summary}")
+                finding.riskType?.takeIf { it.isNotBlank() }?.let { builder.appendLine("  Risk type: $it") }
+                finding.suggestedAction?.takeIf { it.isNotBlank() }?.let { builder.appendLine("  Suggested action: $it") }
+                finding.testGap?.takeIf { it.isNotBlank() }?.let { builder.appendLine("  Test gap: $it") }
+                appendFindingEvidence(builder, finding)
+            }
+        }
+
         step.suggestedAction?.takeIf { it.isNotBlank() }?.let {
             builder.appendLine()
             builder.appendLine("Suggested action: $it")
@@ -247,4 +260,27 @@ object FlowMapMarkdownExporter {
 
     private fun formatDuration(durationMs: Long): String =
         "%.1fs".format(Locale.US, durationMs / 1000.0)
+
+    private fun appendFindingEvidence(builder: StringBuilder, finding: RepositoryFinding) {
+        if (finding.evidence.isEmpty()) return
+
+        finding.evidence.forEach { evidence ->
+            val location = buildList {
+                evidence.filePath?.let { add(it) }
+                if (evidence.startLine != null) {
+                    add(
+                        if (evidence.endLine != null && evidence.endLine != evidence.startLine) {
+                            "L${evidence.startLine}-L${evidence.endLine}"
+                        } else {
+                            "L${evidence.startLine}"
+                        },
+                    )
+                }
+            }.joinToString(":")
+            val details = listOfNotNull(evidence.kind.takeIf { it.isNotBlank() }, location.takeIf { it.isNotBlank() })
+                .joinToString(" · ")
+            val suffix = evidence.text?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+            builder.appendLine("  Evidence: ${evidence.label}${if (details.isNotBlank()) " ($details)" else ""}$suffix")
+        }
+    }
 }

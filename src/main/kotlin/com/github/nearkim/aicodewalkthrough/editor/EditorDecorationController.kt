@@ -15,7 +15,6 @@ import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
-import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -116,6 +115,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
         }
 
         val resolvedNextEdge = nextEdge
+        val nextStepTooltip = nextStep?.let { buildNextStepTooltip(it, resolvedNextEdge) }
         val previewRendered = if (
             nextStep != null &&
             resolvedNextEdge != null &&
@@ -134,7 +134,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 nextStepAttrs,
                 HighlighterTargetArea.LINES_IN_RANGE,
             )
-            highlighter.errorStripeTooltip = buildNextStepTooltip(nextStep, resolvedNextEdge)
+            highlighter.errorStripeTooltip = nextStepTooltip
             activeHighlighters.add(highlighter)
             true
         } else {
@@ -144,22 +144,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
         if (!previewRendered) {
             val nextSymbol = nextStep?.symbol
             if (nextSymbol != null) {
-                val stepText = document.getText(TextRange(startOffset, endOffset))
-                // Word-boundary match: symbol must not be immediately preceded/followed by word chars or $
-                val pattern = Regex("(?<![\\w$])${Regex.escape(nextSymbol)}(?![\\w$])")
-                for (match in pattern.findAll(stepText)) {
-                    val matchStart = startOffset + match.range.first
-                    val matchEnd = startOffset + match.range.last + 1
-                    val highlighter = editor.markupModel.addRangeHighlighter(
-                        matchStart,
-                        matchEnd,
-                        HighlighterLayer.SELECTION,
-                        nextStepAttrs,
-                        HighlighterTargetArea.EXACT_RANGE,
-                    )
-                    highlighter.errorStripeTooltip = buildNextStepTooltip(nextStep, resolvedNextEdge)
-                    activeHighlighters.add(highlighter)
-                }
+                highlightNextSymbolMatches(editor, nextSymbol, startOffset, endOffset, nextStepAttrs, nextStepTooltip)
             }
         }
     }
@@ -190,6 +175,10 @@ class EditorDecorationController(private val project: Project) : Disposable {
         private val vPad = JBUI.scale(5)
         private val hPad = JBUI.scale(8)
         private val lineGap = JBUI.scale(3)
+        private val metaText = buildMetaText()
+        private var cachedLayoutKey: String? = null
+        private var cachedMetaLines: List<String> = emptyList()
+        private var cachedExplanationLines: List<String> = emptyList()
 
         override fun calcWidthInPixels(inlay: Inlay<*>): Int =
             editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(600))
@@ -197,17 +186,14 @@ class EditorDecorationController(private val project: Project) : Disposable {
         override fun calcHeightInPixels(inlay: Inlay<*>): Int {
             val width = calcWidthInPixels(inlay)
             val boldFont = editor.colorsScheme.getFont(EditorFontType.BOLD)
-            val plainFont = editor.colorsScheme.getFont(EditorFontType.PLAIN)
             val smallFont = editor.colorsScheme.getFont(EditorFontType.ITALIC)
             val boldFm = editor.contentComponent.getFontMetrics(boldFont)
-            val plainFm = editor.contentComponent.getFontMetrics(plainFont)
             val smallFm = editor.contentComponent.getFontMetrics(smallFont)
-            val availableWidth = width - hPad * 2
-            val metaLines = buildMetaText().takeIf { it.isNotBlank() }?.let { wrapText(smallFm, it, availableWidth) } ?: emptyList()
-            val explLines = wrapText(plainFm, explanation, availableWidth)
-            val metaHeight = if (metaLines.isEmpty()) 0 else metaLines.size * (smallFm.height + lineGap)
-            val gapAfterMeta = if (metaLines.isEmpty()) 0 else lineGap
-            return vPad + boldFm.height + gapAfterMeta + metaHeight + lineGap + explLines.size * (plainFm.height + lineGap) + vPad
+            val layout = wrappedLayout(width)
+            val metaHeight = if (layout.metaLines.isEmpty()) 0 else layout.metaLines.size * (smallFm.height + lineGap)
+            val gapAfterMeta = if (layout.metaLines.isEmpty()) 0 else lineGap
+            return vPad + boldFm.height + gapAfterMeta + metaHeight + lineGap +
+                layout.explanationLines.size * (layout.plainMetrics.height + lineGap) + vPad
         }
 
         override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
@@ -224,10 +210,8 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 val boldFont = scheme.getFont(EditorFontType.BOLD)
                 val plainFont = scheme.getFont(EditorFontType.PLAIN)
                 val smallFont = scheme.getFont(EditorFontType.ITALIC)
-                val boldFm = g2.getFontMetrics(boldFont)
-                val plainFm = g2.getFontMetrics(plainFont)
-                val smallFm = g2.getFontMetrics(smallFont)
-                val availableWidth = targetRegion.width - hPad * 2
+                val boldFm = editor.contentComponent.getFontMetrics(boldFont)
+                val layout = wrappedLayout(targetRegion.width)
 
                 val x = targetRegion.x + hPad
                 var y = targetRegion.y + vPad + boldFm.ascent
@@ -237,21 +221,20 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 g2.drawString(stepLabel, x, y)
                 y += boldFm.height + lineGap
 
-                val metaText = buildMetaText()
                 if (metaText.isNotBlank()) {
                     g2.font = smallFont
                     g2.color = accentColor
-                    for (line in wrapText(smallFm, metaText, availableWidth)) {
+                    for (line in layout.metaLines) {
                         g2.drawString(line, x, y)
-                        y += smallFm.height + lineGap
+                        y += layout.smallMetrics.height + lineGap
                     }
                 }
 
                 g2.font = plainFont
                 g2.color = JBColor(Color(60, 60, 60), Color(180, 180, 180))
-                for (line in wrapText(plainFm, explanation, availableWidth)) {
+                for (line in layout.explanationLines) {
                     g2.drawString(line, x, y)
-                    y += plainFm.height + lineGap
+                    y += layout.plainMetrics.height + lineGap
                 }
             } finally {
                 g2.dispose()
@@ -260,6 +243,26 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
         private fun buildMetaText(): String =
             listOfNotNull(severityLabel, confidenceLabel, nextHopLabel).joinToString("  ·  ")
+
+        private fun wrappedLayout(width: Int): WrappedLayout {
+            val plainFont = editor.colorsScheme.getFont(EditorFontType.PLAIN)
+            val smallFont = editor.colorsScheme.getFont(EditorFontType.ITALIC)
+            val cacheKey = "$width:${plainFont.hashCode()}:${smallFont.hashCode()}"
+            val plainFm = editor.contentComponent.getFontMetrics(plainFont)
+            val smallFm = editor.contentComponent.getFontMetrics(smallFont)
+            if (cacheKey != cachedLayoutKey) {
+                val availableWidth = width - hPad * 2
+                cachedMetaLines = if (metaText.isNotBlank()) wrapText(smallFm, metaText, availableWidth) else emptyList()
+                cachedExplanationLines = wrapText(plainFm, explanation, availableWidth)
+                cachedLayoutKey = cacheKey
+            }
+            return WrappedLayout(
+                metaLines = cachedMetaLines,
+                explanationLines = cachedExplanationLines,
+                plainMetrics = plainFm,
+                smallMetrics = smallFm,
+            )
+        }
     }
 
     private class LineAnnotationInlayRenderer(
@@ -270,6 +273,8 @@ class EditorDecorationController(private val project: Project) : Disposable {
         private val vPad = JBUI.scale(3)
         private val hPad = JBUI.scale(8)
         private val lineGap = JBUI.scale(2)
+        private var cachedLayoutKey: String? = null
+        private var cachedLines: List<String> = emptyList()
 
         override fun calcWidthInPixels(inlay: Inlay<*>): Int =
             editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(600))
@@ -278,8 +283,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
             val width = calcWidthInPixels(inlay)
             val font = editor.colorsScheme.getFont(EditorFontType.ITALIC)
             val fm = editor.contentComponent.getFontMetrics(font)
-            val lines = wrapText(fm, text, width - hPad * 2)
-            return vPad + lines.size * (fm.height + lineGap) + vPad
+            return vPad + wrappedLines(width, fm).size * (fm.height + lineGap) + vPad
         }
 
         override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
@@ -292,15 +296,14 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 g2.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
 
                 val font = editor.colorsScheme.getFont(EditorFontType.ITALIC)
-                val fm = g2.getFontMetrics(font)
-                val availableWidth = targetRegion.width - hPad * 2
+                val fm = editor.contentComponent.getFontMetrics(font)
 
                 g2.font = font
                 g2.color = JBColor(Color(70, 100, 150), Color(130, 160, 210))
 
                 val x = targetRegion.x + hPad
                 var y = targetRegion.y + vPad + fm.ascent
-                for (line in wrapText(fm, text, availableWidth)) {
+                for (line in wrappedLines(targetRegion.width, fm)) {
                     g2.drawString(line, x, y)
                     y += fm.height + lineGap
                 }
@@ -308,9 +311,20 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 g2.dispose()
             }
         }
+
+        private fun wrappedLines(width: Int, fm: FontMetrics): List<String> {
+            val cacheKey = "$width:${fm.font.hashCode()}"
+            if (cacheKey != cachedLayoutKey) {
+                cachedLines = wrapText(fm, text, width - hPad * 2)
+                cachedLayoutKey = cacheKey
+            }
+            return cachedLines
+        }
     }
 
     companion object {
+        private const val MAX_NEXT_SYMBOL_MATCHES = 20
+
         private fun buildNextStepTooltip(nextStep: FlowStep, nextEdge: StepEdge?): String {
             val detail = nextEdge?.rationale?.takeIf { it.isNotBlank() }
                 ?: nextEdge?.validationNote?.takeIf { it.isNotBlank() }
@@ -380,5 +394,68 @@ class EditorDecorationController(private val project: Project) : Disposable {
             if (current.isNotEmpty()) lines.add(current.toString())
             return lines.ifEmpty { listOf("") }
         }
+
+        private fun isSymbolBoundary(chars: CharSequence, index: Int): Boolean {
+            if (index < 0 || index >= chars.length) return true
+            val ch = chars[index]
+            return !ch.isLetterOrDigit() && ch != '_' && ch != '$'
+        }
+
+        private fun indexOfWithin(chars: CharSequence, needle: String, start: Int, end: Int): Int {
+            if (needle.isEmpty()) return -1
+            val lastStart = end - needle.length
+            var index = start.coerceAtLeast(0)
+            while (index <= lastStart) {
+                var matches = true
+                for (offset in needle.indices) {
+                    if (chars[index + offset] != needle[offset]) {
+                        matches = false
+                        break
+                    }
+                }
+                if (matches) return index
+                index++
+            }
+            return -1
+        }
     }
+
+    private fun highlightNextSymbolMatches(
+        editor: Editor,
+        symbol: String,
+        startOffset: Int,
+        endOffset: Int,
+        attributes: TextAttributes,
+        tooltip: String?,
+    ) {
+        if (symbol.isBlank() || startOffset >= endOffset) return
+        val chars = editor.document.charsSequence
+        var searchStart = startOffset
+        var matchCount = 0
+        while (searchStart < endOffset && matchCount < MAX_NEXT_SYMBOL_MATCHES) {
+            val matchStart = indexOfWithin(chars, symbol, searchStart, endOffset)
+            if (matchStart < 0) break
+            val matchEnd = matchStart + symbol.length
+            if (isSymbolBoundary(chars, matchStart - 1) && isSymbolBoundary(chars, matchEnd)) {
+                val highlighter = editor.markupModel.addRangeHighlighter(
+                    matchStart,
+                    matchEnd,
+                    HighlighterLayer.SELECTION,
+                    attributes,
+                    HighlighterTargetArea.EXACT_RANGE,
+                )
+                highlighter.errorStripeTooltip = tooltip
+                activeHighlighters.add(highlighter)
+                matchCount++
+            }
+            searchStart = matchStart + symbol.length
+        }
+    }
+
+    private data class WrappedLayout(
+        val metaLines: List<String>,
+        val explanationLines: List<String>,
+        val plainMetrics: FontMetrics,
+        val smallMetrics: FontMetrics,
+    )
 }

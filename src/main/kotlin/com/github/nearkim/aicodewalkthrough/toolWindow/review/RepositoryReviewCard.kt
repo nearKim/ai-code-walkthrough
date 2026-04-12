@@ -4,12 +4,16 @@ import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.github.nearkim.aicodewalkthrough.model.FeaturePath
 import com.github.nearkim.aicodewalkthrough.model.RepositoryFeature
 import com.github.nearkim.aicodewalkthrough.model.RepositoryReviewSnapshot
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.ViewportWidthPanel
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.WrapLayout
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.WrappingTextArea
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleColoredComponent
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
@@ -24,24 +28,20 @@ import javax.swing.JPanel
 import javax.swing.JTextArea
 import javax.swing.ListCellRenderer
 import javax.swing.ListSelectionModel
+import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
 
 class RepositoryReviewCard(
-    private val isSnapshotStale: () -> Boolean,
     private val onStartFeatureWalkthrough: (featureId: String, pathId: String) -> Unit,
     private val onRefreshReview: () -> Unit,
     private val onCopyMarkdown: () -> Unit,
 ) {
 
     private val repoReviewSummaryLabel = JBLabel()
-    private val repoReviewMetadataLabel = JBLabel().apply {
-        font = JBUI.Fonts.smallFont()
-        foreground = UIUtil.getLabelDisabledForeground()
+    private val repoReviewMetadataLabel = createHelperTextArea().apply {
         border = JBUI.Borders.empty(0, 0, 4, 0)
     }
-    private val repoReviewStaleLabel = JBLabel().apply {
-        font = JBUI.Fonts.smallFont()
-        foreground = UIUtil.getLabelDisabledForeground()
+    private val repoReviewStaleLabel = createHelperTextArea().apply {
         border = JBUI.Borders.empty(0, 0, 8, 0)
     }
     private val repoFeatureListModel = DefaultListModel<RepositoryFeature>()
@@ -57,9 +57,7 @@ class RepositoryReviewCard(
     private val repoFeatureTitleLabel = JBLabel("Select a feature").apply {
         font = JBUI.Fonts.label().asBold()
     }
-    private val repoFeatureMetaLabel = JBLabel().apply {
-        font = JBUI.Fonts.smallFont()
-        foreground = UIUtil.getLabelDisabledForeground()
+    private val repoFeatureMetaLabel = createHelperTextArea().apply {
         border = JBUI.Borders.empty(2, 0, 6, 0)
     }
     private val repoFeatureBodyText = createTextArea()
@@ -92,7 +90,7 @@ class RepositoryReviewCard(
 
     val panel: JPanel = createPanel()
 
-    fun refresh(snapshot: RepositoryReviewSnapshot?) {
+    fun refresh(snapshot: RepositoryReviewSnapshot?, staleStatus: Boolean?) {
         if (snapshot == null) {
             repoReviewSummaryLabel.text = "<html><b>No stored repository review</b><br>Run a thorough repo review from the input card.</html>"
             repoReviewMetadataLabel.text = ""
@@ -110,10 +108,10 @@ class RepositoryReviewCard(
             add("${snapshot.crossCuttingFindings.size} cross-cutting findings")
             snapshot.providerLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
         }.joinToString("  ·  ")
-        repoReviewStaleLabel.text = if (isSnapshotStale()) {
-            "Stored review is stale relative to the current repository."
-        } else {
-            "Stored review matches the current repository fingerprint."
+        repoReviewStaleLabel.text = when (staleStatus) {
+            true -> "Stored review is stale relative to the current repository."
+            false -> "Stored review matches the current repository fingerprint."
+            null -> "Checking whether the stored review matches the current repository..."
         }
         repoCrossCuttingText.text = if (snapshot.crossCuttingFindings.isEmpty()) {
             "No cross-cutting findings were returned."
@@ -135,28 +133,40 @@ class RepositoryReviewCard(
 
     private fun createPanel(): JPanel {
         return JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(8)
+            val content = ViewportWidthPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                border = JBUI.Borders.empty(8)
+                alignmentX = JPanel.LEFT_ALIGNMENT
+            }
 
             val header = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                alignmentX = JPanel.LEFT_ALIGNMENT
             }
             repoReviewSummaryLabel.border = JBUI.Borders.empty(0, 0, 6, 0)
             repoReviewSummaryLabel.verticalAlignment = SwingConstants.TOP
             header.add(repoReviewSummaryLabel)
             header.add(repoReviewMetadataLabel)
             header.add(repoReviewStaleLabel)
-            add(header, BorderLayout.NORTH)
-
-            val split = JPanel(BorderLayout(JBUI.scale(8), 0))
-            split.add(
+            content.add(header)
+            content.add(Box.createVerticalStrut(JBUI.scale(8)))
+            content.add(
                 JBScrollPane(repoFeatureList).apply {
-                    preferredSize = java.awt.Dimension(JBUI.scale(240), JBUI.scale(400))
+                    border = BorderFactory.createTitledBorder("Feature slices")
+                    alignmentX = JPanel.LEFT_ALIGNMENT
+                    preferredSize = java.awt.Dimension(0, JBUI.scale(180))
+                    minimumSize = java.awt.Dimension(0, JBUI.scale(120))
+                    maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(260))
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
                 },
-                BorderLayout.WEST,
             )
+            content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
             val details = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                alignmentX = JPanel.LEFT_ALIGNMENT
             }
             details.add(repoFeatureTitleLabel)
             details.add(repoFeatureMetaLabel)
@@ -170,22 +180,48 @@ class RepositoryReviewCard(
                 JBScrollPane(repoFeaturePathsList).apply {
                     border = BorderFactory.createTitledBorder("Recommended bounded walkthrough paths")
                     alignmentX = JPanel.LEFT_ALIGNMENT
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                    preferredSize = java.awt.Dimension(0, JBUI.scale(160))
+                    minimumSize = java.awt.Dimension(0, JBUI.scale(96))
                     maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(180))
                 },
             )
             details.add(Box.createVerticalStrut(JBUI.scale(8)))
             details.add(repoPathDescriptionText)
 
-            split.add(JBScrollPane(details), BorderLayout.CENTER)
-            add(split, BorderLayout.CENTER)
+            content.add(details)
 
-            val actions = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            val actions = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(6))).apply {
                 border = JBUI.Borders.empty(8, 0, 0, 0)
+                alignmentX = JPanel.LEFT_ALIGNMENT
             }
             actions.add(startFeatureWalkthroughButton)
             actions.add(JButton("Refresh Repo Review").apply { addActionListener { onRefreshReview() } })
             actions.add(JButton("Copy Review Markdown").apply { addActionListener { onCopyMarkdown() } })
-            add(actions, BorderLayout.SOUTH)
+            content.add(actions)
+
+            add(
+                JBScrollPane(content).apply {
+                    border = JBUI.Borders.empty()
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                },
+                BorderLayout.CENTER,
+            )
+        }
+    }
+
+    private fun createHelperTextArea(): JBTextArea {
+        return WrappingTextArea().apply {
+            isEditable = false
+            isFocusable = false
+            isOpaque = false
+            lineWrap = true
+            wrapStyleWord = true
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            alignmentX = JPanel.LEFT_ALIGNMENT
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+            border = JBUI.Borders.empty()
         }
     }
 
@@ -305,7 +341,7 @@ class RepositoryReviewCard(
     }
 
     private fun createTextArea(): JTextArea {
-        return JTextArea().apply {
+        return WrappingTextArea().apply {
             isEditable = false
             lineWrap = true
             wrapStyleWord = true

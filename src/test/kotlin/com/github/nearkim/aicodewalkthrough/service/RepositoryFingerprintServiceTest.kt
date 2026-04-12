@@ -20,7 +20,7 @@ class RepositoryFingerprintServiceTest {
             }
         }
 
-        val fingerprint = RepositoryFingerprintService("/repo", runner) { 1234L }.capture()
+        val fingerprint = RepositoryFingerprintService.capture("/repo", runner) { 1234L }
 
         assertEquals("/repo", fingerprint.repoRoot)
         assertEquals("abc123", fingerprint.gitHead)
@@ -33,11 +33,11 @@ class RepositoryFingerprintServiceTest {
 
     @Test
     fun `capture falls back gracefully when git is unavailable`() {
-        val fingerprint = RepositoryFingerprintService(
+        val fingerprint = RepositoryFingerprintService.capture(
             projectRoot = "/repo",
             commandRunner = RepositoryReviewCommandRunner { _, _ -> throw IllegalStateException("missing git") },
             clock = { 99L },
-        ).capture()
+        )
 
         assertEquals("/repo", fingerprint.repoRoot)
         assertNull(fingerprint.gitHead)

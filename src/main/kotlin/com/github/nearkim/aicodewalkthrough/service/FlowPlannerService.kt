@@ -192,6 +192,7 @@ class FlowPlannerService(private val project: Project) {
     }
 
     private fun sanitizeStepAnswer(answer: StepAnswer, step: FlowStep): StepAnswer {
+        val stepValidator = validator()
         val importantLines = answer.importantLines.mapNotNull { annotation ->
             val start = annotation.startLine.coerceIn(step.startLine, step.endLine)
             val end = annotation.endLine.coerceIn(step.startLine, step.endLine)
@@ -201,7 +202,11 @@ class FlowPlannerService(private val project: Project) {
                 annotation.copy(startLine = start, endLine = end)
             }
         }
-        return answer.copy(importantLines = importantLines)
+        return answer.copy(
+            importantLines = importantLines,
+            evidence = stepValidator.sanitizeEvidenceItems(answer.evidence, step.filePath),
+            potentialBugs = stepValidator.sanitizePotentialBugFindings(answer.potentialBugs, step.filePath),
+        )
     }
 
     private fun validator(): StepValidator {

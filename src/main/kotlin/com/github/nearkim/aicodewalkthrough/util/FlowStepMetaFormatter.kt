@@ -15,6 +15,9 @@ object FlowStepMetaFormatter {
                 add("confidence: $it")
             }
             step.riskType?.takeIf { it.isNotBlank() }?.let { add("risk: $it") }
+            if (step.potentialBugs.isNotEmpty()) {
+                add("bugs: ${step.potentialBugs.size}")
+            }
             if (step.evidence.isNotEmpty()) {
                 add("evidence: ${step.evidence.size}")
             }

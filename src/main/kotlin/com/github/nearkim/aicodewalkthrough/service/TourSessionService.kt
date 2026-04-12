@@ -23,7 +23,10 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @Service(Service.Level.PROJECT)
@@ -32,6 +35,9 @@ class TourSessionService(private val project: Project, private val scope: Corout
     interface TourSessionListener {
         fun onStateChanged(state: TourState)
         fun onProgressLine(line: String) {}
+        fun onProgressLines(lines: List<String>) {
+            lines.forEach { onProgressLine(it) }
+        }
         fun onStepChanged(stepIndex: Int, step: FlowStep) {}
         fun onStepAnswerChanged(answer: StepAnswer?, loading: Boolean, errorMessage: String?) {}
         fun onRecentWalkthroughsChanged(items: List<RecentWalkthrough>) {}
@@ -43,6 +49,8 @@ class TourSessionService(private val project: Project, private val scope: Corout
     var currentFlowMap: FlowMap? = null
         private set
     var currentRepositoryReview: RepositoryReviewSnapshot? = null
+        private set
+    var repositoryReviewStale: Boolean? = null
         private set
     var currentQuestion: String? = null
         private set
@@ -78,9 +86,16 @@ class TourSessionService(private val project: Project, private val scope: Corout
     private val tourStepHistory = mutableListOf<Int>()
     private val reviewArtifactStore = project.service<ReviewArtifactStore>()
     private val tourNavigator = TourNavigator()
+    private val progressLock = Any()
+    private val pendingProgressLines = ArrayDeque<String>()
+    private var progressFlushQueued = false
+    private var repositoryReviewStaleJob: Job? = null
+    private var lastRepositoryReviewStaleCheckAtMs: Long = 0
+    private var loadingStoredReviewJob: Job? = null
+    private var storedReviewLoaded = false
 
     init {
-        currentRepositoryReview = reviewArtifactStore.loadLatest()
+        loadStoredRepositoryReview(openWhenLoaded = false)
     }
 
     fun addListener(listener: TourSessionListener) {
@@ -99,8 +114,23 @@ class TourSessionService(private val project: Project, private val scope: Corout
     }
 
     private fun notifyProgress(line: String) {
+        if (state != TourState.LOADING || line.isBlank()) return
+        synchronized(progressLock) {
+            pendingProgressLines.addLast(line)
+            while (pendingProgressLines.size > MAX_PROGRESS_LINES) {
+                pendingProgressLines.removeFirst()
+            }
+            if (progressFlushQueued) return
+            progressFlushQueued = true
+        }
         ApplicationManager.getApplication().invokeLater {
-            listeners.forEach { it.onProgressLine(line) }
+            val lines = synchronized(progressLock) {
+                progressFlushQueued = false
+                pendingProgressLines.toList().also { pendingProgressLines.clear() }
+            }
+            if (state == TourState.LOADING && lines.isNotEmpty()) {
+                listeners.forEach { it.onProgressLines(lines) }
+            }
         }
     }
 
@@ -239,6 +269,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         queryContext: QueryContext?,
         featureScope: FeatureScopeContext?,
     ) {
+        clearPendingProgress()
         recentWalkthroughHistory.clearCurrentSelection()
         currentQuestion = question
         currentMode = mode
@@ -300,6 +331,9 @@ class TourSessionService(private val project: Project, private val scope: Corout
         val planner = project.service<FlowPlannerService>()
         planner.cancel()
         project.service<RepositoryReviewPlannerService>().cancel()
+        loadingStoredReviewJob?.cancel()
+        repositoryReviewStaleJob?.cancel()
+        clearPendingProgress()
         project.service<EditorDecorationController>().clearDecorations()
         recentWalkthroughHistory.clearCurrentSelection()
         currentFlowMap = null
@@ -309,6 +343,9 @@ class TourSessionService(private val project: Project, private val scope: Corout
     }
 
     fun reset() {
+        loadingStoredReviewJob?.cancel()
+        repositoryReviewStaleJob?.cancel()
+        clearPendingProgress()
         project.service<EditorDecorationController>().clearDecorations()
         recentWalkthroughHistory.clearCurrentSelection()
         currentFlowMap = null
@@ -357,9 +394,11 @@ class TourSessionService(private val project: Project, private val scope: Corout
         currentFeatureScope = null
         errorMessage = null
         lastRepositoryReviewMetadata = null
+        repositoryReviewStale = null
         clearStepAnswer(notify = false)
         currentStepIndex = -1
         tourStepHistory.clear()
+        clearPendingProgress()
         project.service<EditorDecorationController>().clearDecorations()
         transitionTo(TourState.LOADING)
 
@@ -368,13 +407,21 @@ class TourSessionService(private val project: Project, private val scope: Corout
             val result = planner.reviewRepository { line ->
                 notifyProgress(line)
             }
+            val persistedSnapshot = result.getOrNull()?.snapshot
+            if (persistedSnapshot != null) {
+                withContext(Dispatchers.IO) {
+                    reviewArtifactStore.write(persistedSnapshot)
+                }
+            }
             ApplicationManager.getApplication().invokeLater {
                 result.fold(
                     onSuccess = { reviewResult ->
                         currentRepositoryReview = reviewResult.snapshot
                         lastRepositoryReviewMetadata = reviewResult.metadata
+                        repositoryReviewStale = false
+                        lastRepositoryReviewStaleCheckAtMs = System.currentTimeMillis()
+                        storedReviewLoaded = true
                         errorMessage = null
-                        reviewArtifactStore.write(reviewResult.snapshot)
                         notifyRepositoryReviewChanged()
                         transitionTo(TourState.REPO_REVIEW)
                     },
@@ -393,28 +440,57 @@ class TourSessionService(private val project: Project, private val scope: Corout
         }
     }
 
-    fun restoreStoredRepositoryReview(): Boolean {
-        val snapshot = reviewArtifactStore.loadLatest() ?: return false
-        project.service<EditorDecorationController>().clearDecorations()
-        currentFlowMap = null
-        currentStepIndex = -1
-        tourStepHistory.clear()
+    fun restoreStoredRepositoryReview() {
+        if (currentRepositoryReview != null && storedReviewLoaded) {
+            project.service<EditorDecorationController>().clearDecorations()
+            currentFlowMap = null
+            currentStepIndex = -1
+            tourStepHistory.clear()
+            currentQuestion = "Thorough repository review"
+            currentMode = AnalysisMode.REVIEW
+            currentContext = null
+            currentFeatureScope = null
+            followUpContext = null
+            lastRepositoryReviewMetadata = null
+            errorMessage = null
+            transitionTo(TourState.REPO_REVIEW)
+            refreshRepositoryReviewStaleStatus(force = true)
+            return
+        }
+
         currentQuestion = "Thorough repository review"
         currentMode = AnalysisMode.REVIEW
         currentContext = null
         currentFeatureScope = null
         followUpContext = null
-        currentRepositoryReview = snapshot
-        lastRepositoryReviewMetadata = null
         errorMessage = null
-        notifyRepositoryReviewChanged()
-        transitionTo(TourState.REPO_REVIEW)
-        return true
+        clearPendingProgress()
+        transitionTo(TourState.LOADING)
+        notifyProgress("Loading stored repository review...")
+        loadStoredRepositoryReview(openWhenLoaded = true, forceReload = true)
     }
 
-    fun repositoryReviewIsStale(): Boolean {
-        val snapshot = currentRepositoryReview ?: return true
-        return reviewArtifactStore.isStale(snapshot)
+    fun refreshRepositoryReviewStaleStatus(force: Boolean = false) {
+        val snapshot = currentRepositoryReview ?: return
+        if (!force && repositoryReviewStaleJob?.isActive == true) return
+        val now = System.currentTimeMillis()
+        if (!force && repositoryReviewStale != null && now - lastRepositoryReviewStaleCheckAtMs < REPOSITORY_STALE_CHECK_TTL_MS) {
+            return
+        }
+
+        repositoryReviewStaleJob?.cancel()
+        repositoryReviewStaleJob = scope.launch {
+            val stale = withContext(Dispatchers.IO) {
+                reviewArtifactStore.isStale(snapshot)
+            }
+            ApplicationManager.getApplication().invokeLater {
+                if (currentRepositoryReview?.id == snapshot.id) {
+                    repositoryReviewStale = stale
+                    lastRepositoryReviewStaleCheckAtMs = System.currentTimeMillis()
+                    notifyRepositoryReviewChanged()
+                }
+            }
+        }
     }
 
     fun startFeatureWalkthrough(featureId: String, pathId: String) {
@@ -540,6 +616,52 @@ class TourSessionService(private val project: Project, private val scope: Corout
         }
     }
 
+    private fun clearPendingProgress() {
+        synchronized(progressLock) {
+            pendingProgressLines.clear()
+            progressFlushQueued = false
+        }
+    }
+
+    private fun loadStoredRepositoryReview(openWhenLoaded: Boolean, forceReload: Boolean = false) {
+        if (storedReviewLoaded && !forceReload && !openWhenLoaded) return
+
+        loadingStoredReviewJob?.cancel()
+        loadingStoredReviewJob = scope.launch {
+            val snapshot = withContext(Dispatchers.IO) {
+                reviewArtifactStore.loadLatest()
+            }
+            ApplicationManager.getApplication().invokeLater {
+                storedReviewLoaded = true
+                val shouldApplySnapshot = forceReload || openWhenLoaded || currentRepositoryReview == null
+                if (snapshot != null && shouldApplySnapshot) {
+                    currentRepositoryReview = snapshot
+                    repositoryReviewStale = null
+                    lastRepositoryReviewStaleCheckAtMs = 0
+                    notifyRepositoryReviewChanged()
+                    refreshRepositoryReviewStaleStatus(force = true)
+                    if (openWhenLoaded) {
+                        project.service<EditorDecorationController>().clearDecorations()
+                        currentFlowMap = null
+                        currentStepIndex = -1
+                        tourStepHistory.clear()
+                        lastRepositoryReviewMetadata = null
+                        errorMessage = null
+                        transitionTo(TourState.REPO_REVIEW)
+                    }
+                } else if (snapshot == null && openWhenLoaded) {
+                    currentRepositoryReview = null
+                    repositoryReviewStale = null
+                    notifyRepositoryReviewChanged()
+                    errorMessage = "No saved repository review yet"
+                    transitionTo(TourState.INPUT)
+                } else if (snapshot == null || openWhenLoaded) {
+                    notifyRepositoryReviewChanged()
+                }
+            }
+        }
+    }
+
     private fun rememberWalkthrough(
         flowMap: FlowMap,
         question: String?,
@@ -598,6 +720,11 @@ class TourSessionService(private val project: Project, private val scope: Corout
             .firstOrNull { it.isNotBlank() }
             ?.take(120)
             ?: "Walkthrough"
+    }
+
+    companion object {
+        private const val MAX_PROGRESS_LINES = 200
+        private const val REPOSITORY_STALE_CHECK_TTL_MS = 15_000L
     }
 }
 

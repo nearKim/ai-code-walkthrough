@@ -6,6 +6,7 @@ import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
+import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
 import com.github.nearkim.aicodewalkthrough.model.RepositoryReviewSnapshot
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
@@ -14,11 +15,15 @@ import com.github.nearkim.aicodewalkthrough.model.TourState
 import com.github.nearkim.aicodewalkthrough.service.EditorContextFormatter
 import com.github.nearkim.aicodewalkthrough.service.EditorContextService
 import com.github.nearkim.aicodewalkthrough.service.LlmProviderService
+import com.github.nearkim.aicodewalkthrough.service.ProviderStatus
 import com.github.nearkim.aicodewalkthrough.service.TourSessionService
 import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.ViewportWidthPanel
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.WrapLayout
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.WrappingTextArea
 import com.github.nearkim.aicodewalkthrough.util.FlowMapMarkdownExporter
-import com.github.nearkim.aicodewalkthrough.util.RepositoryReviewMarkdownExporter
 import com.github.nearkim.aicodewalkthrough.util.FlowStepMetaFormatter
+import com.github.nearkim.aicodewalkthrough.util.RepositoryReviewMarkdownExporter
 import com.github.nearkim.aicodewalkthrough.toolwindow.review.RepositoryReviewCard
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.components.service
@@ -54,6 +59,7 @@ import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComboBox
+import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JTabbedPane
@@ -61,18 +67,51 @@ import javax.swing.JTextArea
 import javax.swing.JToggleButton
 import javax.swing.ListSelectionModel
 import javax.swing.ListCellRenderer
+import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
 
 internal enum class ReviewMode(
     val displayName: String,
     val placeholder: String,
     val intro: String,
+    val helperText: String,
+    val tooltipText: String,
 ) {
-    UNDERSTAND("Understand", "Ask how this code works...", "Explain the codebase clearly and trace execution."),
-    REVIEW("Review", "Review this code for risks, bugs, and test gaps...", "Focus on correctness, regressions, and actionable review notes."),
-    TRACE("Trace", "Trace the execution path or call chain...", "Follow symbols and execution order with minimal speculation."),
-    RISK("Risk", "Highlight blast radius and invariants...", "Analyze what can break, who depends on it, and why."),
-    COMMENT("Comment", "Draft a review comment for the current code...", "Compose concise, evidence-backed review comments."),
+    UNDERSTAND(
+        "Understand",
+        "Ask how this code works...",
+        "Explain the codebase clearly and trace execution.",
+        "Explain what the code does, why it exists, and how the main pieces fit together.",
+        "Use this when you want a clear explanation of behavior and structure.",
+    ),
+    REVIEW(
+        "Review",
+        "Review this code for risks, bugs, and test gaps...",
+        "Focus on correctness, regressions, and actionable review notes.",
+        "Look for bugs, regressions, unsafe assumptions, and missing tests.",
+        "Use this when you want findings ordered by severity.",
+    ),
+    TRACE(
+        "Trace",
+        "Trace the execution path or call chain...",
+        "Follow symbols and execution order with minimal speculation.",
+        "Follow the important call chain or execution path through the code.",
+        "Use this when you want to see how control or data moves step by step.",
+    ),
+    RISK(
+        "Risk",
+        "Highlight blast radius and invariants...",
+        "Analyze what can break, who depends on it, and why.",
+        "Estimate blast radius, invariants, and what could break if this area changes.",
+        "Use this when you are planning a change and want impact analysis.",
+    ),
+    COMMENT(
+        "Comment",
+        "Draft a review comment for the current code...",
+        "Compose concise, evidence-backed review comments.",
+        "Draft a concise, evidence-backed code review comment for the selected area.",
+        "Use this when you want review-ready comment text.",
+    ),
     ;
 
     fun toAnalysisMode(): AnalysisMode = when (this) {
@@ -123,6 +162,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var questionTextArea: JBTextArea? = null
     private var modeButtonGroup: ButtonGroup? = null
     private var modeButtons = mutableMapOf<ReviewMode, JToggleButton>()
+    private var modeDescriptionText: JBTextArea? = null
     private var contextChipPanel: JPanel? = null
     private var inputQuickActionPanel: JPanel? = null
 
@@ -141,6 +181,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var stepList: JBList<FlowStep>? = null
     private var followUpField: JBTextField? = null
     private var overviewContentPanel: JPanel? = null
+    private var overviewScrollContent: JPanel? = null
     private var clarificationPanel: JPanel? = null
     private var clarificationLabel: JBLabel? = null
     private var clarificationField: JBTextField? = null
@@ -150,8 +191,10 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var overviewFilterButtons = mutableMapOf<StepFilter, JToggleButton>()
     private var overviewGlobalNotesText: JTextArea? = null
     private var overviewSelectionTitle: JBLabel? = null
-    private var overviewSelectionMeta: JBLabel? = null
+    private var overviewSelectionMeta: JBTextArea? = null
     private var overviewSelectionBody: JTextArea? = null
+    private var overviewStepWarningPanel: JPanel? = null
+    private var overviewStepWarningText: JTextArea? = null
     private var previewSelectedButton: JButton? = null
     private var startTourButton: JButton? = null
     private var copyMarkdownButton: JButton? = null
@@ -172,14 +215,18 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     // Tour active card components
     private var tourActivePanel: JPanel? = null
     private var tourStepHeader: JBLabel? = null
-    private var tourStepFilePath: JBLabel? = null
+    private var tourStepFilePath: JBTextArea? = null
     private var tourStepExplanation: JTextArea? = null
+    private var tourStepWarningPanel: JPanel? = null
+    private var tourStepWarningText: JTextArea? = null
     private var tourWhySection: JPanel? = null
     private var tourWhyText: JTextArea? = null
     private var tourUncertainLabel: JBLabel? = null
     private var tourFollowUpField: JBTextField? = null
     private var tourAskButton: JButton? = null
     private var tourStepAnswerStatus: JBLabel? = null
+    private var tourStepAnswerWarningPanel: JPanel? = null
+    private var tourStepAnswerWarningText: JTextArea? = null
     private var tourStepAnswerText: JTextArea? = null
     private var tourStepAnswerEvidenceText: JTextArea? = null
 
@@ -192,12 +239,14 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private var recentWalkthroughsPanel: JPanel? = null
     private var repoReviewButton: JButton? = null
     private var openRepoReviewButton: JButton? = null
+    private var repositoryShortcutStatusText: JBTextArea? = null
+    private var lastProviderStatus: ProviderStatus? = null
     private val repositoryReviewCard = RepositoryReviewCard(
-        isSnapshotStale = { sessionService.repositoryReviewIsStale() },
         onStartFeatureWalkthrough = { featureId, pathId -> sessionService.startFeatureWalkthrough(featureId, pathId) },
         onRefreshReview = { sessionService.startRepositoryReview() },
         onCopyMarkdown = { copyRepositoryReviewMarkdown() },
     )
+    private val progressLogLines = ArrayDeque<String>()
 
     // Command history
     private val history = mutableListOf<String>()
@@ -246,11 +295,23 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     override fun onProgressLine(line: String) {
-        loadingStatusLabel?.text = line
-        progressLog?.let { log ->
-            log.append("$line\n")
-            log.caretPosition = log.document.length
+        onProgressLines(listOf(line))
+    }
+
+    override fun onProgressLines(lines: List<String>) {
+        if (lines.isEmpty()) return
+        loadingStatusLabel?.text = lines.last()
+        if (!settings.state.showRawProgressLog) return
+
+        lines.forEach { line ->
+            progressLogLines.addLast(line)
         }
+        while (progressLogLines.size > MAX_PROGRESS_LOG_LINES) {
+            progressLogLines.removeFirst()
+        }
+
+        progressLog?.text = progressLogLines.joinToString(separator = "\n", postfix = "\n")
+        progressLog?.caretPosition = progressLog?.document?.length ?: 0
     }
 
     override fun removeNotify() {
@@ -271,7 +332,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             }
             TourState.LOADING -> {
                 clearErrorBanner()
-                progressLog?.text = ""
+                resetProgressLog()
                 loadingStatusLabel?.text = "Waiting for provider progress..."
                 startElapsedTimer()
                 cardLayout.show(cardPanel, CARD_LOADING)
@@ -317,19 +378,26 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     // ── Input Card ──────────────────────────────────────────────────────
 
     private fun createInputCard(): JPanel {
-        val panel = JPanel(BorderLayout())
-        panel.border = JBUI.Borders.empty(8)
+        val content = ViewportWidthPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(8)
+            alignmentX = LEFT_ALIGNMENT
+        }
 
-        val topPanel = JPanel(BorderLayout())
-
-        topPanel.add(createModeAndProviderHeader(), BorderLayout.NORTH)
-        topPanel.add(createStatusRow(), BorderLayout.CENTER)
-        topPanel.add(createErrorBannerPanel(), BorderLayout.SOUTH)
-
-        panel.add(topPanel, BorderLayout.NORTH)
+        val topPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
+        }
+        topPanel.add(createModeAndProviderHeader())
+        topPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+        topPanel.add(createStatusRow())
+        topPanel.add(createErrorBannerPanel())
+        content.add(topPanel)
+        content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
         // Center: prompt editor
-        questionTextArea = JBTextArea(4, 0).apply {
+        questionTextArea = WrappingTextArea().apply {
+            rows = 4
             emptyText.setText(currentMode.placeholder)
             lineWrap = true
             wrapStyleWord = true
@@ -344,10 +412,22 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 }
             })
         }
-        panel.add(JBScrollPane(questionTextArea!!), BorderLayout.CENTER)
+        content.add(createInputSection(
+            title = "Prompt",
+            description = "Describe the behavior, review, risk, or execution path you want to inspect.",
+            body = JBScrollPane(questionTextArea!!).apply {
+                alignmentX = LEFT_ALIGNMENT
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(150))
+                preferredSize = java.awt.Dimension(0, JBUI.scale(110))
+                minimumSize = java.awt.Dimension(0, JBUI.scale(96))
+            },
+        ))
+        content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
         val bottomPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
         }
 
         recentWalkthroughsPanel = JPanel().apply {
@@ -358,66 +438,75 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
         bottomPanel.add(recentWalkthroughsPanel)
 
-        val suggestionsPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(6, 0, 4, 0)
-            alignmentX = LEFT_ALIGNMENT
-        }
-        val suggestionsTitle = JBLabel("Try asking:").apply {
-            font = JBUI.Fonts.smallFont()
-            foreground = UIUtil.getLabelDisabledForeground()
-            alignmentX = LEFT_ALIGNMENT
-        }
-        suggestionsPanel.add(suggestionsTitle)
-        suggestionsPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
-
         val suggestions = listOf(
             "How does the main entry point work?",
             "What's the request/response lifecycle?",
             "How is configuration loaded and applied?",
             "What are the key abstractions and how do they relate?",
         )
-        val chipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
+        val chipsPanel = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
             alignmentX = LEFT_ALIGNMENT
         }
         for (suggestion in suggestions) {
             chipsPanel.add(createSuggestionChip(suggestion))
         }
-        suggestionsPanel.add(chipsPanel)
-        bottomPanel.add(suggestionsPanel)
+        bottomPanel.add(createInputSection(
+            title = "Examples",
+            description = "Start from one of these prompts and adjust it to your question.",
+            body = chipsPanel,
+        ))
+        bottomPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        bottomPanel.add(createInputSection(
+            title = "Prompt Context",
+            description = "Seed the prompt from the current file, symbol, or selection.",
+            body = createContextChipRow(),
+        ))
+        bottomPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        bottomPanel.add(createQuickActionSection())
 
-        val quickPanel = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(6, 0, 0, 0)
-            alignmentX = LEFT_ALIGNMENT
+        content.add(bottomPanel)
+
+        return JPanel(BorderLayout()).apply {
+            add(
+                JBScrollPane(content).apply {
+                    border = JBUI.Borders.empty()
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                },
+                BorderLayout.CENTER,
+            )
         }
-        quickPanel.add(createContextChipRow(), BorderLayout.CENTER)
-        quickPanel.add(createInputActionRow(), BorderLayout.SOUTH)
-        bottomPanel.add(quickPanel)
-
-        panel.add(bottomPanel, BorderLayout.SOUTH)
-        return panel
     }
 
     private fun createModeAndProviderHeader(): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
+        }
         panel.add(createModeChipRow())
+        panel.add(createModeDescriptionRow())
         panel.add(Box.createVerticalStrut(JBUI.scale(6)))
         panel.add(createProviderRow())
         return panel
     }
 
     private fun createModeChipRow(): JPanel {
-        val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        val row = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
             border = JBUI.Borders.empty(0, 0, 4, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
         modeButtonGroup = ButtonGroup()
         row.add(JBLabel("Mode:"))
         ReviewMode.entries.forEach { mode ->
             val button = JToggleButton(mode.displayName).apply {
                 isFocusable = false
+                isOpaque = true
+                isContentAreaFilled = true
                 font = JBUI.Fonts.smallFont()
-                addActionListener { selectMode(mode) }
+                toolTipText = mode.tooltipText
+                addActionListener {
+                    selectMode(mode, updatePromptPlaceholder = true)
+                    questionTextArea?.requestFocusInWindow()
+                }
             }
             modeButtonGroup?.add(button)
             modeButtons[mode] = button
@@ -427,9 +516,33 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         return row
     }
 
+    private fun createModeDescriptionRow(): JPanel {
+        modeDescriptionText = createHelperTextArea().apply {
+            border = JBUI.Borders.empty()
+        }
+        refreshModeDescription()
+        return JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.border()),
+                JBUI.Borders.empty(6, 8),
+            )
+
+            add(JBLabel("Selected Mode").apply {
+                font = JBUI.Fonts.smallFont().asBold()
+                foreground = UIUtil.getLabelDisabledForeground()
+                alignmentX = LEFT_ALIGNMENT
+                border = JBUI.Borders.empty(0, 0, 2, 0)
+            })
+            add(modeDescriptionText!!)
+        }
+    }
+
     private fun createProviderRow(): JPanel {
-        val providerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        val providerPanel = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4))).apply {
             border = JBUI.Borders.empty(0, 0, 6, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
         providerPanel.add(JBLabel("Provider:"))
         providerCombo = JComboBox(AiProvider.entries.toTypedArray()).apply {
@@ -446,8 +559,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun createStatusRow(): JPanel {
-        val statusPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        val statusPanel = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
             border = JBUI.Borders.empty(0, 0, 6, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
         statusDot = JBLabel(AllIcons.General.InspectionsOK).apply {
             text = "Checking provider..."
@@ -459,7 +573,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun createErrorBannerPanel(): JPanel {
-        errorBannerPanel = JPanel(BorderLayout())
+        errorBannerPanel = JPanel(BorderLayout()).apply {
+            alignmentX = LEFT_ALIGNMENT
+        }
         errorBanner = JBLabel().apply {
             icon = AllIcons.General.Error
             isVisible = false
@@ -471,13 +587,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun createContextChipRow(): JPanel {
-        val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
-            border = JBUI.Borders.empty(2, 0, 0, 0)
+        val row = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
+            alignmentX = LEFT_ALIGNMENT
         }
-        row.add(JBLabel("Context:").apply {
-            font = JBUI.Fonts.smallFont()
-            foreground = UIUtil.getLabelDisabledForeground()
-        })
         row.add(createPromptChip("Current file") { applyPromptPreset(ReviewMode.UNDERSTAND, "Explain the current file and its role in the codebase.") })
         row.add(createPromptChip("Selection") { applyPromptPreset(ReviewMode.REVIEW, "Review the current selection for risks, regressions, and missing tests.") })
         row.add(createPromptChip("Trace flow") { applyPromptPreset(ReviewMode.TRACE, "Trace the execution path through the current code and identify key call sites.") })
@@ -485,36 +597,169 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         return row
     }
 
-    private fun createInputActionRow(): JPanel {
-        val row = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
-            border = JBUI.Borders.empty(6, 0, 0, 0)
+    private fun createQuickActionSection(): JPanel {
+        repoReviewButton = createActionButton(
+            text = "Run Repo Review",
+            toolTip = "Run a repository-wide review using symbolic analysis and store feature slices for later walkthroughs.",
+            onClick = { sessionService.startRepositoryReview() },
+        )
+        openRepoReviewButton = createActionButton(
+            text = "Open Saved Review",
+            toolTip = "Open the most recent saved repository review without re-running analysis.",
+            onClick = { sessionService.restoreStoredRepositoryReview() },
+        )
+        val reviewCurrentFileButton = createActionButton(
+            text = "Review File",
+            toolTip = "Prefill a review-oriented prompt for the current file.",
+            onClick = {
+                applyPromptPreset(
+                    ReviewMode.REVIEW,
+                    "Review the current file for bugs, regressions, missing tests, and comment-worthy issues.",
+                )
+            },
+        )
+        val explainCurrentSymbolButton = createActionButton(
+            text = "Explain Symbol",
+            toolTip = "Prefill an explanation prompt for the current editor context.",
+            onClick = { applyPromptPreset(ReviewMode.UNDERSTAND, "Explain the current editor context and how the code works.") },
+        )
+        val writeReviewCommentButton = createActionButton(
+            text = "Draft Comment",
+            toolTip = "Prefill a prompt to draft a review comment for the current cursor or selection.",
+            onClick = { applyPromptPreset(ReviewMode.COMMENT, "Draft a review comment for the current cursor or selection.") },
+        )
+        val runPromptButton = createActionButton(
+            text = "Run Prompt",
+            toolTip = "Run the prompt above with the selected mode and current editor context.",
+            onClick = { submitCurrentPrompt() },
+        )
+
+        val content = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
         }
-        repoReviewButton = JButton("Thorough Repo Review").apply {
-            toolTipText = "Run a repository-wide review using symbolic analysis and store feature slices for later walkthroughs."
-            addActionListener { sessionService.startRepositoryReview() }
-            row.add(this)
+        repositoryShortcutStatusText = createHelperTextArea().apply {
+            border = JBUI.Borders.empty(4, 0, 0, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
-        openRepoReviewButton = JButton("Open Last Repo Review").apply {
-            addActionListener { sessionService.restoreStoredRepositoryReview() }
-            row.add(this)
+        content.add(
+            createActionGroup(
+                title = "Repository",
+                description = "Audit the whole repo or reopen the last stored audit.",
+                buttons = listOf(repoReviewButton!!, openRepoReviewButton!!),
+                footer = repositoryShortcutStatusText,
+            ),
+        )
+        content.add(Box.createVerticalStrut(JBUI.scale(8)))
+        content.add(
+            createActionGroup(
+                title = "Current Editor",
+                description = "Prefill the prompt from the active file, symbol, or selection.",
+                buttons = listOf(reviewCurrentFileButton, explainCurrentSymbolButton, writeReviewCommentButton),
+            ),
+        )
+        content.add(Box.createVerticalStrut(JBUI.scale(8)))
+        content.add(
+            createActionGroup(
+                title = "Run",
+                description = "Send the prompt above with the selected mode and current context.",
+                buttons = listOf(runPromptButton),
+            ),
+        )
+
+        return createInputSection(
+            title = "Shortcuts",
+            description = "Reopen saved work or prefill the prompt from the current editor.",
+            body = content,
+        )
+    }
+
+    private fun createActionGroup(
+        title: String,
+        description: String,
+        buttons: List<JButton>,
+        footer: JComponent? = null,
+    ): JPanel {
+        return JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
+
+            add(JBLabel(title).apply {
+                font = JBUI.Fonts.smallFont().asBold()
+                alignmentX = LEFT_ALIGNMENT
+            })
+            add(createHelperTextArea().apply {
+                text = description
+                border = JBUI.Borders.empty(2, 0, 4, 0)
+                alignmentX = LEFT_ALIGNMENT
+            })
+            add(JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(6))).apply {
+                isOpaque = false
+                alignmentX = LEFT_ALIGNMENT
+                buttons.forEach(::add)
+            })
+            footer?.let { add(it) }
         }
-        JButton("Review Current File").apply {
-            addActionListener { applyPromptPreset(ReviewMode.REVIEW, "Review the current file for bugs, regressions, missing tests, and comment-worthy issues.") }
-            row.add(this)
+    }
+
+    private fun createActionButton(
+        text: String,
+        toolTip: String,
+        onClick: () -> Unit,
+    ): JButton {
+        return JButton(text).apply {
+            toolTipText = toolTip
+            addActionListener { onClick() }
         }
-        JButton("Explain Current Symbol").apply {
-            addActionListener { applyPromptPreset(ReviewMode.UNDERSTAND, "Explain the current editor context and how the code works.") }
-            row.add(this)
+    }
+
+    private fun createInputSection(
+        title: String,
+        description: String? = null,
+        body: JComponent,
+    ): JPanel {
+        body.alignmentX = LEFT_ALIGNMENT
+        return JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.border()),
+                JBUI.Borders.empty(8),
+            )
+
+            add(JBLabel(title).apply {
+                font = JBUI.Fonts.label().asBold()
+                alignmentX = LEFT_ALIGNMENT
+            })
+            description?.takeIf { it.isNotBlank() }?.let { helper ->
+                add(createHelperTextArea().apply {
+                    text = helper
+                    border = JBUI.Borders.empty(2, 0, 6, 0)
+                    alignmentX = LEFT_ALIGNMENT
+                })
+            }
+            add(body)
         }
-        JButton("Write Review Comment").apply {
-            addActionListener { applyPromptPreset(ReviewMode.COMMENT, "Draft a review comment for the current cursor or selection.") }
-            row.add(this)
+    }
+
+    private fun refreshRepositoryShortcutStatus() {
+        val providerService = project.service<LlmProviderService>()
+        val repoReviewStatus = when {
+            lastProviderStatus == null -> "Run Repo Review: checking provider."
+            lastProviderStatus?.available != true -> {
+                "Run Repo Review: unavailable - ${lastProviderStatus?.message.orEmpty()}."
+            }
+            providerService.supportsRepositoryReview() -> "Run Repo Review: ready."
+            else -> "Run Repo Review: requires Claude CLI with MCP semantic navigation enabled."
         }
-        JButton("Map Flow").apply {
-            addActionListener { submitCurrentPrompt() }
-            row.add(this)
+        val savedReviewStatus = if (sessionService.currentRepositoryReview != null) {
+            "Open Saved Review: ready."
+        } else {
+            "Open Saved Review: no saved repository review yet."
         }
-        return row
+        repositoryShortcutStatusText?.text = "$repoReviewStatus\n$savedReviewStatus"
     }
 
     private fun createPromptChip(text: String, onClick: () -> Unit): JPanel {
@@ -548,10 +793,53 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun selectMode(mode: ReviewMode, updatePromptPlaceholder: Boolean = false) {
         currentMode = mode
-        modeButtons[mode]?.isSelected = true
-        modeButtons.filterKeys { it != mode }.values.forEach { it.isSelected = false }
+        modeButtons.forEach { (entryMode, button) ->
+            button.isSelected = entryMode == mode
+        }
+        refreshModeButtonStyles()
+        refreshModeDescription()
         if (updatePromptPlaceholder) {
-            questionTextArea?.emptyText?.text = mode.placeholder
+            questionTextArea?.emptyText?.setText(mode.placeholder)
+        }
+    }
+
+    private fun refreshModeButtonStyles() {
+        val selectedBackground = JBColor(0xE8F0FE, 0x2F5D8A)
+        val selectedForeground = JBColor(0x1A73E8, 0xFFFFFF)
+        val selectedBorder = JBColor(0x1A73E8, 0x78A9FF)
+        val defaultBackground = UIUtil.getPanelBackground()
+        val defaultForeground = UIUtil.getLabelForeground()
+        val defaultBorder = JBColor.border()
+
+        modeButtons.forEach { (entryMode, button) ->
+            val selected = entryMode == currentMode
+            button.background = if (selected) selectedBackground else defaultBackground
+            button.foreground = if (selected) selectedForeground else defaultForeground
+            button.border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(if (selected) selectedBorder else defaultBorder, 1, true),
+                JBUI.Borders.empty(6, 12),
+            )
+            button.revalidate()
+            button.repaint()
+        }
+    }
+
+    private fun refreshModeDescription() {
+        modeDescriptionText?.text = currentMode.helperText
+        modeDescriptionText?.toolTipText = currentMode.tooltipText
+    }
+
+    private fun createHelperTextArea(): JBTextArea {
+        return WrappingTextArea().apply {
+            isEditable = false
+            isFocusable = false
+            isOpaque = false
+            lineWrap = true
+            wrapStyleWord = true
+            font = JBUI.Fonts.smallFont()
+            foreground = UIUtil.getLabelDisabledForeground()
+            alignmentX = LEFT_ALIGNMENT
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
         }
     }
 
@@ -609,6 +897,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun refreshInputCard() {
         openRepoReviewButton?.isEnabled = sessionService.currentRepositoryReview != null
+        refreshRepositoryShortcutStatus()
         val container = recentWalkthroughsPanel ?: return
         container.removeAll()
 
@@ -637,7 +926,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun createRecentWalkthroughRow(item: RecentWalkthrough): JPanel {
-        val row = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+        val row = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             border = BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(JBColor.border()),
                 JBUI.Borders.empty(6, 8),
@@ -672,8 +962,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         textPanel.add(metaLabel)
         textPanel.add(summary)
 
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
+        val buttonPanel = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
             isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
         }
         buttonPanel.add(JButton("Open").apply {
             addActionListener { sessionService.restoreRecentWalkthrough(item.id) }
@@ -683,8 +974,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             addActionListener { sessionService.restoreRecentWalkthrough(item.id, startTour = true) }
         })
 
-        row.add(textPanel, BorderLayout.CENTER)
-        row.add(buttonPanel, BorderLayout.EAST)
+        row.add(textPanel)
+        row.add(Box.createVerticalStrut(JBUI.scale(6)))
+        row.add(buttonPanel)
         return row
     }
 
@@ -760,11 +1052,12 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 BorderFactory.createLineBorder(JBColor.border()),
                 JBUI.Borders.empty(),
             )
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         }
         panel.add(progressLogScrollPane!!, BorderLayout.CENTER)
 
         // Cancel button
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT)).apply {
+        val buttonPanel = JPanel(WrapLayout(FlowLayout.RIGHT, JBUI.scale(6), JBUI.scale(6))).apply {
             border = JBUI.Borders.empty(6, 0, 0, 0)
         }
         val cancelButton = JButton("Cancel").apply {
@@ -804,9 +1097,13 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private fun createOverviewCard(): JPanel {
         val panel = JPanel(BorderLayout())
         panel.border = JBUI.Borders.empty(8)
+        overviewScrollContent = ViewportWidthPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
+        }
 
         // Metadata bar
-        metadataBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(12), 0)).apply {
+        metadataBar = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(12), JBUI.scale(4))).apply {
             border = JBUI.Borders.empty(0, 0, 6, 0)
             isVisible = false
         }
@@ -817,30 +1114,39 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         metadataBar!!.add(metadataLabel!!)
 
         // Flow map content
-        overviewContentPanel = JPanel(BorderLayout()).apply {
+        overviewContentPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
+
             summaryLabel = JBLabel().apply {
                 border = JBUI.Borders.empty(0, 0, 8, 0)
                 verticalAlignment = SwingConstants.TOP
+                alignmentX = LEFT_ALIGNMENT
             }
             overviewInsightsLabel = JBLabel().apply {
                 font = JBUI.Fonts.smallFont()
                 foreground = UIUtil.getLabelDisabledForeground()
                 border = JBUI.Borders.empty(0, 0, 8, 0)
+                alignmentX = LEFT_ALIGNMENT
             }
             overviewGlobalNotesText = createOverviewTextArea().apply {
                 border = JBUI.Borders.empty(0, 0, 8, 0)
                 isVisible = false
+                alignmentX = LEFT_ALIGNMENT
             }
 
             val topSection = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                alignmentX = LEFT_ALIGNMENT
             }
             topSection.add(metadataBar!!)
             topSection.add(summaryLabel!!)
             topSection.add(overviewInsightsLabel!!)
             topSection.add(createOverviewFilterRow())
             topSection.add(overviewGlobalNotesText!!)
-            add(topSection, BorderLayout.NORTH)
+            add(topSection)
+            add(Box.createVerticalStrut(JBUI.scale(8)))
 
             stepListModel = DefaultListModel()
             stepList = JBList(stepListModel!!).apply {
@@ -867,10 +1173,20 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                     }
                 })
             }
-            add(JBScrollPane(stepList!!), BorderLayout.CENTER)
+            add(
+                JBScrollPane(stepList!!).apply {
+                    alignmentX = LEFT_ALIGNMENT
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                    preferredSize = java.awt.Dimension(0, JBUI.scale(220))
+                    minimumSize = java.awt.Dimension(0, JBUI.scale(120))
+                    maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(320))
+                },
+            )
 
             val bottomSection = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                alignmentX = LEFT_ALIGNMENT
             }
 
             val selectedStepPanel = JPanel().apply {
@@ -885,13 +1201,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 font = JBUI.Fonts.label().asBold()
                 alignmentX = LEFT_ALIGNMENT
             }
-            overviewSelectionMeta = JBLabel().apply {
-                font = JBUI.Fonts.smallFont()
-                foreground = UIUtil.getLabelDisabledForeground()
+            overviewSelectionMeta = createHelperTextArea().apply {
                 border = JBUI.Borders.empty(2, 0, 6, 0)
                 alignmentX = LEFT_ALIGNMENT
             }
-            overviewSelectionBody = JTextArea().apply {
+            overviewSelectionBody = WrappingTextArea().apply {
                 isEditable = false
                 lineWrap = true
                 wrapStyleWord = true
@@ -899,18 +1213,26 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 background = UIUtil.getPanelBackground()
                 border = JBUI.Borders.empty()
                 alignmentX = LEFT_ALIGNMENT
+                maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+            }
+            createPotentialBugWarningPanel("Potential bugs detected").also { (panel, textArea) ->
+                overviewStepWarningPanel = panel
+                overviewStepWarningText = textArea
             }
             selectedStepPanel.add(overviewSelectionTitle!!)
             selectedStepPanel.add(overviewSelectionMeta!!)
+            selectedStepPanel.add(overviewStepWarningPanel!!)
             selectedStepPanel.add(overviewSelectionBody!!)
             overviewTabs = createOverviewTabsPanel()
+            overviewTabs!!.alignmentX = LEFT_ALIGNMENT
             selectedStepPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
             selectedStepPanel.add(overviewTabs!!)
             bottomSection.add(Box.createVerticalStrut(JBUI.scale(8)))
             bottomSection.add(selectedStepPanel)
 
-            val startTourPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            val startTourPanel = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(6))).apply {
                 border = JBUI.Borders.empty(8, 0, 0, 0)
+                alignmentX = LEFT_ALIGNMENT
             }
             startTourButton = JButton("Start Tour").apply {
                 addActionListener { startTourFromSelection() }
@@ -942,7 +1264,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             }
             bottomSection.add(hintLabel)
 
-            val followUpPanel = JPanel(BorderLayout(JBUI.scale(4), 0))
+            val followUpPanel = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+                alignmentX = LEFT_ALIGNMENT
+            }
             followUpPanel.border = JBUI.Borders.empty(8, 0, 0, 0)
             followUpField = JBTextField().apply field@{
                 emptyText.setText("Ask a follow-up...")
@@ -965,18 +1289,23 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             followUpPanel.add(sendButton, BorderLayout.EAST)
             bottomSection.add(followUpPanel)
 
-            add(bottomSection, BorderLayout.SOUTH)
+            add(bottomSection)
         }
 
         // Clarification content
-        clarificationPanel = JPanel(BorderLayout()).apply {
+        clarificationPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = LEFT_ALIGNMENT
             clarificationLabel = JBLabel().apply {
                 border = JBUI.Borders.empty(0, 0, 8, 0)
                 verticalAlignment = SwingConstants.TOP
+                alignmentX = LEFT_ALIGNMENT
             }
-            add(clarificationLabel!!, BorderLayout.NORTH)
+            add(clarificationLabel!!)
 
-            val answerPanel = JPanel(BorderLayout(JBUI.scale(4), 0))
+            val answerPanel = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+                alignmentX = LEFT_ALIGNMENT
+            }
             answerPanel.border = JBUI.Borders.empty(8, 0, 0, 0)
             clarificationField = JBTextField().apply clarification@{
                 addKeyListener(object : KeyAdapter() {
@@ -996,23 +1325,31 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 addActionListener { submitClarificationAnswer() }
             }
             answerPanel.add(replyButton, BorderLayout.EAST)
-            add(answerPanel, BorderLayout.SOUTH)
+            add(answerPanel)
         }
 
-        panel.add(overviewContentPanel!!, BorderLayout.CENTER)
+        overviewScrollContent!!.add(overviewContentPanel!!)
+        panel.add(
+            JBScrollPane(overviewScrollContent!!).apply {
+                border = JBUI.Borders.empty()
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            },
+            BorderLayout.CENTER,
+        )
         overviewPanel = panel
         return panel
     }
 
     private fun refreshOverviewCard() {
         val panel = overviewPanel ?: return
+        val scrollContent = overviewScrollContent ?: return
         val flowMap = sessionService.currentFlowMap
         val clarification = sessionService.clarificationQuestion
 
         if (clarification != null) {
             clarificationLabel!!.text = "<html><b>Clarification needed:</b><br>${escapeHtml(clarification)}</html>"
-            panel.removeAll()
-            panel.add(clarificationPanel!!, BorderLayout.CENTER)
+            scrollContent.removeAll()
+            scrollContent.add(clarificationPanel!!)
         } else if (flowMap != null) {
             summaryLabel!!.text = "<html>${escapeHtml(flowMap.summary)}</html>"
 
@@ -1021,10 +1358,12 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             updateOverviewGlobalNotes(flowMap)
             rebuildOverviewStepList()
 
-            panel.removeAll()
-            panel.add(overviewContentPanel!!, BorderLayout.CENTER)
+            scrollContent.removeAll()
+            scrollContent.add(overviewContentPanel!!)
         }
 
+        scrollContent.revalidate()
+        scrollContent.repaint()
         panel.revalidate()
         panel.repaint()
     }
@@ -1034,7 +1373,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private fun createRepositoryReviewCard(): JPanel = repositoryReviewCard.panel
 
     private fun refreshRepositoryReviewCard() {
-        repositoryReviewCard.refresh(sessionService.currentRepositoryReview)
+        repositoryReviewCard.refresh(sessionService.currentRepositoryReview, sessionService.repositoryReviewStale)
+        sessionService.refreshRepositoryReviewStaleStatus()
     }
 
     private fun copyRepositoryReviewMarkdown() {
@@ -1070,6 +1410,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     private fun updateOverviewInsights(steps: List<FlowStep>) {
         val uncertainCount = steps.count { it.uncertain }
         val brokenCount = steps.count { it.broken }
+        val bugCount = steps.sumOf { it.potentialBugs.size }
         val parts = mutableListOf(
             "${steps.size} mapped steps",
             "${steps.map { it.filePath }.distinct().size} files",
@@ -1080,11 +1421,14 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         if (brokenCount > 0) {
             parts.add("$brokenCount needs repair")
         }
+        if (bugCount > 0) {
+            parts.add("$bugCount bug warnings")
+        }
         overviewInsightsLabel?.text = parts.joinToString("  ·  ")
     }
 
     private fun createOverviewFilterRow(): JPanel {
-        val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        val row = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
             border = JBUI.Borders.empty(0, 0, 8, 0)
         }
         val group = ButtonGroup()
@@ -1132,12 +1476,14 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 StepFilter.ALL -> true
                 StepFilter.FINDINGS -> step.broken ||
                     step.severity?.let { it.equals("high", true) || it.equals("medium", true) } == true ||
+                    step.potentialBugs.isNotEmpty() ||
                     step.evidence.isNotEmpty() ||
                     !step.testGap.isNullOrBlank() ||
                     !step.suggestedAction.isNullOrBlank()
                 StepFilter.UNCERTAIN -> step.uncertain
                 StepFilter.BROKEN -> step.broken
-                StepFilter.TEST_GAPS -> !step.testGap.isNullOrBlank()
+                StepFilter.TEST_GAPS -> !step.testGap.isNullOrBlank() ||
+                    step.potentialBugs.any { !it.testGap.isNullOrBlank() }
             }
         }
     }
@@ -1148,13 +1494,16 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             StepFilter.FINDINGS to flowMap.steps.count { step ->
                 step.broken ||
                     step.severity?.let { it.equals("high", true) || it.equals("medium", true) } == true ||
+                    step.potentialBugs.isNotEmpty() ||
                     step.evidence.isNotEmpty() ||
                     !step.testGap.isNullOrBlank() ||
                     !step.suggestedAction.isNullOrBlank()
             },
             StepFilter.UNCERTAIN to flowMap.steps.count { it.uncertain },
             StepFilter.BROKEN to flowMap.steps.count { it.broken },
-            StepFilter.TEST_GAPS to flowMap.steps.count { !it.testGap.isNullOrBlank() },
+            StepFilter.TEST_GAPS to flowMap.steps.count { step ->
+                !step.testGap.isNullOrBlank() || step.potentialBugs.any { !it.testGap.isNullOrBlank() }
+            },
         )
         overviewFilterButtons.forEach { (filter, button) ->
             button.text = "${filter.displayName} (${counts[filter] ?: 0})"
@@ -1209,6 +1558,21 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 }
                 add("Suggested tests:\n$suggested")
             }
+            val potentialBugs = flowMap.steps.flatMap { step ->
+                step.potentialBugs.map { finding -> step to finding }
+            }
+            if (potentialBugs.isNotEmpty()) {
+                val summaryLine = "${potentialBugs.size} grounded warning" +
+                    if (potentialBugs.size == 1) "" else "s" +
+                    " across ${potentialBugs.map { it.first.id }.distinct().size} steps."
+                val highlights = potentialBugs
+                    .sortedWith(compareBy<Pair<FlowStep, RepositoryFinding>> { severityRank(it.second.severity) }.thenBy { it.second.title })
+                    .take(5)
+                    .joinToString("\n") { (step, finding) ->
+                        "- [${finding.severity}] ${finding.title} (${step.title})"
+                    }
+                add("Auto bug discovery:\n$summaryLine\n$highlights")
+            }
         }
 
         val text = sections.joinToString("\n\n")
@@ -1236,6 +1600,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             overviewSelectionTitle?.text = "Selected step"
             overviewSelectionMeta?.text = "Choose a step to preview it in the editor."
             overviewSelectionBody?.text = ""
+            updatePotentialBugWarning(overviewStepWarningPanel, overviewStepWarningText, emptyList())
             selectedStepSnapshot = null
             updateOverviewDetailTabs(null)
             updateOverviewSelectionActions(null)
@@ -1243,10 +1608,17 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
 
         selectedStepSnapshot = step
-        overviewSelectionTitle?.text = when {
-            step.broken -> "${step.title} (needs repair)"
-            step.uncertain -> "${step.title} (uncertain)"
-            else -> step.title
+        val titleFlags = buildList {
+            if (step.broken) add("needs repair")
+            else if (step.uncertain) add("uncertain")
+            if (step.potentialBugs.isNotEmpty()) {
+                add("${step.potentialBugs.size} bug warning${if (step.potentialBugs.size == 1) "" else "s"}")
+            }
+        }
+        overviewSelectionTitle?.text = if (titleFlags.isEmpty()) {
+            step.title
+        } else {
+            "${step.title} (${titleFlags.joinToString(", ")})"
         }
 
         val metaParts = mutableListOf(
@@ -1261,6 +1633,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             metaParts.add("confidence: $it")
         }
         step.riskType?.takeIf { it.isNotBlank() }?.let { metaParts.add("risk: $it") }
+        if (step.potentialBugs.isNotEmpty()) {
+            metaParts.add("bug warnings: ${step.potentialBugs.size}")
+        }
         if (sessionService.isEntryStep(step.id)) {
             metaParts.add("entrypoint")
         }
@@ -1268,6 +1643,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             metaParts.add("terminal")
         }
         overviewSelectionMeta?.text = metaParts.joinToString("  ·  ")
+        updatePotentialBugWarning(overviewStepWarningPanel, overviewStepWarningText, step.potentialBugs)
 
         val detailLines = mutableListOf(step.explanation)
         detailLines += ""
@@ -1328,12 +1704,20 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         overviewEvidenceText = createOverviewTextArea()
         overviewRiskText = createOverviewTextArea()
         overviewTestsText = createOverviewTextArea()
-        tabs.addTab("Explain", JBScrollPane(overviewExplainText!!))
-        tabs.addTab("Evidence", JBScrollPane(overviewEvidenceText!!))
-        tabs.addTab("Risk", JBScrollPane(overviewRiskText!!))
+        tabs.addTab("Explain", JBScrollPane(overviewExplainText!!).apply {
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        })
+        tabs.addTab("Evidence", JBScrollPane(overviewEvidenceText!!).apply {
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        })
+        tabs.addTab("Risk", JBScrollPane(overviewRiskText!!).apply {
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        })
         commentTabIndex = tabs.tabCount
         tabs.addTab("Comment", createCommentComposerPanel())
-        tabs.addTab("Tests", JBScrollPane(overviewTestsText!!))
+        tabs.addTab("Tests", JBScrollPane(overviewTestsText!!).apply {
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        })
 
         commentStyleCombo?.addActionListener {
             selectedStepSnapshot?.let { draftCommentForSelection(it, forceRefresh = true) }
@@ -1342,14 +1726,62 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun createOverviewTextArea(editable: Boolean = false): JTextArea {
-        return JTextArea().apply {
+        return WrappingTextArea().apply {
             isEditable = editable
             lineWrap = true
             wrapStyleWord = true
             font = if (editable) JBUI.Fonts.label() else JBUI.Fonts.smallFont()
             background = if (editable) UIUtil.getPanelBackground() else JBUI.CurrentTheme.ToolWindow.background()
             border = JBUI.Borders.empty()
+            alignmentX = LEFT_ALIGNMENT
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
         }
+    }
+
+    private fun createPotentialBugWarningPanel(title: String): Pair<JPanel, JTextArea> {
+        val background = JBColor(0xFFF3F3, 0x402727)
+        val borderColor = JBColor(0xE2B2B2, 0x7A4242)
+        val foreground = JBColor.namedColor(
+            "Label.errorForeground",
+            JBColor(0x9F1B1B, 0xFF8A80),
+        )
+        val textArea = WrappingTextArea().apply {
+            isEditable = false
+            lineWrap = true
+            wrapStyleWord = true
+            font = JBUI.Fonts.smallFont()
+            this.background = background
+            this.foreground = foreground
+            border = JBUI.Borders.empty()
+            alignmentX = LEFT_ALIGNMENT
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+        }
+        val header = JBLabel(title, AllIcons.General.WarningDialog, SwingConstants.LEFT).apply {
+            font = JBUI.Fonts.label().asBold()
+            this.foreground = foreground
+            border = JBUI.Borders.empty(0, 0, 4, 0)
+        }
+        val panel = JPanel(BorderLayout()).apply {
+            isVisible = false
+            alignmentX = LEFT_ALIGNMENT
+            this.background = background
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(borderColor),
+                JBUI.Borders.empty(8),
+            )
+            add(header, BorderLayout.NORTH)
+            add(textArea, BorderLayout.CENTER)
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+        }
+        return panel to textArea
+    }
+
+    private fun updatePotentialBugWarning(panel: JPanel?, textArea: JTextArea?, findings: List<RepositoryFinding>) {
+        val visible = findings.isNotEmpty()
+        panel?.isVisible = visible
+        textArea?.text = if (visible) buildPotentialBugSummaryText(findings) else ""
+        panel?.revalidate()
+        panel?.repaint()
     }
 
     private fun createCommentComposerPanel(): JPanel {
@@ -1367,7 +1799,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         header.add(commentTitleLabel!!, BorderLayout.NORTH)
         header.add(commentStatusLabel!!, BorderLayout.SOUTH)
 
-        val controls = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        val controls = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(6))).apply {
             border = JBUI.Borders.empty(4, 0, 6, 0)
         }
         controls.add(JBLabel("Style:"))
@@ -1392,7 +1824,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
         val body = JPanel(BorderLayout()).apply {
             add(controls, BorderLayout.NORTH)
-            add(JBScrollPane(overviewCommentText!!), BorderLayout.CENTER)
+            add(JBScrollPane(overviewCommentText!!).apply {
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            }, BorderLayout.CENTER)
         }
 
         panel.add(header, BorderLayout.NORTH)
@@ -1418,6 +1852,8 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         overviewCommentText?.text = buildCommentDraft(step, commentStyleCombo?.selectedItem as? CommentStyle)
         commentStatusLabel?.text = if (step.broken) {
             "This step needs repair before it can be toured."
+        } else if (step.potentialBugs.isNotEmpty()) {
+            "Potential bugs were detected in this step; keep the comment specific and evidence-backed."
         } else if (step.validationNote != null) {
             "This step was adjusted during validation; keep the comment grounded to the shown range."
         } else if (step.uncertain) {
@@ -1449,6 +1885,12 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         appendLine()
         appendLine("Why this step matters:")
         append(step.whyIncluded)
+        if (step.potentialBugs.isNotEmpty()) {
+            appendLine()
+            appendLine()
+            appendLine("Potential bugs:")
+            appendLine(buildPotentialBugSummaryText(step.potentialBugs))
+        }
         val roleLine = buildList {
             step.stepType?.takeIf { it.isNotBlank() }?.let { add("type: $it") }
             step.importance?.takeIf { it.isNotBlank() }?.let { add("importance: $it") }
@@ -1513,6 +1955,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 evidence.text?.takeIf { it.isNotBlank() }?.let { appendLine("  $it") }
             }
         }
+        if (step.potentialBugs.isNotEmpty()) {
+            appendLine()
+            appendLine("Potential bug evidence:")
+            appendLine(buildPotentialBugEvidenceText(step.potentialBugs))
+        }
         if (step.lineAnnotations.isNotEmpty()) {
             appendLine()
             appendLine("Line annotations:")
@@ -1538,6 +1985,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         appendLine("Risk signal: ${step.severity ?: if (step.uncertain) "uncertain" else "directly traced"}")
         step.validationNote?.takeIf { it.isNotBlank() }?.let {
             appendLine("Grounding note: $it")
+        }
+        if (step.potentialBugs.isNotEmpty()) {
+            appendLine()
+            appendLine("Potential bugs:")
+            appendLine(buildPotentialBugSummaryText(step.potentialBugs))
         }
         step.riskType?.takeIf { it.isNotBlank() }?.let {
             appendLine("Risk type: $it")
@@ -1575,7 +2027,10 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             val hint = test.fileHint?.trim().orEmpty()
             hint.isEmpty() || step.filePath.contains(hint)
         }
-        if (step.testGap.isNullOrBlank() && matchingSuggestedTests.isEmpty()) {
+        val findingTestGaps = step.potentialBugs.mapNotNull { finding ->
+            finding.testGap?.takeIf { it.isNotBlank() }?.let { finding to it }
+        }
+        if (step.testGap.isNullOrBlank() && matchingSuggestedTests.isEmpty() && findingTestGaps.isEmpty()) {
             appendLine("No explicit test guidance was returned for this step.")
             appendLine("Use this step for targeted regression coverage if you change it.")
             return@buildString
@@ -1583,6 +2038,15 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         step.testGap?.takeIf { it.isNotBlank() }?.let {
             appendLine("Step-specific test gap:")
             appendLine(it)
+        }
+        if (findingTestGaps.isNotEmpty()) {
+            if (isNotEmpty()) {
+                appendLine()
+            }
+            appendLine("Potential bug test gaps:")
+            findingTestGaps.forEach { (finding, gap) ->
+                appendLine("- ${finding.title}: $gap")
+            }
         }
         if (matchingSuggestedTests.isNotEmpty()) {
             if (isNotEmpty()) {
@@ -1662,7 +2126,61 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             append(groundedDraft.text.trim())
             return@buildString
         }
+        val topBug = step.potentialBugs.minByOrNull { severityRank(it.severity) }
         val subject = step.symbol?.takeIf { it.isNotBlank() } ?: step.title
+        if (topBug != null) {
+            when (selectedStyle) {
+                CommentStyle.QUESTION -> append("Can you clarify whether `${topBug.title}` is intentional in `")
+                CommentStyle.CONCERN -> append("I think `")
+                CommentStyle.SUGGESTION -> append("Consider tightening `")
+                CommentStyle.APPROVAL -> append("Looks good overall, but I would still double-check `")
+            }
+            append(subject)
+            append("`")
+            when (selectedStyle) {
+                CommentStyle.QUESTION -> append("?")
+                CommentStyle.CONCERN -> append(" may be exposing `${topBug.title}`.")
+                CommentStyle.SUGGESTION -> append("` around `${topBug.title}`.")
+                CommentStyle.APPROVAL -> append("` around `${topBug.title}`.")
+            }
+            appendLine()
+            appendLine()
+            appendLine(topBug.summary)
+            topBug.suggestedAction?.takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                append("Suggested next step: ")
+                append(it)
+            }
+            val primaryEvidence = topBug.evidence.firstOrNull()
+            if (primaryEvidence != null) {
+                appendLine()
+                appendLine()
+                append("Evidence: ")
+                append(primaryEvidence.label)
+                val location = buildList {
+                    primaryEvidence.filePath?.takeIf { it.isNotBlank() }?.let { add(it) }
+                    primaryEvidence.startLine?.let { start ->
+                        add(
+                            if (primaryEvidence.endLine != null && primaryEvidence.endLine != start) {
+                                "L$start-L${primaryEvidence.endLine}"
+                            } else {
+                                "L$start"
+                            },
+                        )
+                    }
+                }.joinToString(":")
+                if (location.isNotBlank()) {
+                    append(" (")
+                    append(location)
+                    append(")")
+                }
+                primaryEvidence.text?.takeIf { it.isNotBlank() }?.let {
+                    append(": ")
+                    append(it)
+                }
+            }
+            return@buildString
+        }
         append(selectedStyle.leadIn)
         append(" we tighten the behavior in `")
         append(subject)
@@ -1689,8 +2207,88 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
     }
 
+    private fun buildPotentialBugSummaryText(findings: List<RepositoryFinding>): String = buildString {
+        sortPotentialBugs(findings).forEachIndexed { index, finding ->
+            if (index > 0) appendLine()
+            appendLine("[${finding.severity}] ${finding.title}")
+            appendLine(finding.summary)
+            finding.riskType?.takeIf { it.isNotBlank() }?.let { appendLine("Risk type: $it") }
+            finding.suggestedAction?.takeIf { it.isNotBlank() }?.let { appendLine("Suggested action: $it") }
+            finding.testGap?.takeIf { it.isNotBlank() }?.let { appendLine("Test gap: $it") }
+            val primaryEvidence = finding.evidence.firstOrNull()
+            if (primaryEvidence != null) {
+                val location = buildList {
+                    primaryEvidence.filePath?.takeIf { it.isNotBlank() }?.let { add(it) }
+                    primaryEvidence.startLine?.let { start ->
+                        add(
+                            if (primaryEvidence.endLine != null && primaryEvidence.endLine != start) {
+                                "L$start-L${primaryEvidence.endLine}"
+                            } else {
+                                "L$start"
+                            },
+                        )
+                    }
+                }.joinToString(":")
+                append("Evidence: ${primaryEvidence.label}")
+                if (location.isNotBlank()) {
+                    append(" ($location)")
+                }
+                primaryEvidence.text?.takeIf { it.isNotBlank() }?.let {
+                    append(": $it")
+                }
+                appendLine()
+            }
+            if (finding.uncertain) {
+                appendLine("Signal: inferred, review carefully before acting on it.")
+            }
+        }
+    }.trim()
+
+    private fun buildPotentialBugEvidenceText(findings: List<RepositoryFinding>): String = buildString {
+        sortPotentialBugs(findings).forEachIndexed { index, finding ->
+            if (index > 0) appendLine()
+            appendLine("- [${finding.severity}] ${finding.title}")
+            if (finding.evidence.isEmpty()) {
+                appendLine("  No additional evidence was returned.")
+            } else {
+                finding.evidence.forEach { evidence ->
+                    val location = buildList {
+                        evidence.filePath?.takeIf { it.isNotBlank() }?.let { add(it) }
+                        evidence.startLine?.let { start ->
+                            add(
+                                if (evidence.endLine != null && evidence.endLine != start) {
+                                    "L$start-L${evidence.endLine}"
+                                } else {
+                                    "L$start"
+                                },
+                            )
+                        }
+                    }.joinToString(":")
+                    val details = listOfNotNull(
+                        evidence.kind.takeIf { it.isNotBlank() },
+                        location.takeIf { it.isNotBlank() },
+                    ).joinToString("  ·  ")
+                    appendLine("  - ${evidence.label}${if (details.isNotBlank()) " ($details)" else ""}")
+                    evidence.text?.takeIf { it.isNotBlank() }?.let { appendLine("    $it") }
+                }
+            }
+        }
+    }.trim()
+
+    private fun sortPotentialBugs(findings: List<RepositoryFinding>): List<RepositoryFinding> =
+        findings.sortedWith(compareBy<RepositoryFinding> { severityRank(it.severity) }.thenBy { it.title.lowercase() })
+
+    private fun severityRank(severity: String?): Int = when (severity?.lowercase()) {
+        "critical" -> 0
+        "high" -> 1
+        "medium" -> 2
+        "low" -> 3
+        "info" -> 4
+        else -> 5
+    }
+
     private fun createOverviewListActions(): JPanel {
-        return JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        return JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(4))).apply {
             border = JBUI.Borders.empty(6, 0, 0, 0)
             add(JButton("Preview").apply { addActionListener { previewSelectedStep() } })
             add(JButton("Start Tour").apply { addActionListener { startTourFromSelection() } })
@@ -1709,7 +2307,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     private fun createOverviewFooterActions(): JPanel {
-        return JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        return JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(6))).apply {
             border = JBUI.Borders.empty(8, 0, 0, 0)
             add(JButton("Preview Selected").apply { addActionListener { previewSelectedStep() } })
             add(JButton("Start Tour").apply { addActionListener { startTourFromSelection() } })
@@ -1839,10 +2437,10 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
 
     private fun createTourActiveCard(): JPanel {
         val panel = JPanel(BorderLayout())
-        panel.border = JBUI.Borders.empty(8)
-
-        val contentPanel = JPanel().apply {
+        val contentPanel = ViewportWidthPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(8)
+            alignmentX = LEFT_ALIGNMENT
         }
 
         tourStepHeader = JBLabel().apply {
@@ -1860,15 +2458,13 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
         contentPanel.add(tourUncertainLabel!!)
 
-        tourStepFilePath = JBLabel().apply {
-            font = JBUI.Fonts.smallFont()
-            foreground = UIUtil.getLabelDisabledForeground()
+        tourStepFilePath = createHelperTextArea().apply {
             alignmentX = LEFT_ALIGNMENT
             border = JBUI.Borders.empty(0, 0, 8, 0)
         }
         contentPanel.add(tourStepFilePath!!)
 
-        tourStepExplanation = JTextArea().apply {
+        tourStepExplanation = WrappingTextArea().apply {
             isEditable = false
             lineWrap = true
             wrapStyleWord = true
@@ -1876,8 +2472,15 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             background = UIUtil.getPanelBackground()
             border = JBUI.Borders.empty(4)
             alignmentX = LEFT_ALIGNMENT
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
         }
         contentPanel.add(tourStepExplanation!!)
+        createPotentialBugWarningPanel("Potential bugs detected").also { (panel, textArea) ->
+            tourStepWarningPanel = panel
+            tourStepWarningText = textArea
+        }
+        contentPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
+        contentPanel.add(tourStepWarningPanel!!)
 
         contentPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
 
@@ -1889,7 +2492,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         }
         contentPanel.add(whyToggle)
 
-        tourWhyText = JTextArea().apply {
+        tourWhyText = WrappingTextArea().apply {
             isEditable = false
             lineWrap = true
             wrapStyleWord = true
@@ -1897,6 +2500,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             foreground = UIUtil.getLabelDisabledForeground()
             background = UIUtil.getPanelBackground()
             border = JBUI.Borders.empty(4)
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
         }
         tourWhySection = JPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(4, 0, 0, 0)
@@ -1914,14 +2518,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             }
         })
 
-        panel.add(JBScrollPane(contentPanel), BorderLayout.CENTER)
-
-        val footerPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        }
-
         val contextualFollowUpPanel = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
             border = JBUI.Borders.empty(8, 0, 0, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
         tourFollowUpField = JBTextField().apply field@{
             emptyText.setText("Ask about this step...")
@@ -1942,20 +2541,31 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             addActionListener { submitTourFollowUp() }
         }
         contextualFollowUpPanel.add(tourAskButton!!, BorderLayout.EAST)
-        footerPanel.add(contextualFollowUpPanel)
+        contentPanel.add(contextualFollowUpPanel)
 
         val stepAnswerPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(JBColor.border()),
                 JBUI.Borders.empty(8),
             )
+            alignmentX = LEFT_ALIGNMENT
         }
         tourStepAnswerStatus = JBLabel("Ask a targeted question about this step without leaving the tour.").apply {
             font = JBUI.Fonts.smallFont()
             foreground = UIUtil.getLabelDisabledForeground()
             border = JBUI.Borders.empty(0, 0, 6, 0)
         }
-        stepAnswerPanel.add(tourStepAnswerStatus!!, BorderLayout.NORTH)
+        createPotentialBugWarningPanel("Potential bugs in this answer").also { (panel, textArea) ->
+            tourStepAnswerWarningPanel = panel
+            tourStepAnswerWarningText = textArea
+        }
+        val stepAnswerHeader = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(tourStepAnswerStatus!!)
+            add(tourStepAnswerWarningPanel!!)
+        }
+        stepAnswerPanel.add(stepAnswerHeader, BorderLayout.NORTH)
         tourStepAnswerText = createOverviewTextArea().apply {
             text = "The answer will stay scoped to the current symbol and its important lines."
         }
@@ -1963,15 +2573,23 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             text = "Evidence and important lines will appear here when available."
         }
         val answerTabs = JTabbedPane().apply {
-            addTab("Answer", JBScrollPane(tourStepAnswerText!!))
-            addTab("Evidence", JBScrollPane(tourStepAnswerEvidenceText!!))
+            addTab("Answer", JBScrollPane(tourStepAnswerText!!).apply {
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            })
+            addTab("Evidence", JBScrollPane(tourStepAnswerEvidenceText!!).apply {
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            })
         }
-        stepAnswerPanel.add(answerTabs, BorderLayout.CENTER)
-        footerPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
-        footerPanel.add(stepAnswerPanel)
+        val answerBody = JPanel(BorderLayout()).apply {
+            add(answerTabs, BorderLayout.CENTER)
+        }
+        stepAnswerPanel.add(answerBody, BorderLayout.CENTER)
+        contentPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        contentPanel.add(stepAnswerPanel)
 
-        val navPanel = JPanel(FlowLayout(FlowLayout.CENTER, JBUI.scale(8), 0)).apply {
+        val navPanel = JPanel(WrapLayout(FlowLayout.CENTER, JBUI.scale(8), JBUI.scale(8))).apply {
             border = JBUI.Borders.empty(8, 0, 0, 0)
+            alignmentX = LEFT_ALIGNMENT
         }
         navPanel.add(JButton("< Prev").apply {
             addActionListener { sessionService.prevStep() }
@@ -1985,8 +2603,15 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         navPanel.add(JButton("Stop Tour").apply {
             addActionListener { sessionService.stopTour() }
         })
-        footerPanel.add(navPanel)
-        panel.add(footerPanel, BorderLayout.SOUTH)
+        contentPanel.add(navPanel)
+
+        panel.add(
+            JBScrollPane(contentPanel).apply {
+                border = JBUI.Borders.empty()
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            },
+            BorderLayout.CENTER,
+        )
 
         tourActivePanel = panel
         return panel
@@ -1999,10 +2624,14 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             add(step.filePath)
             step.stepType?.takeIf { it.isNotBlank() }?.let { add("type: $it") }
             step.importance?.takeIf { it.isNotBlank() }?.let { add("importance: $it") }
+            if (step.potentialBugs.isNotEmpty()) {
+                add("bug warnings: ${step.potentialBugs.size}")
+            }
             if (sessionService.isEntryStep(step.id)) add("entrypoint")
             if (sessionService.isTerminalStep(step.id)) add("terminal")
         }.joinToString("  ·  ")
         tourStepExplanation?.text = step.explanation
+        updatePotentialBugWarning(tourStepWarningPanel, tourStepWarningText, step.potentialBugs)
         tourWhyText?.text = listOfNotNull(
             step.whyIncluded,
             buildHopSummary(step)?.let { "\nPath grounding:\n$it" },
@@ -2026,21 +2655,25 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         when {
             loading -> {
                 tourStepAnswerStatus?.text = "Analyzing the current symbol..."
+                updatePotentialBugWarning(tourStepAnswerWarningPanel, tourStepAnswerWarningText, emptyList())
                 tourStepAnswerText?.text = "Working through the current step without remapping the whole tour."
                 tourStepAnswerEvidenceText?.text = "Evidence will appear here once the answer is ready."
             }
             !errorMessage.isNullOrBlank() -> {
                 tourStepAnswerStatus?.text = errorMessage
+                updatePotentialBugWarning(tourStepAnswerWarningPanel, tourStepAnswerWarningText, emptyList())
                 tourStepAnswerText?.text = "The step answer failed. Refine the question or try again."
                 tourStepAnswerEvidenceText?.text = ""
             }
             answer != null -> {
                 tourStepAnswerStatus?.text = buildStepAnswerStatus(answer)
+                updatePotentialBugWarning(tourStepAnswerWarningPanel, tourStepAnswerWarningText, answer.potentialBugs)
                 tourStepAnswerText?.text = buildStepAnswerText(answer)
                 tourStepAnswerEvidenceText?.text = buildStepAnswerEvidenceText(answer)
             }
             else -> {
                 tourStepAnswerStatus?.text = "Ask a targeted question about this step without leaving the tour."
+                updatePotentialBugWarning(tourStepAnswerWarningPanel, tourStepAnswerWarningText, emptyList())
                 tourStepAnswerText?.text = "The answer will stay scoped to the current symbol and its important lines."
                 tourStepAnswerEvidenceText?.text = "Evidence and important lines will appear here when available."
             }
@@ -2051,6 +2684,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
         val parts = mutableListOf("Step-scoped answer")
         (answer.confidence?.takeIf { it.isNotBlank() } ?: if (answer.uncertain) "uncertain" else null)?.let {
             parts.add("confidence: $it")
+        }
+        if (answer.potentialBugs.isNotEmpty()) {
+            parts.add("${answer.potentialBugs.size} bug warning${if (answer.potentialBugs.size == 1) "" else "s"}")
         }
         if (answer.evidence.isNotEmpty()) {
             parts.add("${answer.evidence.size} evidence points")
@@ -2064,6 +2700,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             appendLine()
             appendLine("Why it matters:")
             appendLine(it)
+        }
+        if (answer.potentialBugs.isNotEmpty()) {
+            appendLine()
+            appendLine("Potential bugs:")
+            appendLine(buildPotentialBugSummaryText(answer.potentialBugs))
         }
         if (answer.importantLines.isNotEmpty()) {
             appendLine()
@@ -2080,7 +2721,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }.trim()
 
     private fun buildStepAnswerEvidenceText(answer: StepAnswer): String {
-        if (answer.evidence.isEmpty() && answer.importantLines.isEmpty()) {
+        if (answer.evidence.isEmpty() && answer.importantLines.isEmpty() && answer.potentialBugs.isEmpty()) {
             return "No additional grounding details were returned for this answer."
         }
         return buildString {
@@ -2107,6 +2748,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                     evidence.text?.takeIf { it.isNotBlank() }?.let { appendLine("  $it") }
                 }
             }
+            if (answer.potentialBugs.isNotEmpty()) {
+                if (isNotEmpty()) appendLine()
+                appendLine("Potential bug evidence:")
+                appendLine(buildPotentialBugEvidenceText(answer.potentialBugs))
+            }
             if (answer.importantLines.isNotEmpty()) {
                 if (isNotEmpty()) appendLine()
                 appendLine("Important lines:")
@@ -2129,7 +2775,9 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
             val providerService = project.service<LlmProviderService>()
             val status = providerService.checkAvailability()
             javax.swing.SwingUtilities.invokeLater {
+                lastProviderStatus = status
                 repoReviewButton?.isEnabled = status.available && providerService.supportsRepositoryReview()
+                refreshRepositoryShortcutStatus()
                 when {
                     status.available && status.walkthroughSupported -> {
                         statusDot?.icon = AllIcons.General.InspectionsOK
@@ -2158,6 +2806,11 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 }
             }
         }
+    }
+
+    private fun resetProgressLog() {
+        progressLogLines.clear()
+        progressLog?.text = ""
     }
 
     private fun registerSessionListener() {
@@ -2255,6 +2908,15 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
                 if (value.validationNote != null) {
                     title.append(" [adjusted]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
+                if (value.potentialBugs.isNotEmpty()) {
+                    title.append(
+                        "  ${value.potentialBugs.size} bug warning${if (value.potentialBugs.size == 1) "" else "s"}",
+                        SimpleTextAttributes(
+                            SimpleTextAttributes.STYLE_BOLD,
+                            JBColor.namedColor("Label.errorForeground", JBColor(0x9F1B1B, 0xFF8A80)),
+                        ),
+                    )
+                }
             }
 
             panel.add(title, BorderLayout.NORTH)
@@ -2298,6 +2960,7 @@ class CodeTourPanel(private val project: Project, private val scope: CoroutineSc
     }
 
     companion object {
+        private const val MAX_PROGRESS_LOG_LINES = 250
         private const val CARD_INPUT = "INPUT"
         private const val CARD_LOADING = "LOADING"
         private const val CARD_OVERVIEW = "OVERVIEW"
