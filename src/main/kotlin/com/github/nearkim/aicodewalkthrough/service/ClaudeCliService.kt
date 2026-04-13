@@ -65,6 +65,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
         try {
             val stderrLines = ArrayDeque<String>()
+            val stdoutLines = ArrayDeque<String>()
             val stderrThread = Thread.ofVirtual().start {
                 process.errorStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
@@ -83,6 +84,12 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
             process.inputStream.bufferedReader().useLines { lines ->
                 lines.forEach { line ->
                     if (line.isBlank()) return@forEach
+                    synchronized(stdoutLines) {
+                        stdoutLines.addLast(line)
+                        while (stdoutLines.size > MAX_STDOUT_LINES) {
+                            stdoutLines.removeFirst()
+                        }
+                    }
                     try {
                         val event = json.parseToJsonElement(line).jsonObject
                         val type = event["type"]?.jsonPrimitive?.content ?: return@forEach
@@ -122,16 +129,22 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
             val exitCode = process.exitValue()
             if (exitCode != 0) {
-                val stderrOutput = synchronized(stderrLines) {
-                    stderrLines.joinToString("\n").take(500)
-                }
-                throw IllegalStateException(
-                    "Claude CLI exited with code $exitCode${if (stderrOutput.isNotBlank()) ": $stderrOutput" else ""}"
-                )
+                val stderrOutput = captureRecentOutput(stderrLines)
+                val stdoutOutput = captureRecentOutput(stdoutLines)
+                throw IllegalStateException(buildCliFailureMessage(exitCode, stdoutOutput, stderrOutput))
             }
 
             if (resultJson.isNullOrBlank()) {
-                throw IllegalStateException("Claude CLI returned no result event")
+                val stderrOutput = captureRecentOutput(stderrLines)
+                val stdoutOutput = captureRecentOutput(stdoutLines)
+                val detail = extractCliErrorDetail(stdoutOutput, stderrOutput)
+                throw IllegalStateException(
+                    if (detail != null) {
+                        "Claude CLI returned no result event: $detail"
+                    } else {
+                        "Claude CLI returned no result event"
+                    },
+                )
             }
 
             val envelope = json.decodeFromString<com.github.nearkim.aicodewalkthrough.model.ClaudeEnvelope>(resultJson)
@@ -193,20 +206,28 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
     override suspend fun checkAvailability(): ProviderStatus = withContext(Dispatchers.IO) {
         try {
-            val processBuilder = ProcessBuilder(settings.state.claudePath, "--version")
-                .redirectInput(ProcessBuilder.Redirect.from(java.io.File("/dev/null")))
-            augmentPath(processBuilder)
-            val process = processBuilder.start()
-            val output = process.inputStream.bufferedReader().readText().trim()
-            val finished = process.waitFor(5, TimeUnit.SECONDS)
-            if (!finished) {
-                process.destroyForcibly()
-                return@withContext ProviderStatus(provider, false, "Claude CLI timed out")
+            val authResult = runQuickCommand(listOf(settings.state.claudePath, "auth", "status", "--text"))
+            val authDetail = extractCliErrorDetail(authResult.stdout, authResult.stderr)
+            when {
+                authResult.exitCode == 0 -> {
+                    val message = authResult.stdout.ifBlank { "Claude CLI authenticated" }
+                    return@withContext ProviderStatus(provider, true, message)
+                }
+                authDetail != null && authDetail.contains("not authenticated", ignoreCase = true) -> {
+                    return@withContext ProviderStatus(provider, false, authDetail)
+                }
             }
-            if (process.exitValue() == 0) {
-                ProviderStatus(provider, true, output)
+
+            val versionResult = runQuickCommand(listOf(settings.state.claudePath, "--version"))
+            if (versionResult.exitCode == 0) {
+                ProviderStatus(provider, false, "Claude CLI is installed but not authenticated. Run claude auth login.")
             } else {
-                ProviderStatus(provider, false, "claude exited with code ${process.exitValue()}")
+                ProviderStatus(
+                    provider,
+                    false,
+                    extractCliErrorDetail(versionResult.stdout, versionResult.stderr)
+                        ?: "claude exited with code ${versionResult.exitCode}",
+                )
             }
         } catch (e: Exception) {
             ProviderStatus(provider, false, e.message ?: "claude not found")
@@ -239,7 +260,57 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
         }
     }
 
+    private fun runQuickCommand(command: List<String>): QuickCommandResult {
+        val processBuilder = ProcessBuilder(command)
+            .redirectInput(ProcessBuilder.Redirect.from(java.io.File("/dev/null")))
+        augmentPath(processBuilder)
+        val process = processBuilder.start()
+        val stdout = process.inputStream.bufferedReader().readText().trim()
+        val stderr = process.errorStream.bufferedReader().readText().trim()
+        val finished = process.waitFor(5, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            return QuickCommandResult(exitCode = -1, stdout = stdout, stderr = stderr.ifBlank { "Claude CLI timed out" })
+        }
+        return QuickCommandResult(exitCode = process.exitValue(), stdout = stdout, stderr = stderr)
+    }
+
+    private fun captureRecentOutput(lines: ArrayDeque<String>): String = synchronized(lines) {
+        lines.joinToString("\n").take(500)
+    }
+
     companion object {
         private const val MAX_STDERR_LINES = 64
+        private const val MAX_STDOUT_LINES = 64
+
+        internal fun buildCliFailureMessage(exitCode: Int, stdoutOutput: String, stderrOutput: String): String {
+            val detail = extractCliErrorDetail(stdoutOutput, stderrOutput)
+            return if (detail != null) {
+                "Claude CLI exited with code $exitCode: $detail"
+            } else {
+                "Claude CLI exited with code $exitCode"
+            }
+        }
+
+        internal fun extractCliErrorDetail(stdoutOutput: String, stderrOutput: String): String? {
+            val combined = listOf(stdoutOutput.trim(), stderrOutput.trim())
+                .filter { it.isNotBlank() }
+                .joinToString("\n")
+                .trim()
+            if (combined.isBlank()) return null
+            return when {
+                combined.contains("Not logged in", ignoreCase = true) ||
+                    combined.contains("auth login", ignoreCase = true) ||
+                    combined.contains("/login", ignoreCase = true) ->
+                    "Claude CLI is not authenticated. Run claude auth login and retry."
+                else -> combined
+            }.take(500)
+        }
     }
 }
+
+internal data class QuickCommandResult(
+    val exitCode: Int,
+    val stdout: String,
+    val stderr: String,
+)
