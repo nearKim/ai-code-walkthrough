@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.editor
 
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
@@ -85,7 +86,6 @@ class EditorDecorationController(private val project: Project) : Disposable {
         val stepRenderer = StepInlayRenderer(
             editor = editor,
             stepLabel = "Step ${stepIndex + 1}/$totalSteps \u2014 ${step.title}",
-            explanation = step.explanation,
             severityLabel = severity?.let { "Severity: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
             confidenceLabel = confidence?.let { "Confidence: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
             nextHopLabel = nextStep?.let { resolvedNextStep ->
@@ -98,14 +98,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
         val inlay = editor.inlayModel.addBlockElement(startOffset, true, true, 10, stepRenderer)
         if (inlay != null) activeInlays.add(inlay)
 
-        // Line annotation inlays
-        for (annotation in step.lineAnnotations) {
-            val annotLine = (annotation.startLine - 1).coerceIn(0, document.lineCount - 1)
-            val annotOffset = document.getLineStartOffset(annotLine)
-            val annotRenderer = LineAnnotationInlayRenderer(editor, annotation.text)
-            val annotInlay = editor.inlayModel.addBlockElement(annotOffset, true, true, 5, annotRenderer)
-            if (annotInlay != null) activeInlays.add(annotInlay)
-        }
+        addBugMarkers(editor, document, step)
 
         // Next-step preview: prefer the validated hop call site, then fall back to symbol matching.
         val nextStepAttrs = TextAttributes().apply {
@@ -164,7 +157,6 @@ class EditorDecorationController(private val project: Project) : Disposable {
     private class StepInlayRenderer(
         private val editor: Editor,
         private val stepLabel: String,
-        private val explanation: String,
         private val severityLabel: String?,
         private val confidenceLabel: String?,
         private val nextHopLabel: String?,
@@ -178,7 +170,6 @@ class EditorDecorationController(private val project: Project) : Disposable {
         private val metaText = buildMetaText()
         private var cachedLayoutKey: String? = null
         private var cachedMetaLines: List<String> = emptyList()
-        private var cachedExplanationLines: List<String> = emptyList()
 
         override fun calcWidthInPixels(inlay: Inlay<*>): Int =
             editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(600))
@@ -192,8 +183,7 @@ class EditorDecorationController(private val project: Project) : Disposable {
             val layout = wrappedLayout(width)
             val metaHeight = if (layout.metaLines.isEmpty()) 0 else layout.metaLines.size * (smallFm.height + lineGap)
             val gapAfterMeta = if (layout.metaLines.isEmpty()) 0 else lineGap
-            return vPad + boldFm.height + gapAfterMeta + metaHeight + lineGap +
-                layout.explanationLines.size * (layout.plainMetrics.height + lineGap) + vPad
+            return vPad + boldFm.height + gapAfterMeta + metaHeight + vPad
         }
 
         override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
@@ -208,7 +198,6 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
                 val scheme = editor.colorsScheme
                 val boldFont = scheme.getFont(EditorFontType.BOLD)
-                val plainFont = scheme.getFont(EditorFontType.PLAIN)
                 val smallFont = scheme.getFont(EditorFontType.ITALIC)
                 val boldFm = editor.contentComponent.getFontMetrics(boldFont)
                 val layout = wrappedLayout(targetRegion.width)
@@ -229,13 +218,6 @@ class EditorDecorationController(private val project: Project) : Disposable {
                         y += layout.smallMetrics.height + lineGap
                     }
                 }
-
-                g2.font = plainFont
-                g2.color = JBColor(Color(60, 60, 60), Color(180, 180, 180))
-                for (line in layout.explanationLines) {
-                    g2.drawString(line, x, y)
-                    y += layout.plainMetrics.height + lineGap
-                }
             } finally {
                 g2.dispose()
             }
@@ -245,80 +227,105 @@ class EditorDecorationController(private val project: Project) : Disposable {
             listOfNotNull(severityLabel, confidenceLabel, nextHopLabel).joinToString("  ·  ")
 
         private fun wrappedLayout(width: Int): WrappedLayout {
-            val plainFont = editor.colorsScheme.getFont(EditorFontType.PLAIN)
             val smallFont = editor.colorsScheme.getFont(EditorFontType.ITALIC)
-            val cacheKey = "$width:${plainFont.hashCode()}:${smallFont.hashCode()}"
-            val plainFm = editor.contentComponent.getFontMetrics(plainFont)
+            val cacheKey = "$width:${smallFont.hashCode()}"
             val smallFm = editor.contentComponent.getFontMetrics(smallFont)
             if (cacheKey != cachedLayoutKey) {
                 val availableWidth = width - hPad * 2
                 cachedMetaLines = if (metaText.isNotBlank()) wrapText(smallFm, metaText, availableWidth) else emptyList()
-                cachedExplanationLines = wrapText(plainFm, explanation, availableWidth)
                 cachedLayoutKey = cacheKey
             }
             return WrappedLayout(
                 metaLines = cachedMetaLines,
-                explanationLines = cachedExplanationLines,
-                plainMetrics = plainFm,
                 smallMetrics = smallFm,
             )
         }
     }
 
-    private class LineAnnotationInlayRenderer(
+    private class BugFlagInlayRenderer(
         private val editor: Editor,
-        private val text: String,
+        private val title: String,
     ) : EditorCustomElementRenderer {
 
-        private val vPad = JBUI.scale(3)
         private val hPad = JBUI.scale(8)
-        private val lineGap = JBUI.scale(2)
-        private var cachedLayoutKey: String? = null
-        private var cachedLines: List<String> = emptyList()
+        private val vPad = JBUI.scale(3)
 
         override fun calcWidthInPixels(inlay: Inlay<*>): Int =
             editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(600))
 
         override fun calcHeightInPixels(inlay: Inlay<*>): Int {
-            val width = calcWidthInPixels(inlay)
             val font = editor.colorsScheme.getFont(EditorFontType.ITALIC)
             val fm = editor.contentComponent.getFontMetrics(font)
-            return vPad + wrappedLines(width, fm).size * (fm.height + lineGap) + vPad
+            return fm.height + vPad * 2
         }
 
         override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
             val g2 = g.create() as Graphics2D
             try {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-
-                val bg = JBColor(Color(240, 246, 255), Color(35, 45, 58))
+                val bg = JBColor(Color(255, 241, 241), Color(64, 32, 32))
+                val accent = JBColor(Color(190, 70, 60), Color(235, 130, 120))
                 g2.color = bg
                 g2.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
+                g2.color = accent
+                g2.fillRect(targetRegion.x, targetRegion.y, JBUI.scale(4), targetRegion.height)
 
                 val font = editor.colorsScheme.getFont(EditorFontType.ITALIC)
                 val fm = editor.contentComponent.getFontMetrics(font)
-
                 g2.font = font
-                g2.color = JBColor(Color(70, 100, 150), Color(130, 160, 210))
-
-                val x = targetRegion.x + hPad
-                var y = targetRegion.y + vPad + fm.ascent
-                for (line in wrappedLines(targetRegion.width, fm)) {
-                    g2.drawString(line, x, y)
-                    y += fm.height + lineGap
-                }
+                g2.color = accent
+                g2.drawString("[!] $title", targetRegion.x + hPad, targetRegion.y + vPad + fm.ascent)
             } finally {
                 g2.dispose()
             }
         }
+    }
 
-        private fun wrappedLines(width: Int, fm: FontMetrics): List<String> {
-            val cacheKey = "$width:${fm.font.hashCode()}"
-            if (cacheKey != cachedLayoutKey) {
-                cachedLines = wrapText(fm, text, width - hPad * 2)
-                cachedLayoutKey = cacheKey
+    private fun addBugMarkers(editor: Editor, document: com.intellij.openapi.editor.Document, step: FlowStep) {
+        val findings = step.potentialBugs.take(5)
+        findings.forEach { finding ->
+            val evidence = finding.evidence.firstOrNull {
+                it.startLine != null && (it.filePath.isNullOrBlank() || it.filePath == step.filePath)
+            } ?: return@forEach
+            val line = (evidence.startLine!! - 1).coerceIn(0, document.lineCount - 1)
+            val startOffset = document.getLineStartOffset(line)
+            val endOffset = document.getLineEndOffset(line)
+            val attrs = TextAttributes().apply {
+                backgroundColor = JBColor(Color(255, 241, 241), Color(64, 32, 32))
+                effectColor = JBColor(Color(190, 70, 60), Color(235, 130, 120))
+                effectType = EffectType.BOLD_LINE_UNDERSCORE
             }
-            return cachedLines
+            val highlighter = editor.markupModel.addRangeHighlighter(
+                startOffset,
+                endOffset,
+                HighlighterLayer.SELECTION,
+                attrs,
+                HighlighterTargetArea.LINES_IN_RANGE,
+            )
+            highlighter.errorStripeTooltip = buildBugTooltip(finding)
+            activeHighlighters.add(highlighter)
+
+            val inlay = editor.inlayModel.addBlockElement(
+                startOffset,
+                true,
+                true,
+                6,
+                BugFlagInlayRenderer(editor, finding.title),
+            )
+            if (inlay != null) activeInlays.add(inlay)
+        }
+    }
+
+    private fun buildBugTooltip(finding: RepositoryFinding): String = buildString {
+        append(finding.title)
+        if (finding.summary.isNotBlank()) {
+            append('\n')
+            append(finding.summary)
+        }
+        finding.suggestedAction?.takeIf { it.isNotBlank() }?.let {
+            append('\n')
+            append("Action: ")
+            append(it)
         }
     }
 
@@ -454,8 +461,6 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
     private data class WrappedLayout(
         val metaLines: List<String>,
-        val explanationLines: List<String>,
-        val plainMetrics: FontMetrics,
         val smallMetrics: FontMetrics,
     )
 }
