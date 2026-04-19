@@ -108,13 +108,9 @@ class CodeTourPanel(
             }
             TourState.TOUR_ACTIVE -> {
                 loading.stopLoading()
-                val flow = session.currentFlowMap
-                val index = session.currentStepIndex
-                val step = flow?.steps?.getOrNull(index)
-                if (flow != null && step != null) {
-                    tour.setStep(index, flow.steps.size, step)
-                    tour.setAnswer(session.currentStepAnswer, session.stepAnswerLoading, session.stepAnswerError)
-                }
+                // setStep intentionally omitted: navigateToCurrentStep fires onStepChanged
+                // right after the state transition, making that callback the single source of truth.
+                tour.setAnswer(session.currentStepAnswer, session.stepAnswerLoading, session.stepAnswerError)
                 cardLayout.show(cards, CARD_TOUR)
             }
         }

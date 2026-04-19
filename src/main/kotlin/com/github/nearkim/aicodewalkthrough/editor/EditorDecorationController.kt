@@ -11,6 +11,9 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.editor.colors.CodeInsightColors
+import com.intellij.openapi.editor.colors.EditorColors
+import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
@@ -23,8 +26,8 @@ import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import java.awt.Color
 import java.awt.FontMetrics
 import java.awt.Graphics
@@ -86,8 +89,10 @@ class EditorDecorationController(private val project: Project) : Disposable {
         val endOffset = document.getLineEndOffset(endLine)
 
         // 1. Background highlighter on the step range.
+        val scheme = editor.colorsScheme
         val bgAttrs = TextAttributes().apply {
-            backgroundColor = JBColor(Color(236, 244, 252), Color(43, 54, 68))
+            backgroundColor = scheme.getColor(EditorColors.CARET_ROW_COLOR)
+                ?: scheme.defaultBackground
         }
         val bgHighlighter = editor.markupModel.addRangeHighlighter(
             startOffset,
@@ -99,10 +104,9 @@ class EditorDecorationController(private val project: Project) : Disposable {
         activeHighlighters.add(bgHighlighter)
 
         // 2. Header inlay.
-        val accent = accentColorFor(step)
         val headerLabel = "Step ${stepIndex + 1}/$totalSteps · ${step.title} · ${step.filePath}:${startLine + 1}-${endLine + 1}"
         val headerHint = "← prev   → next   esc to stop"
-        val headerRenderer = HeaderRenderer(editor, headerLabel, headerHint, accent)
+        val headerRenderer = HeaderRenderer(editor, headerLabel, headerHint)
         editor.inlayModel.addBlockElement(startOffset, true, true, 100, headerRenderer)?.let {
             activeInlays.add(it)
         }
@@ -122,8 +126,10 @@ class EditorDecorationController(private val project: Project) : Disposable {
         }
 
         // 5. Next-hop marker.
+        // HYPERLINK color reliably tracks each scheme's accent; falls back to default fg.
         val nextAttrs = TextAttributes().apply {
-            effectColor = JBColor(Color(180, 110, 0), Color(220, 160, 60))
+            effectColor = scheme.getAttributes(CodeInsightColors.HYPERLINK_ATTRIBUTES)?.foregroundColor
+                ?: scheme.defaultForeground
             effectType = EffectType.BOLD_LINE_UNDERSCORE
         }
         val nextTooltip = nextStep?.let { "Next: ${it.title}" }
@@ -254,7 +260,6 @@ class EditorDecorationController(private val project: Project) : Disposable {
         private val editor: Editor,
         private val label: String,
         private val hint: String,
-        private val accent: JBColor,
     ) : EditorCustomElementRenderer {
 
         private val vPad = JBUI.scale(4)
@@ -274,12 +279,14 @@ class EditorDecorationController(private val project: Project) : Disposable {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
 
-                g2.color = JBColor(Color(236, 244, 252), Color(43, 54, 68))
+                val scheme = editor.colorsScheme
+                g2.color = scheme.getColor(EditorColors.CARET_ROW_COLOR) ?: scheme.defaultBackground
                 g2.fillRect(region.x, region.y, region.width, region.height)
-                g2.color = accent
+                // HYPERLINK accent tracks the scheme's primary highlight color in every theme.
+                g2.color = scheme.getAttributes(CodeInsightColors.HYPERLINK_ATTRIBUTES)?.foregroundColor
+                    ?: scheme.defaultForeground
                 g2.fillRect(region.x, region.y, barWidth, region.height)
 
-                val scheme = editor.colorsScheme
                 val boldFont = scheme.getFont(EditorFontType.BOLD)
                 val italicFont = scheme.getFont(EditorFontType.ITALIC)
                 val boldFm = editor.contentComponent.getFontMetrics(boldFont)
@@ -289,11 +296,11 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 val x = region.x + barWidth + hPad
 
                 g2.font = boldFont
-                g2.color = JBColor(Color(30, 30, 30), Color(220, 220, 220))
+                g2.color = scheme.defaultForeground
                 g2.drawString(label, x, y)
 
                 g2.font = italicFont
-                g2.color = JBColor(Color(120, 120, 120), Color(160, 160, 160))
+                g2.color = mutedForeground(scheme)
                 val hintWidth = italicFm.stringWidth(hint)
                 val rightX = region.x + region.width - hPad - hintWidth
                 if (rightX > x + boldFm.stringWidth(label) + hPad) {
@@ -332,15 +339,16 @@ class EditorDecorationController(private val project: Project) : Disposable {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
 
-                g2.color = JBColor(Color(240, 246, 252), Color(46, 56, 70))
+                val scheme = editor.colorsScheme
+                g2.color = scheme.getColor(EditorColors.CARET_ROW_COLOR) ?: scheme.defaultBackground
                 g2.fillRect(region.x, region.y, region.width, region.height)
 
-                val italic = editor.colorsScheme.getFont(EditorFontType.ITALIC)
+                val italic = scheme.getFont(EditorFontType.ITALIC)
                 val fm = editor.contentComponent.getFontMetrics(italic)
                 val lines = layoutLines(region.width, fm)
 
                 g2.font = italic
-                g2.color = JBColor(Color(100, 115, 130), Color(170, 180, 195))
+                g2.color = mutedForeground(scheme)
 
                 var y = region.y + vPad + fm.ascent
                 val x = region.x + hPad
@@ -380,10 +388,11 @@ class EditorDecorationController(private val project: Project) : Disposable {
             val g2 = g.create() as Graphics2D
             try {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                val italic = editor.colorsScheme.getFont(EditorFontType.ITALIC)
+                val scheme = editor.colorsScheme
+                val italic = scheme.getFont(EditorFontType.ITALIC)
                 val fm = editor.contentComponent.getFontMetrics(italic)
                 g2.font = italic
-                g2.color = JBColor(Color(110, 130, 160), Color(150, 175, 215))
+                g2.color = mutedForeground(scheme)
                 g2.drawString(display, region.x, region.y + fm.ascent)
             } finally {
                 g2.dispose()
@@ -402,15 +411,9 @@ class EditorDecorationController(private val project: Project) : Disposable {
         private const val MAX_NEXT_SYMBOL_MATCHES = 20
         private const val MAX_SUMMARY_LINES = 4
 
-        private fun accentColorFor(step: FlowStep): JBColor {
-            val severity = step.severity?.trim()?.lowercase()
-            return when {
-                step.broken || severity == "high" -> JBColor(Color(190, 70, 60), Color(235, 130, 120))
-                severity == "medium" -> JBColor(Color(190, 120, 40), Color(240, 185, 100))
-                severity == "low" -> JBColor(Color(70, 110, 170), Color(130, 170, 225))
-                else -> JBColor(Color(70, 110, 170), Color(130, 170, 225))
-            }
-        }
+        private fun mutedForeground(scheme: EditorColorsScheme): Color =
+            scheme.getAttributes(DefaultLanguageHighlighterColors.LINE_COMMENT)?.foregroundColor
+                ?: scheme.defaultForeground
 
         private fun isSymbolBoundary(chars: CharSequence, index: Int): Boolean {
             if (index < 0 || index >= chars.length) return true

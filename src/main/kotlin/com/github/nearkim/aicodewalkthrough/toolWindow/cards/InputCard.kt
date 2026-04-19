@@ -72,7 +72,8 @@ class InputCard(
     }
 
     private val history = mutableListOf<String>()
-    private var historyIndex = -1
+    private var historyIndex = 0
+    private var savedDraft: String = ""
     private var selectedMode = AnalysisMode.UNDERSTAND
 
     init {
@@ -87,16 +88,19 @@ class InputCard(
                         submit()
                     }
                     e.keyCode == KeyEvent.VK_UP && promptArea.caretPosition == 0 -> {
-                        if (history.isNotEmpty()) {
-                            historyIndex = (historyIndex - 1).coerceAtLeast(0)
+                        if (history.isNotEmpty() && historyIndex > 0) {
+                            if (historyIndex == history.size) {
+                                savedDraft = promptArea.text.orEmpty()
+                            }
+                            historyIndex -= 1
                             promptArea.text = history[historyIndex]
                             e.consume()
                         }
                     }
                     e.keyCode == KeyEvent.VK_DOWN && promptArea.caretPosition == promptArea.document.length -> {
-                        if (history.isNotEmpty() && historyIndex < history.size - 1) {
+                        if (history.isNotEmpty() && historyIndex < history.size) {
                             historyIndex += 1
-                            promptArea.text = history[historyIndex]
+                            promptArea.text = if (historyIndex == history.size) savedDraft else history[historyIndex]
                             e.consume()
                         }
                     }
@@ -139,6 +143,7 @@ class InputCard(
         }
         history.add(prompt)
         historyIndex = history.size
+        savedDraft = ""
         val provider = providerCombo.selectedItem as? AiProvider ?: AiProvider.CLAUDE_CLI
         onSubmit(prompt, selectedMode, provider)
     }
