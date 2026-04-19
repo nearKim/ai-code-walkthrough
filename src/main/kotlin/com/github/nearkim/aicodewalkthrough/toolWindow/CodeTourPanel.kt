@@ -1,10 +1,8 @@
 package com.github.nearkim.aicodewalkthrough.toolwindow
 
-import com.github.nearkim.aicodewalkthrough.editor.EditorDecorationController
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
-import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.github.nearkim.aicodewalkthrough.model.TourState
 import com.github.nearkim.aicodewalkthrough.service.TourSessionService
@@ -14,24 +12,21 @@ import com.github.nearkim.aicodewalkthrough.toolwindow.cards.LoadingCard
 import com.github.nearkim.aicodewalkthrough.toolwindow.cards.OverviewCard
 import com.github.nearkim.aicodewalkthrough.toolwindow.cards.TourActiveCard
 import com.github.nearkim.aicodewalkthrough.util.FlowMapMarkdownExporter
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
-import com.intellij.openapi.editor.ScrollType
-import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.LocalFileSystem
 import kotlinx.coroutines.CoroutineScope
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.datatransfer.StringSelection
-import java.nio.file.Path
 import javax.swing.JPanel
 
 class CodeTourPanel(
     private val project: Project,
-    @Suppress("unused") private val scope: CoroutineScope,
-) : JPanel(BorderLayout()), TourSessionService.TourSessionListener {
+    scope: CoroutineScope,
+) : JPanel(BorderLayout()), TourSessionService.TourSessionListener, Disposable {
 
     private val session = project.service<TourSessionService>()
     private val settings get() = project.service<CodeTourSettings>()
@@ -39,7 +34,7 @@ class CodeTourPanel(
     private val cardLayout = CardLayout()
     private val cards = JPanel(cardLayout)
 
-    private val input = InputCard(project, onSubmit = ::handleSubmit)
+    private val input = InputCard(project, scope, onSubmit = ::handleSubmit)
     private val loading = LoadingCard()
     private val overview = OverviewCard(
         onStartTour = { session.startTour() },
@@ -89,8 +84,9 @@ class CodeTourPanel(
         }
     }
 
-    override fun onRecentWalkthroughsChanged(items: List<RecentWalkthrough>) {
-        // UI no longer surfaces recent walkthroughs.
+    override fun dispose() {
+        session.removeListener(this)
+        loading.stopLoading()
     }
 
     private fun showCard(state: TourState) {
@@ -141,24 +137,9 @@ class CodeTourPanel(
     }
 
     private fun goToCurrentStep() {
-        val flow = session.currentFlowMap ?: return
-        val step = flow.steps.getOrNull(session.currentStepIndex) ?: return
-        val basePath = project.basePath ?: return
-        val vf = LocalFileSystem.getInstance()
-            .findFileByNioFile(Path.of(basePath).resolve(step.filePath)) ?: return
-        FileEditorManager.getInstance(project).openFile(vf, true)
-        val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return
-        val document = editor.document
-        val line = (step.startLine - 1).coerceIn(0, (document.lineCount - 1).coerceAtLeast(0))
-        editor.caretModel.moveToOffset(document.getLineStartOffset(line))
-        editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
-        project.service<EditorDecorationController>().showStep(
-            step = step,
-            stepIndex = session.currentStepIndex,
-            totalSteps = flow.steps.size,
-            nextStep = null,
-            nextEdge = null,
-        )
+        val index = session.currentStepIndex
+        if (index < 0) return
+        session.previewStep(index)
     }
 
     companion object {

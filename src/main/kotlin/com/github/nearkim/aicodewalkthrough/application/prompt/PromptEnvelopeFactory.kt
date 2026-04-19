@@ -69,25 +69,11 @@ object PromptEnvelopeFactory {
         context.symbol?.let { put("symbol", it) }
         context.selectionStartLine?.let { put("selection_start_line", it) }
         context.selectionEndLine?.let { put("selection_end_line", it) }
-        context.selectedText?.takeIf { it.isNotBlank() }?.let { put("selected_text", it) }
-        context.diffSummary?.takeIf { it.isNotBlank() }?.let { put("diff_summary", it) }
-        context.failingTestName?.takeIf { it.isNotBlank() }?.let { put("failing_test_name", it) }
-        put("invoked_from_cursor", context.invokedFromCursor)
     }
 
     private fun followUpContextPayload(followUp: FollowUpContext, json: Json) = buildJsonObject {
         put("original_question", followUp.originalQuestion)
         followUp.activeStepId?.let { put("active_step_id", it) }
-        if (followUp.clarificationHistory.isNotEmpty()) {
-            put("clarification_history", buildJsonArray {
-                followUp.clarificationHistory.forEach { exchange ->
-                    add(buildJsonObject {
-                        put("question", exchange.question)
-                        put("answer", exchange.answer)
-                    })
-                }
-            })
-        }
         put("previous_flow_map", json.parseToJsonElement(json.encodeToString(followUp.previousFlowMap)))
     }
 

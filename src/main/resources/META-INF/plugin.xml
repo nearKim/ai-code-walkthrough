@@ -15,7 +15,6 @@
 
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.CodexCliService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.ClaudeCliService"/>
-        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.EditorContextService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.LlmProviderService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.FlowPlannerService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.TourSessionService"/>

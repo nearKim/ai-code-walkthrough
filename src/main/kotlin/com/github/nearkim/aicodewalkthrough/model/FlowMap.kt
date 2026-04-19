@@ -111,11 +111,6 @@ data class FlowMap(
 )
 
 @Serializable
-data class ClarificationResponse(
-    @SerialName("clarification_question") val clarificationQuestion: String,
-)
-
-@Serializable
 data class LlmResponse(
     val type: String,
     val mode: String? = null,
@@ -130,7 +125,6 @@ data class LlmResponse(
     val evidence: List<EvidenceItem>? = null,
     val confidence: String? = null,
     val uncertain: Boolean? = null,
-    @SerialName("clarification_question") val clarificationQuestion: String? = null,
     @SerialName("overall_risk") val overallRisk: String? = null,
     @SerialName("review_summary") val reviewSummary: String? = null,
     @SerialName("suggested_tests") val suggestedTests: List<SuggestedTest>? = null,
@@ -150,11 +144,6 @@ data class LlmResponse(
             suggestedTests = suggestedTests ?: emptyList(),
             analysisTrace = analysisTrace,
         )
-    }
-
-    fun toClarification(): ClarificationResponse? {
-        if (type != "clarification" || clarificationQuestion == null) return null
-        return ClarificationResponse(clarificationQuestion = clarificationQuestion)
     }
 
     fun toStepAnswer(): StepAnswer? {

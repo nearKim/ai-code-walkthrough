@@ -1,6 +1,5 @@
 package com.github.nearkim.aicodewalkthrough.service
 
-import com.github.nearkim.aicodewalkthrough.domain.session.RecentWalkthroughHistory
 import com.github.nearkim.aicodewalkthrough.domain.session.TourNavigator
 import com.github.nearkim.aicodewalkthrough.editor.EditorDecorationController
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
@@ -9,7 +8,6 @@ import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.FollowUpContext
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
-import com.github.nearkim.aicodewalkthrough.model.RecentWalkthrough
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
@@ -20,7 +18,6 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 @Service(Service.Level.PROJECT)
 class TourSessionService(private val project: Project, private val scope: CoroutineScope) {
@@ -33,7 +30,6 @@ class TourSessionService(private val project: Project, private val scope: Corout
         }
         fun onStepChanged(stepIndex: Int, step: FlowStep) {}
         fun onStepAnswerChanged(answer: StepAnswer?, loading: Boolean, errorMessage: String?) {}
-        fun onRecentWalkthroughsChanged(items: List<RecentWalkthrough>) {}
     }
 
     var state: TourState = TourState.INPUT
@@ -50,8 +46,6 @@ class TourSessionService(private val project: Project, private val scope: Corout
         private set
     var currentFeatureScope: FeatureScopeContext? = null
         private set
-    var clarificationQuestion: String? = null
-        private set
     var errorMessage: String? = null
         private set
     var lastMetadata: ResponseMetadata? = null
@@ -64,11 +58,8 @@ class TourSessionService(private val project: Project, private val scope: Corout
         private set
     var stepAnswerError: String? = null
         private set
-    val recentWalkthroughs: List<RecentWalkthrough>
-        get() = recentWalkthroughHistory.items()
 
     private val listeners = mutableListOf<TourSessionListener>()
-    private val recentWalkthroughHistory = RecentWalkthroughHistory()
     private val tourStepHistory = mutableListOf<Int>()
     private val tourNavigator = TourNavigator()
     private val progressLock = Any()
@@ -114,13 +105,6 @@ class TourSessionService(private val project: Project, private val scope: Corout
     private fun notifyStepAnswerChanged() {
         ApplicationManager.getApplication().invokeLater {
             listeners.forEach { it.onStepAnswerChanged(currentStepAnswer, stepAnswerLoading, stepAnswerError) }
-        }
-    }
-
-    private fun notifyRecentWalkthroughsChanged() {
-        val snapshot = recentWalkthroughs
-        ApplicationManager.getApplication().invokeLater {
-            listeners.forEach { it.onRecentWalkthroughsChanged(snapshot) }
         }
     }
 
@@ -230,15 +214,6 @@ class TourSessionService(private val project: Project, private val scope: Corout
         beginWalkthroughRequest(question, mode, queryContext, featureScope)
     }
 
-    fun submitFollowUp(
-        question: String,
-        mode: AnalysisMode = currentMode,
-        queryContext: QueryContext? = currentContext,
-        featureScope: FeatureScopeContext? = currentFeatureScope,
-    ) {
-        beginWalkthroughRequest(question, mode, queryContext, featureScope)
-    }
-
     private fun beginWalkthroughRequest(
         question: String,
         mode: AnalysisMode,
@@ -246,7 +221,6 @@ class TourSessionService(private val project: Project, private val scope: Corout
         featureScope: FeatureScopeContext?,
     ) {
         clearPendingProgress()
-        recentWalkthroughHistory.clearCurrentSelection()
         currentQuestion = question
         currentMode = mode
         currentContext = queryContext
@@ -265,69 +239,6 @@ class TourSessionService(private val project: Project, private val scope: Corout
                 notifyProgress(line)
             }
             handleMappingResult(result)
-        }
-    }
-
-    fun answerClarification(answer: String) {
-        val question = clarificationQuestion
-        if (question != null && followUpContext != null) {
-            followUpContext = followUpContext!!.withClarification(question, answer)
-        }
-        clarificationQuestion = null
-        startMapping(answer, currentMode, currentContext)
-    }
-
-    fun cancelRequest() {
-        val planner = project.service<FlowPlannerService>()
-        planner.cancel()
-        clearPendingProgress()
-        project.service<EditorDecorationController>().clearDecorations()
-        recentWalkthroughHistory.clearCurrentSelection()
-        currentFlowMap = null
-        currentStepIndex = -1
-        tourStepHistory.clear()
-        transitionTo(TourState.INPUT)
-    }
-
-    fun reset() {
-        clearPendingProgress()
-        project.service<EditorDecorationController>().clearDecorations()
-        recentWalkthroughHistory.clearCurrentSelection()
-        currentFlowMap = null
-        currentQuestion = null
-        currentMode = AnalysisMode.UNDERSTAND
-        currentContext = null
-        followUpContext = null
-        currentFeatureScope = null
-        clarificationQuestion = null
-        errorMessage = null
-        lastMetadata = null
-        clearStepAnswer(notify = false)
-        currentStepIndex = -1
-        tourStepHistory.clear()
-        transitionTo(TourState.INPUT)
-    }
-
-    fun restoreRecentWalkthrough(id: String, startTour: Boolean = false) {
-        val snapshot = recentWalkthroughHistory.restore(id) ?: return
-        project.service<EditorDecorationController>().clearDecorations()
-        currentFlowMap = snapshot.flowMap
-        currentQuestion = snapshot.question
-        currentMode = snapshot.mode
-        currentContext = snapshot.queryContext
-        followUpContext = snapshot.followUpContext
-        currentFeatureScope = snapshot.featureScope
-        clarificationQuestion = null
-        errorMessage = null
-        lastMetadata = snapshot.metadata
-        clearStepAnswer(notify = false)
-        currentStepIndex = -1
-        tourStepHistory.clear()
-
-        if (startTour) {
-            startTour(recentWalkthroughHistory.resolveStartIndex(snapshot))
-        } else {
-            transitionTo(TourState.OVERVIEW)
         }
     }
 
@@ -372,36 +283,16 @@ class TourSessionService(private val project: Project, private val scope: Corout
                     lastMetadata = mappingResult.metadata
                     val response = mappingResult.response
                     val flowMap = response.toFlowMap()
-                    val clarification = response.toClarification()
-                    when {
-                        flowMap != null -> {
-                            currentFlowMap = flowMap
-                            clarificationQuestion = null
-                            val previousContext = followUpContext
-                            followUpContext = FollowUpContext(
-                                originalQuestion = previousContext?.originalQuestion ?: currentQuestion ?: "",
-                                previousFlowMap = flowMap,
-                                clarificationHistory = previousContext?.clarificationHistory ?: emptyList(),
-                            )
-                            rememberWalkthrough(
-                                flowMap = flowMap,
-                                question = currentQuestion,
-                                mode = currentMode,
-                                queryContext = currentContext,
-                                followUpContext = followUpContext,
-                                featureScope = currentFeatureScope,
-                                metadata = lastMetadata,
-                            )
-                            transitionTo(TourState.OVERVIEW)
-                        }
-                        clarification != null -> {
-                            clarificationQuestion = clarification.clarificationQuestion
-                            transitionTo(TourState.OVERVIEW)
-                        }
-                        else -> {
-                            errorMessage = "Unexpected response from LLM"
-                            transitionTo(TourState.INPUT)
-                        }
+                    if (flowMap != null) {
+                        currentFlowMap = flowMap
+                        followUpContext = FollowUpContext(
+                            originalQuestion = currentQuestion ?: "",
+                            previousFlowMap = flowMap,
+                        )
+                        transitionTo(TourState.OVERVIEW)
+                    } else {
+                        errorMessage = "Unexpected response from LLM"
+                        transitionTo(TourState.INPUT)
                     }
                 },
                 onFailure = { error ->
@@ -414,22 +305,11 @@ class TourSessionService(private val project: Project, private val scope: Corout
 
     private fun updateActiveStepContext(stepId: String?) {
         followUpContext = followUpContext?.copy(activeStepId = stepId)
-        syncCurrentRecentWalkthrough()
     }
 
-    fun preferredNextHop(stepId: String, visitedStepIds: Set<String> = visitedStepIds()): StepEdge? {
+    private fun preferredNextHop(stepId: String, visitedStepIds: Set<String> = visitedStepIds()): StepEdge? {
         return tourNavigator.preferredNextHop(currentFlowMap, stepId, visitedStepIds)
     }
-
-    fun outgoingHops(stepId: String): List<StepEdge> =
-        tourNavigator.outgoingHops(currentFlowMap, stepId)
-
-    fun incomingHops(stepId: String): List<StepEdge> =
-        tourNavigator.incomingHops(currentFlowMap, stepId)
-
-    fun isEntryStep(stepId: String): Boolean = tourNavigator.isEntryStep(currentFlowMap, stepId)
-
-    fun isTerminalStep(stepId: String): Boolean = tourNavigator.isTerminalStep(currentFlowMap, stepId)
 
     private fun clearStepAnswer(notify: Boolean = true) {
         currentStepAnswer = null
@@ -447,64 +327,9 @@ class TourSessionService(private val project: Project, private val scope: Corout
         }
     }
 
-    private fun rememberWalkthrough(
-        flowMap: FlowMap,
-        question: String?,
-        mode: AnalysisMode,
-        queryContext: QueryContext?,
-        followUpContext: FollowUpContext?,
-        featureScope: FeatureScopeContext?,
-        metadata: ResponseMetadata?,
-    ) {
-        val normalizedQuestion = question?.trim().orEmpty()
-        if (normalizedQuestion.isEmpty()) return
-
-        recentWalkthroughHistory.remember(
-            RecentWalkthrough(
-                id = UUID.randomUUID().toString(),
-                displayTitle = summarizeQuestion(normalizedQuestion),
-                question = normalizedQuestion,
-                mode = mode,
-                flowMap = flowMap,
-                queryContext = queryContext,
-                followUpContext = followUpContext,
-                featureScope = featureScope,
-                metadata = metadata,
-            ),
-        )
-        notifyRecentWalkthroughsChanged()
-    }
-
-    private fun syncCurrentRecentWalkthrough() {
-        if (recentWalkthroughHistory.updateCurrentFollowUp(followUpContext)) {
-            notifyRecentWalkthroughsChanged()
-        }
-    }
-
     private fun visitedStepIds(): Set<String> {
         val flowMap = currentFlowMap ?: return emptySet()
         return tourStepHistory.mapNotNull { index -> flowMap.steps.getOrNull(index)?.id }.toSet()
-    }
-    private fun summarizeQuestion(question: String): String {
-        val userRequestMarker = "User request:\n"
-        if (question.contains(userRequestMarker)) {
-            return question.substringAfter(userRequestMarker).trim().ifBlank { "Walkthrough" }
-        }
-
-        val action = question.lineSequence()
-            .firstOrNull { it.startsWith("Action: ") }
-            ?.removePrefix("Action: ")
-            ?.replace('-', ' ')
-            ?.trim()
-        if (!action.isNullOrBlank()) {
-            return action.replaceFirstChar { ch -> ch.uppercase() }
-        }
-
-        return question.lineSequence()
-            .map { it.trim() }
-            .firstOrNull { it.isNotBlank() }
-            ?.take(120)
-            ?: "Walkthrough"
     }
 
     companion object {

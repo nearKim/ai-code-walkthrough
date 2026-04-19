@@ -12,7 +12,6 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
@@ -33,7 +32,8 @@ import javax.swing.SwingConstants
 import javax.swing.UIManager
 
 class InputCard(
-    private val project: Project,
+    project: Project,
+    private val scope: CoroutineScope,
     private val onSubmit: (prompt: String, mode: AnalysisMode, provider: AiProvider) -> Unit,
 ) : JPanel(BorderLayout()) {
 
@@ -74,7 +74,6 @@ class InputCard(
     private val history = mutableListOf<String>()
     private var historyIndex = -1
     private var selectedMode = AnalysisMode.UNDERSTAND
-    private val statusScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         border = JBUI.Borders.empty(10)
@@ -205,7 +204,7 @@ class InputCard(
         providerStatusDot.foreground = JBColor.GRAY
         providerStatusDot.toolTipText = "Checking ${provider.displayName}..."
         submitButton.isEnabled = true
-        statusScope.launch {
+        scope.launch {
             val status = withContext(Dispatchers.IO) {
                 runCatching { providerService.checkAvailability(provider) }.getOrNull()
             }

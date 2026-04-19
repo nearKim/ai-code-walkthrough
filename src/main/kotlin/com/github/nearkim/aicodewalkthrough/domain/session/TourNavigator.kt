@@ -25,34 +25,12 @@ class TourNavigator {
         )
     }
 
-    fun outgoingHops(flowMap: FlowMap?, stepId: String): List<StepEdge> =
-        flowMap?.edges.orEmpty().filter { !it.broken && it.fromStepId == stepId }
-
-    fun incomingHops(flowMap: FlowMap?, stepId: String): List<StepEdge> =
-        flowMap?.edges.orEmpty().filter { !it.broken && it.toStepId == stepId }
-
-    fun isEntryStep(flowMap: FlowMap?, stepId: String): Boolean =
-        flowMap?.entryStepId == stepId
-
-    fun isTerminalStep(flowMap: FlowMap?, stepId: String): Boolean =
-        stepId in flowMap?.terminalStepIds.orEmpty()
-
     fun findNextNavigableStepIndex(flowMap: FlowMap?, startIndex: Int): Int? {
         val steps = flowMap?.steps ?: return null
         var index = startIndex.coerceAtLeast(0)
         while (index < steps.size) {
             if (!steps[index].broken) return index
             index++
-        }
-        return null
-    }
-
-    fun findPreviousNavigableStepIndex(flowMap: FlowMap?, startIndex: Int): Int? {
-        val steps = flowMap?.steps ?: return null
-        var index = startIndex.coerceAtMost(steps.lastIndex)
-        while (index >= 0) {
-            if (!steps[index].broken) return index
-            index--
         }
         return null
     }

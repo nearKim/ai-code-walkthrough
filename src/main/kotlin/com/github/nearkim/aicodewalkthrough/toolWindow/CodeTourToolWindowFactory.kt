@@ -18,6 +18,7 @@ class CodeTourToolWindowFactory : ToolWindowFactory {
             scope.cancel()
         }
         val panel = CodeTourPanel(project, scope)
+        Disposer.register(toolWindow.disposable, panel)
         val content = ContentFactory.getInstance().createContent(panel, null, false)
         toolWindow.contentManager.addContent(content)
     }

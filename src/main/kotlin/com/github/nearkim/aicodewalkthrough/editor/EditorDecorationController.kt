@@ -62,6 +62,21 @@ class EditorDecorationController(private val project: Project) : Disposable {
         FileEditorManager.getInstance(project).openFile(virtualFile, true)
 
         val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return
+        decorate(editor, step, stepIndex, totalSteps, nextStep, nextEdge)
+    }
+
+    fun decorate(
+        editor: Editor,
+        step: FlowStep,
+        stepIndex: Int,
+        totalSteps: Int,
+        nextStep: FlowStep? = null,
+        nextEdge: StepEdge? = null,
+    ) {
+        clearDecorations()
+
+        if (step.broken) return
+
         val document = editor.document
         if (document.lineCount == 0) return
 
