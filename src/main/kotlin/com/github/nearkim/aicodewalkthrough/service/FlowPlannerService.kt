@@ -47,7 +47,7 @@ class FlowPlannerService(private val project: Project) {
             providerService.requireRepoGroundedWalkthroughSupport(provider)
             val prompt = buildPrompt(question, mode, queryContext, followUpContext, featureScope, provider)
             val providerResponse = provider.query(prompt, promptKind = PromptKind.WALKTHROUGH, onProgress = onProgress)
-            val cleaned = stripMarkdownFences(providerResponse.content)
+            val cleaned = JsonResponseSanitizer.extractTopLevelObject(providerResponse.content)
             val llmResponse = json.decodeFromString<LlmResponse>(cleaned)
 
             val finalResponse = if (llmResponse.type == "flow_map" && llmResponse.steps != null) {
@@ -97,7 +97,7 @@ class FlowPlannerService(private val project: Project) {
             providerService.requireRepoGroundedWalkthroughSupport(provider)
             val prompt = buildStepPrompt(question, step, mode, queryContext, followUpContext, featureScope, provider)
             val providerResponse = provider.query(prompt, promptKind = PromptKind.WALKTHROUGH, onProgress = onProgress)
-            val cleaned = stripMarkdownFences(providerResponse.content)
+            val cleaned = JsonResponseSanitizer.extractTopLevelObject(providerResponse.content)
             val llmResponse = json.decodeFromString<LlmResponse>(cleaned)
             val stepAnswer = llmResponse.toStepAnswer()
                 ?: return Result.failure(IllegalStateException("Unexpected response from LLM"))
@@ -174,23 +174,6 @@ class FlowPlannerService(private val project: Project) {
         )
     }
 
-    private fun stripMarkdownFences(text: String): String {
-        val trimmed = text.trim()
-        if (!trimmed.startsWith("```")) return trimmed
-
-        val withoutOpening = if (trimmed.startsWith("```json")) {
-            trimmed.removePrefix("```json")
-        } else {
-            trimmed.removePrefix("```")
-        }.trimStart('\n', '\r')
-
-        return if (withoutOpening.endsWith("```")) {
-            withoutOpening.removeSuffix("```").trimEnd('\n', '\r')
-        } else {
-            withoutOpening
-        }
-    }
-
     private fun sanitizeStepAnswer(answer: StepAnswer, step: FlowStep): StepAnswer {
         val stepValidator = validator()
         val importantLines = answer.importantLines.mapNotNull { annotation ->
@@ -205,7 +188,6 @@ class FlowPlannerService(private val project: Project) {
         return answer.copy(
             importantLines = importantLines,
             evidence = stepValidator.sanitizeEvidenceItems(answer.evidence, step.filePath),
-            potentialBugs = stepValidator.sanitizePotentialBugFindings(answer.potentialBugs, step.filePath),
         )
     }
 

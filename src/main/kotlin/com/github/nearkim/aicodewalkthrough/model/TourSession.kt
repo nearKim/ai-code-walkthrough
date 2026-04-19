@@ -14,8 +14,6 @@ enum class AnalysisMode(
     UNDERSTAND("understand", "Understand"),
     REVIEW("review", "Review"),
     TRACE("trace", "Trace"),
-    RISK("risk", "Risk"),
-    COMMENT("comment", "Comment"),
     ;
 
     companion object {
@@ -23,17 +21,6 @@ enum class AnalysisMode(
     }
 
     override fun toString(): String = displayName
-}
-
-enum class CursorActionType(
-    val prompt: String,
-) {
-    EXPLAIN("Explain this symbol."),
-    WHY_HERE("Why is this here?"),
-    WHAT_BREAKS("What could break if this changes?"),
-    WRITE_COMMENT("Write a concise code review comment for this."),
-    SUGGEST_TESTS("Suggest the most important tests for this."),
-    TRACE_USAGE("Trace the important callers and callees for this."),
 }
 
 enum class CommentTone(
@@ -112,6 +99,5 @@ enum class TourState {
     INPUT,
     LOADING,
     OVERVIEW,
-    REPO_REVIEW,
     TOUR_ACTIVE,
 }

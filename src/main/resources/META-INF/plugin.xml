@@ -13,18 +13,11 @@
                     anchor="right"
                     icon="AllIcons.Actions.Play_forward"/>
 
-        <applicationService serviceImplementation="com.github.nearkim.aicodewalkthrough.settings.ProviderSecretsService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.CodexCliService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.ClaudeCliService"/>
-        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.OpenAiApiService"/>
-        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.ClaudeApiService"/>
-        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.GeminiApiService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.EditorContextService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.LlmProviderService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.FlowPlannerService"/>
-        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.RepositoryFingerprintService"/>
-        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.RepositoryReviewPlannerService"/>
-        <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.ReviewArtifactStore"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.service.TourSessionService"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings"/>
         <projectService serviceImplementation="com.github.nearkim.aicodewalkthrough.editor.EditorDecorationController"/>
@@ -44,32 +37,6 @@
                     text="Map Flow..."
                     description="Open Code Tour and map a code flow">
                 <keyboard-shortcut first-keystroke="ctrl alt W" keymap="$default"/>
-            </action>
-
-            <action id="CodeTour.ReviewRepository"
-                    class="com.github.nearkim.aicodewalkthrough.action.ReviewRepositoryAction"
-                    text="Thorough Repo Review"
-                    description="Run a repository-wide code review and split the repo into feature walkthrough slices"/>
-
-            <action id="CodeTour.ReviewCurrentFile"
-                    class="com.github.nearkim.aicodewalkthrough.action.ReviewCurrentFileAction"
-                    text="Review Current File"
-                    description="Review the current file from the editor cursor context">
-                <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            </action>
-
-            <action id="CodeTour.AskAboutCursor"
-                    class="com.github.nearkim.aicodewalkthrough.action.AskAboutCursorAction"
-                    text="Ask About Cursor"
-                    description="Explain the code at the current cursor position">
-                <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            </action>
-
-            <action id="CodeTour.ComposeCommentFromCursor"
-                    class="com.github.nearkim.aicodewalkthrough.action.ComposeCommentFromCursorAction"
-                    text="Compose Comment From Cursor"
-                    description="Draft a review comment from the current cursor context">
-                <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             </action>
 
             <action id="CodeTour.StartTour"

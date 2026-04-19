@@ -16,7 +16,6 @@ data class ProviderCapabilities(
 
 enum class PromptKind {
     WALKTHROUGH,
-    REPOSITORY_REVIEW,
 }
 
 data class ProviderStatus(

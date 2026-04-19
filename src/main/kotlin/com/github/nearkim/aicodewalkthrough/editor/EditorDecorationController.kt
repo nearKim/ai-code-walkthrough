@@ -1,17 +1,21 @@
 package com.github.nearkim.aicodewalkthrough.editor
 
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
-import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
+import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.editor.colors.EditorFontType
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.markup.EffectType
+import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
@@ -19,23 +23,25 @@ import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.Color
 import java.awt.FontMetrics
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Rectangle
 import java.awt.RenderingHints
 import java.nio.file.Path
-import kotlin.math.min
+import javax.swing.Icon
 
 @Service(Service.Level.PROJECT)
 class EditorDecorationController(private val project: Project) : Disposable {
 
     private val activeHighlighters = mutableListOf<RangeHighlighter>()
     private val activeInlays = mutableListOf<Inlay<*>>()
-    private val settings get() = project.service<CodeTourSettings>()
+
+    private var attachedDocument: Document? = null
+    private var attachedListener: DocumentListener? = null
 
     fun showStep(
         step: FlowStep,
@@ -48,98 +54,102 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
         if (step.broken) return
 
+        val basePath = project.basePath ?: return
         val virtualFile = LocalFileSystem.getInstance()
-            .findFileByNioFile(Path.of(project.basePath!!).resolve(step.filePath))
+            .findFileByNioFile(Path.of(basePath).resolve(step.filePath))
             ?: return
 
         FileEditorManager.getInstance(project).openFile(virtualFile, true)
 
         val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return
         val document = editor.document
-
         if (document.lineCount == 0) return
 
         val startLine = (step.startLine - 1).coerceIn(0, document.lineCount - 1)
-        val endLine = (step.endLine - 1).coerceIn(0, document.lineCount - 1)
+        val endLine = (step.endLine - 1).coerceIn(startLine, document.lineCount - 1)
         val startOffset = document.getLineStartOffset(startLine)
-        val endOffset = document.getLineEndOffset(min(endLine, document.lineCount - 1))
+        val endOffset = document.getLineEndOffset(endLine)
 
-        editor.caretModel.moveToOffset(startOffset)
-        editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
-
-        val highlightAttributes = TextAttributes().apply {
-            backgroundColor = JBColor(Color(232, 242, 252), Color(47, 60, 75))
+        // 1. Background highlighter on the step range.
+        val bgAttrs = TextAttributes().apply {
+            backgroundColor = JBColor(Color(236, 244, 252), Color(43, 54, 68))
         }
-        val highlighter = editor.markupModel.addRangeHighlighter(
+        val bgHighlighter = editor.markupModel.addRangeHighlighter(
             startOffset,
             endOffset,
             HighlighterLayer.SELECTION - 1,
-            highlightAttributes,
+            bgAttrs,
             HighlighterTargetArea.LINES_IN_RANGE,
         )
-        activeHighlighters.add(highlighter)
+        activeHighlighters.add(bgHighlighter)
 
-        // Step header inlay (higher priority so it appears above any annotation at the same offset)
-        val reviewBadgesEnabled = settings.state.enableReviewBadges
-        val severity = normalizedSeverity(step).takeIf { reviewBadgesEnabled }
-        val confidence = normalizedConfidence(step).takeIf { reviewBadgesEnabled }
-        val stepRenderer = StepInlayRenderer(
-            editor = editor,
-            stepLabel = "Step ${stepIndex + 1}/$totalSteps \u2014 ${step.title}",
-            severityLabel = severity?.let { "Severity: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
-            confidenceLabel = confidence?.let { "Confidence: ${it.replaceFirstChar { ch -> ch.uppercase() }}" },
-            nextHopLabel = nextStep?.let { resolvedNextStep ->
-                "Next hop: ${resolvedNextStep.title}" +
-                    nextEdge?.kind?.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
-            },
-            backgroundColor = backgroundColorForSeverity(severity, step.broken),
-            accentColor = accentColorForSeverity(severity, step.broken),
-        )
-        val inlay = editor.inlayModel.addBlockElement(startOffset, true, true, 10, stepRenderer)
-        if (inlay != null) activeInlays.add(inlay)
+        // 2. Header inlay.
+        val accent = accentColorFor(step)
+        val headerLabel = "Step ${stepIndex + 1}/$totalSteps · ${step.title} · ${step.filePath}:${startLine + 1}-${endLine + 1}"
+        val headerHint = "← prev   → next   esc to stop"
+        val headerRenderer = HeaderRenderer(editor, headerLabel, headerHint, accent)
+        editor.inlayModel.addBlockElement(startOffset, true, true, 100, headerRenderer)?.let {
+            activeInlays.add(it)
+        }
 
-        addBugMarkers(editor, document, step)
+        // 3. Summary inlay — below the header.
+        val summaryText = step.explanation.ifBlank { step.whyIncluded }
+        if (summaryText.isNotBlank()) {
+            val summaryRenderer = SummaryRenderer(editor, summaryText)
+            editor.inlayModel.addBlockElement(startOffset, true, true, 200, summaryRenderer)?.let {
+                activeInlays.add(it)
+            }
+        }
 
-        // Next-step preview: prefer the validated hop call site, then fall back to symbol matching.
-        val nextStepAttrs = TextAttributes().apply {
-            foregroundColor = JBColor(Color(160, 90, 0), Color(220, 160, 60))
+        // 4. Per-line annotation inlays.
+        step.lineAnnotations.forEach { annotation ->
+            addAnnotationInlay(editor, annotation, document, startLine, endLine)
+        }
+
+        // 5. Next-hop marker.
+        val nextAttrs = TextAttributes().apply {
             effectColor = JBColor(Color(180, 110, 0), Color(220, 160, 60))
             effectType = EffectType.BOLD_LINE_UNDERSCORE
         }
-
-        val resolvedNextEdge = nextEdge
-        val nextStepTooltip = nextStep?.let { buildNextStepTooltip(it, resolvedNextEdge) }
-        val previewRendered = if (
+        val nextTooltip = nextStep?.let { "Next: ${it.title}" }
+        val renderedNextHop = if (
             nextStep != null &&
-            resolvedNextEdge != null &&
-            resolvedNextEdge.callSiteFilePath == step.filePath &&
-            resolvedNextEdge.callSiteStartLine != null &&
-            resolvedNextEdge.callSiteEndLine != null
+            nextEdge != null &&
+            nextEdge.callSiteFilePath == step.filePath &&
+            nextEdge.callSiteStartLine != null &&
+            nextEdge.callSiteEndLine != null
         ) {
-            val callStartLine = (resolvedNextEdge.callSiteStartLine - 1).coerceIn(startLine, endLine)
-            val callEndLine = (resolvedNextEdge.callSiteEndLine - 1).coerceIn(callStartLine, endLine)
-            val callStartOffset = document.getLineStartOffset(callStartLine)
-            val callEndOffset = document.getLineEndOffset(callEndLine)
-            val highlighter = editor.markupModel.addRangeHighlighter(
+            val callStart = (nextEdge.callSiteStartLine - 1).coerceIn(startLine, endLine)
+            val callEnd = (nextEdge.callSiteEndLine - 1).coerceIn(callStart, endLine)
+            val callStartOffset = document.getLineStartOffset(callStart)
+            val callEndOffset = document.getLineEndOffset(callEnd)
+            val hl = editor.markupModel.addRangeHighlighter(
                 callStartOffset,
                 callEndOffset,
                 HighlighterLayer.SELECTION,
-                nextStepAttrs,
+                nextAttrs,
                 HighlighterTargetArea.LINES_IN_RANGE,
             )
-            highlighter.errorStripeTooltip = nextStepTooltip
-            activeHighlighters.add(highlighter)
+            hl.errorStripeTooltip = nextTooltip
+            hl.gutterIconRenderer = NextHopGutterIcon(nextTooltip ?: "Next step")
+            activeHighlighters.add(hl)
             true
         } else {
             false
         }
 
-        if (!previewRendered) {
-            val nextSymbol = nextStep?.symbol
-            if (nextSymbol != null) {
-                highlightNextSymbolMatches(editor, nextSymbol, startOffset, endOffset, nextStepAttrs, nextStepTooltip)
+        if (!renderedNextHop) {
+            nextStep?.symbol?.let { symbol ->
+                highlightNextSymbolMatches(editor, symbol, startOffset, endOffset, nextAttrs, nextTooltip)
             }
         }
+
+        // 6. Scroll to step start.
+        editor.caretModel.moveToOffset(startOffset)
+        editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
+
+        // Attach document listener that clears decorations on edit.
+        attachDocumentListener(document)
     }
 
     fun clearDecorations() {
@@ -148,258 +158,243 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
         activeInlays.forEach { it.dispose() }
         activeInlays.clear()
+
+        detachDocumentListener()
     }
 
     override fun dispose() {
         clearDecorations()
     }
 
-    private class StepInlayRenderer(
+    private fun attachDocumentListener(document: Document) {
+        detachDocumentListener()
+        val listener = object : DocumentListener {
+            override fun documentChanged(event: DocumentEvent) {
+                clearDecorations()
+            }
+        }
+        document.addDocumentListener(listener)
+        attachedDocument = document
+        attachedListener = listener
+    }
+
+    private fun detachDocumentListener() {
+        val doc = attachedDocument
+        val listener = attachedListener
+        if (doc != null && listener != null) {
+            doc.removeDocumentListener(listener)
+        }
+        attachedDocument = null
+        attachedListener = null
+    }
+
+    private fun addAnnotationInlay(
+        editor: Editor,
+        annotation: LineAnnotation,
+        document: Document,
+        startLine: Int,
+        endLine: Int,
+    ) {
+        val line = (annotation.startLine - 1).coerceIn(startLine, endLine)
+        val lineEndOffset = document.getLineEndOffset(line)
+        val renderer = AnnotationRenderer(editor, annotation.text)
+        editor.inlayModel.addAfterLineEndElement(lineEndOffset, false, renderer)?.let {
+            activeInlays.add(it)
+        }
+    }
+
+    private fun highlightNextSymbolMatches(
+        editor: Editor,
+        symbol: String,
+        startOffset: Int,
+        endOffset: Int,
+        attributes: TextAttributes,
+        tooltip: String?,
+    ) {
+        if (symbol.isBlank() || startOffset >= endOffset) return
+        val chars = editor.document.charsSequence
+        var searchStart = startOffset
+        var matchCount = 0
+        while (searchStart < endOffset && matchCount < MAX_NEXT_SYMBOL_MATCHES) {
+            val matchStart = indexOfWithin(chars, symbol, searchStart, endOffset)
+            if (matchStart < 0) break
+            val matchEnd = matchStart + symbol.length
+            if (isSymbolBoundary(chars, matchStart - 1) && isSymbolBoundary(chars, matchEnd)) {
+                val hl = editor.markupModel.addRangeHighlighter(
+                    matchStart,
+                    matchEnd,
+                    HighlighterLayer.SELECTION,
+                    attributes,
+                    HighlighterTargetArea.EXACT_RANGE,
+                )
+                hl.errorStripeTooltip = tooltip
+                activeHighlighters.add(hl)
+                matchCount++
+            }
+            searchStart = matchStart + symbol.length
+        }
+    }
+
+    private class HeaderRenderer(
         private val editor: Editor,
-        private val stepLabel: String,
-        private val severityLabel: String?,
-        private val confidenceLabel: String?,
-        private val nextHopLabel: String?,
-        private val backgroundColor: JBColor,
-        private val accentColor: JBColor,
+        private val label: String,
+        private val hint: String,
+        private val accent: JBColor,
     ) : EditorCustomElementRenderer {
 
-        private val vPad = JBUI.scale(5)
-        private val hPad = JBUI.scale(8)
-        private val lineGap = JBUI.scale(3)
-        private val metaText = buildMetaText()
-        private var cachedLayoutKey: String? = null
-        private var cachedMetaLines: List<String> = emptyList()
+        private val vPad = JBUI.scale(4)
+        private val hPad = JBUI.scale(10)
+        private val barWidth = JBUI.scale(3)
+
+        override fun calcWidthInPixels(inlay: Inlay<*>): Int =
+            editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(600))
+
+        override fun calcHeightInPixels(inlay: Inlay<*>): Int {
+            val fm = editor.contentComponent.getFontMetrics(editor.colorsScheme.getFont(EditorFontType.BOLD))
+            return vPad * 2 + fm.height
+        }
+
+        override fun paint(inlay: Inlay<*>, g: Graphics, region: Rectangle, textAttributes: TextAttributes) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+
+                g2.color = JBColor(Color(236, 244, 252), Color(43, 54, 68))
+                g2.fillRect(region.x, region.y, region.width, region.height)
+                g2.color = accent
+                g2.fillRect(region.x, region.y, barWidth, region.height)
+
+                val scheme = editor.colorsScheme
+                val boldFont = scheme.getFont(EditorFontType.BOLD)
+                val italicFont = scheme.getFont(EditorFontType.ITALIC)
+                val boldFm = editor.contentComponent.getFontMetrics(boldFont)
+                val italicFm = editor.contentComponent.getFontMetrics(italicFont)
+
+                val y = region.y + vPad + boldFm.ascent
+                val x = region.x + barWidth + hPad
+
+                g2.font = boldFont
+                g2.color = JBColor(Color(30, 30, 30), Color(220, 220, 220))
+                g2.drawString(label, x, y)
+
+                g2.font = italicFont
+                g2.color = JBColor(Color(120, 120, 120), Color(160, 160, 160))
+                val hintWidth = italicFm.stringWidth(hint)
+                val rightX = region.x + region.width - hPad - hintWidth
+                if (rightX > x + boldFm.stringWidth(label) + hPad) {
+                    g2.drawString(hint, rightX, y)
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+    }
+
+    private class SummaryRenderer(
+        private val editor: Editor,
+        private val text: String,
+    ) : EditorCustomElementRenderer {
+
+        private val vPad = JBUI.scale(4)
+        private val hPad = JBUI.scale(14)
+        private val lineGap = JBUI.scale(2)
+
+        private var cachedWidth: Int = -1
+        private var cachedLines: List<String> = emptyList()
 
         override fun calcWidthInPixels(inlay: Inlay<*>): Int =
             editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(600))
 
         override fun calcHeightInPixels(inlay: Inlay<*>): Int {
             val width = calcWidthInPixels(inlay)
-            val boldFont = editor.colorsScheme.getFont(EditorFontType.BOLD)
-            val smallFont = editor.colorsScheme.getFont(EditorFontType.ITALIC)
-            val boldFm = editor.contentComponent.getFontMetrics(boldFont)
-            val smallFm = editor.contentComponent.getFontMetrics(smallFont)
-            val layout = wrappedLayout(width)
-            val metaHeight = if (layout.metaLines.isEmpty()) 0 else layout.metaLines.size * (smallFm.height + lineGap)
-            val gapAfterMeta = if (layout.metaLines.isEmpty()) 0 else lineGap
-            return vPad + boldFm.height + gapAfterMeta + metaHeight + vPad
+            val fm = editor.contentComponent.getFontMetrics(editor.colorsScheme.getFont(EditorFontType.ITALIC))
+            val lines = layoutLines(width, fm).size.coerceAtLeast(1)
+            return vPad * 2 + lines * fm.height + (lines - 1) * lineGap
         }
 
-        override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
+        override fun paint(inlay: Inlay<*>, g: Graphics, region: Rectangle, textAttributes: TextAttributes) {
             val g2 = g.create() as Graphics2D
             try {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
 
-                g2.color = backgroundColor
-                g2.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
-                g2.color = accentColor
-                g2.fillRect(targetRegion.x, targetRegion.y, JBUI.scale(4), targetRegion.height)
+                g2.color = JBColor(Color(240, 246, 252), Color(46, 56, 70))
+                g2.fillRect(region.x, region.y, region.width, region.height)
 
-                val scheme = editor.colorsScheme
-                val boldFont = scheme.getFont(EditorFontType.BOLD)
-                val smallFont = scheme.getFont(EditorFontType.ITALIC)
-                val boldFm = editor.contentComponent.getFontMetrics(boldFont)
-                val layout = wrappedLayout(targetRegion.width)
+                val italic = editor.colorsScheme.getFont(EditorFontType.ITALIC)
+                val fm = editor.contentComponent.getFontMetrics(italic)
+                val lines = layoutLines(region.width, fm)
 
-                val x = targetRegion.x + hPad
-                var y = targetRegion.y + vPad + boldFm.ascent
+                g2.font = italic
+                g2.color = JBColor(Color(100, 115, 130), Color(170, 180, 195))
 
-                g2.font = boldFont
-                g2.color = JBColor(Color(30, 30, 30), Color(220, 220, 220))
-                g2.drawString(stepLabel, x, y)
-                y += boldFm.height + lineGap
-
-                if (metaText.isNotBlank()) {
-                    g2.font = smallFont
-                    g2.color = accentColor
-                    for (line in layout.metaLines) {
-                        g2.drawString(line, x, y)
-                        y += layout.smallMetrics.height + lineGap
-                    }
+                var y = region.y + vPad + fm.ascent
+                val x = region.x + hPad
+                for (line in lines) {
+                    g2.drawString(line, x, y)
+                    y += fm.height + lineGap
                 }
             } finally {
                 g2.dispose()
             }
         }
 
-        private fun buildMetaText(): String =
-            listOfNotNull(severityLabel, confidenceLabel, nextHopLabel).joinToString("  ·  ")
-
-        private fun wrappedLayout(width: Int): WrappedLayout {
-            val smallFont = editor.colorsScheme.getFont(EditorFontType.ITALIC)
-            val cacheKey = "$width:${smallFont.hashCode()}"
-            val smallFm = editor.contentComponent.getFontMetrics(smallFont)
-            if (cacheKey != cachedLayoutKey) {
-                val availableWidth = width - hPad * 2
-                cachedMetaLines = if (metaText.isNotBlank()) wrapText(smallFm, metaText, availableWidth) else emptyList()
-                cachedLayoutKey = cacheKey
-            }
-            return WrappedLayout(
-                metaLines = cachedMetaLines,
-                smallMetrics = smallFm,
-            )
+        private fun layoutLines(width: Int, fm: FontMetrics): List<String> {
+            if (width == cachedWidth && cachedLines.isNotEmpty()) return cachedLines
+            val available = (width - hPad * 2).coerceAtLeast(JBUI.scale(200))
+            val wrapped = wrapText(fm, text, available).take(MAX_SUMMARY_LINES)
+            cachedWidth = width
+            cachedLines = wrapped
+            return wrapped
         }
     }
 
-    private class BugFlagInlayRenderer(
+    private class AnnotationRenderer(
         private val editor: Editor,
-        private val title: String,
+        private val text: String,
     ) : EditorCustomElementRenderer {
 
         private val hPad = JBUI.scale(8)
-        private val vPad = JBUI.scale(3)
+        private val display = "  \u2190 $text"
 
-        override fun calcWidthInPixels(inlay: Inlay<*>): Int =
-            editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(600))
-
-        override fun calcHeightInPixels(inlay: Inlay<*>): Int {
-            val font = editor.colorsScheme.getFont(EditorFontType.ITALIC)
-            val fm = editor.contentComponent.getFontMetrics(font)
-            return fm.height + vPad * 2
+        override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+            val fm = editor.contentComponent.getFontMetrics(editor.colorsScheme.getFont(EditorFontType.ITALIC))
+            return fm.stringWidth(display) + hPad
         }
 
-        override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
+        override fun paint(inlay: Inlay<*>, g: Graphics, region: Rectangle, textAttributes: TextAttributes) {
             val g2 = g.create() as Graphics2D
             try {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                val bg = JBColor(Color(255, 241, 241), Color(64, 32, 32))
-                val accent = JBColor(Color(190, 70, 60), Color(235, 130, 120))
-                g2.color = bg
-                g2.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
-                g2.color = accent
-                g2.fillRect(targetRegion.x, targetRegion.y, JBUI.scale(4), targetRegion.height)
-
-                val font = editor.colorsScheme.getFont(EditorFontType.ITALIC)
-                val fm = editor.contentComponent.getFontMetrics(font)
-                g2.font = font
-                g2.color = accent
-                g2.drawString("[!] $title", targetRegion.x + hPad, targetRegion.y + vPad + fm.ascent)
+                val italic = editor.colorsScheme.getFont(EditorFontType.ITALIC)
+                val fm = editor.contentComponent.getFontMetrics(italic)
+                g2.font = italic
+                g2.color = JBColor(Color(110, 130, 160), Color(150, 175, 215))
+                g2.drawString(display, region.x, region.y + fm.ascent)
             } finally {
                 g2.dispose()
             }
         }
     }
 
-    private fun addBugMarkers(editor: Editor, document: com.intellij.openapi.editor.Document, step: FlowStep) {
-        val findings = step.potentialBugs.take(5)
-        findings.forEach { finding ->
-            val evidence = finding.evidence.firstOrNull {
-                it.startLine != null && (it.filePath.isNullOrBlank() || it.filePath == step.filePath)
-            } ?: return@forEach
-            val line = (evidence.startLine!! - 1).coerceIn(0, document.lineCount - 1)
-            val startOffset = document.getLineStartOffset(line)
-            val endOffset = document.getLineEndOffset(line)
-            val attrs = TextAttributes().apply {
-                backgroundColor = JBColor(Color(255, 241, 241), Color(64, 32, 32))
-                effectColor = JBColor(Color(190, 70, 60), Color(235, 130, 120))
-                effectType = EffectType.BOLD_LINE_UNDERSCORE
-            }
-            val highlighter = editor.markupModel.addRangeHighlighter(
-                startOffset,
-                endOffset,
-                HighlighterLayer.SELECTION,
-                attrs,
-                HighlighterTargetArea.LINES_IN_RANGE,
-            )
-            highlighter.errorStripeTooltip = buildBugTooltip(finding)
-            activeHighlighters.add(highlighter)
-
-            val inlay = editor.inlayModel.addBlockElement(
-                startOffset,
-                true,
-                true,
-                6,
-                BugFlagInlayRenderer(editor, finding.title),
-            )
-            if (inlay != null) activeInlays.add(inlay)
-        }
-    }
-
-    private fun buildBugTooltip(finding: RepositoryFinding): String = buildString {
-        append(finding.title)
-        if (finding.summary.isNotBlank()) {
-            append('\n')
-            append(finding.summary)
-        }
-        finding.suggestedAction?.takeIf { it.isNotBlank() }?.let {
-            append('\n')
-            append("Action: ")
-            append(it)
-        }
+    private class NextHopGutterIcon(private val tooltip: String) : GutterIconRenderer() {
+        override fun getIcon(): Icon = AllIcons.Actions.Forward
+        override fun getTooltipText(): String = tooltip
+        override fun equals(other: Any?): Boolean = other is NextHopGutterIcon && other.tooltip == tooltip
+        override fun hashCode(): Int = tooltip.hashCode()
     }
 
     companion object {
         private const val MAX_NEXT_SYMBOL_MATCHES = 20
+        private const val MAX_SUMMARY_LINES = 4
 
-        private fun buildNextStepTooltip(nextStep: FlowStep, nextEdge: StepEdge?): String {
-            val detail = nextEdge?.rationale?.takeIf { it.isNotBlank() }
-                ?: nextEdge?.validationNote?.takeIf { it.isNotBlank() }
-            return if (detail != null) {
-                "Next: ${nextStep.title}\n$detail"
-            } else {
-                "Next: ${nextStep.title}"
-            }
-        }
-
-        private fun normalizedSeverity(step: FlowStep): String? {
+        private fun accentColorFor(step: FlowStep): JBColor {
             val severity = step.severity?.trim()?.lowercase()
-            return when (severity) {
-                "high", "medium", "low", "info" -> severity
-                null -> if (step.broken) "high" else null
-                else -> severity
-            }
-        }
-
-        private fun normalizedConfidence(step: FlowStep): String? {
-            val confidence = step.confidence?.trim()?.lowercase()
-            return when (confidence) {
-                "high", "medium", "low", "uncertain", "estimated" -> confidence
-                null -> if (step.uncertain) "uncertain" else null
-                else -> confidence
-            }
-        }
-
-        private fun backgroundColorForSeverity(severity: String?, broken: Boolean): JBColor {
             return when {
-                broken -> JBColor(Color(250, 235, 235), Color(66, 38, 38))
-                severity == "high" -> JBColor(Color(250, 235, 235), Color(66, 38, 38))
-                severity == "medium" -> JBColor(Color(252, 244, 226), Color(72, 58, 34))
-                severity == "low" -> JBColor(Color(235, 243, 252), Color(38, 50, 66))
-                severity == "info" -> JBColor(Color(236, 241, 247), Color(39, 46, 56))
-                else -> JBColor(Color(218, 232, 248), Color(40, 52, 66))
-            }
-        }
-
-        private fun accentColorForSeverity(severity: String?, broken: Boolean): JBColor {
-            return when {
-                broken || severity == "high" -> JBColor(Color(190, 70, 60), Color(235, 130, 120))
+                step.broken || severity == "high" -> JBColor(Color(190, 70, 60), Color(235, 130, 120))
                 severity == "medium" -> JBColor(Color(190, 120, 40), Color(240, 185, 100))
                 severity == "low" -> JBColor(Color(70, 110, 170), Color(130, 170, 225))
-                severity == "info" -> JBColor(Color(90, 110, 130), Color(150, 170, 190))
                 else -> JBColor(Color(70, 110, 170), Color(130, 170, 225))
             }
-        }
-
-        fun wrapText(fm: FontMetrics, text: String, maxWidth: Int): List<String> {
-            if (maxWidth <= 0) return listOf(text)
-            val words = text.split(' ')
-            val lines = mutableListOf<String>()
-            val current = StringBuilder()
-            for (word in words) {
-                if (word.isEmpty()) continue
-                val candidate = if (current.isEmpty()) word else "$current $word"
-                if (fm.stringWidth(candidate) <= maxWidth) {
-                    current.clear()
-                    current.append(candidate)
-                } else {
-                    if (current.isNotEmpty()) lines.add(current.toString())
-                    current.clear()
-                    current.append(word)
-                }
-            }
-            if (current.isNotEmpty()) lines.add(current.toString())
-            return lines.ifEmpty { listOf("") }
         }
 
         private fun isSymbolBoundary(chars: CharSequence, index: Int): Boolean {
@@ -425,42 +420,25 @@ class EditorDecorationController(private val project: Project) : Disposable {
             }
             return -1
         }
-    }
 
-    private fun highlightNextSymbolMatches(
-        editor: Editor,
-        symbol: String,
-        startOffset: Int,
-        endOffset: Int,
-        attributes: TextAttributes,
-        tooltip: String?,
-    ) {
-        if (symbol.isBlank() || startOffset >= endOffset) return
-        val chars = editor.document.charsSequence
-        var searchStart = startOffset
-        var matchCount = 0
-        while (searchStart < endOffset && matchCount < MAX_NEXT_SYMBOL_MATCHES) {
-            val matchStart = indexOfWithin(chars, symbol, searchStart, endOffset)
-            if (matchStart < 0) break
-            val matchEnd = matchStart + symbol.length
-            if (isSymbolBoundary(chars, matchStart - 1) && isSymbolBoundary(chars, matchEnd)) {
-                val highlighter = editor.markupModel.addRangeHighlighter(
-                    matchStart,
-                    matchEnd,
-                    HighlighterLayer.SELECTION,
-                    attributes,
-                    HighlighterTargetArea.EXACT_RANGE,
-                )
-                highlighter.errorStripeTooltip = tooltip
-                activeHighlighters.add(highlighter)
-                matchCount++
+        fun wrapText(fm: FontMetrics, text: String, maxWidth: Int): List<String> {
+            if (maxWidth <= 0) return listOf(text)
+            val words = text.split(' ', '\n').filter { it.isNotEmpty() }
+            val lines = mutableListOf<String>()
+            val current = StringBuilder()
+            for (word in words) {
+                val candidate = if (current.isEmpty()) word else "$current $word"
+                if (fm.stringWidth(candidate) <= maxWidth) {
+                    current.clear()
+                    current.append(candidate)
+                } else {
+                    if (current.isNotEmpty()) lines.add(current.toString())
+                    current.clear()
+                    current.append(word)
+                }
             }
-            searchStart = matchStart + symbol.length
+            if (current.isNotEmpty()) lines.add(current.toString())
+            return lines.ifEmpty { listOf(text) }
         }
     }
-
-    private data class WrappedLayout(
-        val metaLines: List<String>,
-        val smallMetrics: FontMetrics,
-    )
 }

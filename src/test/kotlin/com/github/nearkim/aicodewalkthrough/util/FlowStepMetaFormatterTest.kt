@@ -2,7 +2,6 @@ package com.github.nearkim.aicodewalkthrough.util
 
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
-import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -52,28 +51,4 @@ class FlowStepMetaFormatterTest {
         assertEquals("src/Helper.kt  ·  L40-L44  ·  needs repair", meta)
     }
 
-    @Test
-    fun `format includes potential bug counts`() {
-        val meta = FlowStepMetaFormatter.format(
-            FlowStep(
-                id = "step-3",
-                title = "Validate response",
-                filePath = "src/Response.kt",
-                startLine = 8,
-                endLine = 20,
-                explanation = "Checks the response.",
-                whyIncluded = "The caller depends on this invariant.",
-                potentialBugs = listOf(
-                    RepositoryFinding(
-                        id = "bug-1",
-                        title = "Null response escapes guard",
-                        summary = "The null check is incomplete.",
-                        severity = "high",
-                    ),
-                ),
-            ),
-        )
-
-        assertEquals("src/Response.kt  ·  L8-L20  ·  bugs: 1", meta)
-    }
 }

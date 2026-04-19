@@ -4,7 +4,6 @@ import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
-import com.github.nearkim.aicodewalkthrough.model.RepositoryFinding
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -304,65 +303,4 @@ class StepValidatorTest {
         }
     }
 
-    @Test
-    fun `validate sanitizes potential bug findings and keeps them step scoped`() {
-        val root = Files.createTempDirectory("step-validator")
-        try {
-            val sourceDir = root.resolve("src")
-            Files.createDirectories(sourceDir)
-            Files.writeString(
-                sourceDir.resolve("Handler.kt"),
-                """
-                class Handler {
-                    fun handleRequest() {
-                        helper()
-                    }
-
-                    fun helper() {}
-                }
-                """.trimIndent(),
-            )
-
-            val validated = StepValidator(root.toString()).validate(
-                listOf(
-                    FlowStep(
-                        id = "handle",
-                        title = "Handle request",
-                        filePath = "src/Handler.kt",
-                        symbol = "handleRequest",
-                        startLine = 1,
-                        endLine = 1,
-                        explanation = "Handles the request.",
-                        whyIncluded = "This is the entrypoint.",
-                        potentialBugs = listOf(
-                            RepositoryFinding(
-                                id = "bug-1",
-                                title = "Missing guard before helper call",
-                                summary = "The helper call is unconditional and may run on invalid state.",
-                                severity = "high",
-                                affectedFiles = listOf(" "),
-                                evidence = listOf(
-                                    EvidenceItem(
-                                        kind = "line_range",
-                                        label = "unguarded helper call",
-                                        startLine = 0,
-                                        endLine = 99,
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ).single()
-
-            val finding = validated.potentialBugs.single()
-            assertEquals(listOf("src/Handler.kt"), finding.affectedFiles)
-            assertEquals(1, finding.evidence.single().startLine)
-            assertEquals(7, finding.evidence.single().endLine)
-            assertTrue(finding.uncertain)
-            assertTrue(validated.validationNote!!.contains("Potential bug"))
-        } finally {
-            root.toFile().deleteRecursively()
-        }
-    }
 }
