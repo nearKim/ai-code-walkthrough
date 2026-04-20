@@ -35,7 +35,7 @@ class CodeTourPanel(
     private val cards = JPanel(cardLayout)
 
     private val input = InputCard(project, scope, onSubmit = ::handleSubmit)
-    private val loading = LoadingCard()
+    private val loading = LoadingCard(onStop = { session.cancelRequest() })
     private val overview = OverviewCard(
         onStartTour = { session.startTour() },
         onPreviewStep = { session.previewStep(it) },
@@ -78,9 +78,10 @@ class CodeTourPanel(
     }
 
     override fun onProgressLines(lines: List<String>) {
-        val last = lines.lastOrNull() ?: return
+        if (lines.isEmpty()) return
         ApplicationManager.getApplication().invokeLater {
-            loading.setStatus(last)
+            loading.setStatus(lines.last())
+            loading.appendLog(lines)
         }
     }
 

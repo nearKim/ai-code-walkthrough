@@ -17,6 +17,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @Service(Service.Level.PROJECT)
@@ -65,6 +66,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
     private val progressLock = Any()
     private val pendingProgressLines = ArrayDeque<String>()
     private var progressFlushQueued = false
+    private var activeMappingJob: Job? = null
 
     fun addListener(listener: TourSessionListener) {
         listeners.add(listener)
@@ -233,13 +235,23 @@ class TourSessionService(private val project: Project, private val scope: Corout
         project.service<EditorDecorationController>().clearDecorations()
         transitionTo(TourState.LOADING)
 
-        scope.launch {
+        activeMappingJob?.cancel()
+        activeMappingJob = scope.launch {
             val planner = project.service<FlowPlannerService>()
             val result = planner.mapFlow(question, mode, queryContext, followUpContext, featureScope) { line ->
                 notifyProgress(line)
             }
             handleMappingResult(result)
         }
+    }
+
+    fun cancelRequest() {
+        activeMappingJob?.cancel()
+        activeMappingJob = null
+        project.service<FlowPlannerService>().cancel()
+        clearPendingProgress()
+        errorMessage = null
+        transitionTo(TourState.INPUT)
     }
 
     fun askAboutCurrentStep(question: String) {
