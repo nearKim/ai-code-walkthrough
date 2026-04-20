@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.toolwindow.cards
 
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -8,8 +9,11 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.Cursor
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.event.KeyAdapter
@@ -25,6 +29,10 @@ import javax.swing.JPanel
 import javax.swing.JTextArea
 import javax.swing.KeyStroke
 
+private const val VIEW_STEP = "STEP"
+private const val VIEW_ANSWER = "ANSWER"
+private const val MAX_PUNCH_LENGTH = 200
+
 class TourActiveCard(
     private val onPrev: () -> Unit,
     private val onNext: () -> Unit,
@@ -34,48 +42,71 @@ class TourActiveCard(
 ) : JPanel(BorderLayout()) {
 
     private val headerLabel = JBLabel(" ").apply {
-        font = font.deriveFont(Font.BOLD)
+        font = font.deriveFont(Font.BOLD, font.size + 2f)
     }
     private val subtitleLabel = JBLabel(" ").apply {
-        foreground = JBColor(Color(120, 120, 120), Color(160, 160, 160))
+        foreground = mutedForeground()
     }
-    private val goToCodeLink = JBLabel("Go to code").apply {
-        foreground = JBColor(Color(60, 110, 190), Color(130, 170, 225))
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-    }
+    private val goToCodeLink = linkLabel("Go to code") { onGoToCode() }
 
     private val prevButton = JButton("\u25C0 Prev")
     private val nextButton = JButton("Next \u25B6")
     private val stopButton = JButton("Stop")
 
+    private val stepPunch = JBLabel(" ").apply {
+        font = font.deriveFont(Font.BOLD, font.size + 1f)
+    }
+    private val stepDetail = readOnlyText()
+    private val annotationsHeader = JBLabel("Important lines:").apply {
+        foreground = mutedForeground()
+    }
+    private val annotationsList = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+    private val stepView = buildStepView()
+
+    private val backToStepLink = linkLabel("\u2190 Back to step") { showStepView() }
+    private val answerPunch = JBLabel(" ").apply {
+        font = font.deriveFont(Font.BOLD, font.size + 1f)
+    }
+    private val answerBody = readOnlyText()
+    private val whyItMattersLabel = JBLabel(" ").apply {
+        font = font.deriveFont(Font.ITALIC)
+        foreground = mutedForeground()
+    }
+    private val answerStatus = JBLabel(" ").apply {
+        foreground = mutedForeground()
+    }
+    private val answerView = buildAnswerView()
+
+    private val bodyCards = CardLayout()
+    private val body = JPanel(bodyCards).apply {
+        add(stepView, VIEW_STEP)
+        add(answerView, VIEW_ANSWER)
+    }
+
     private val followUpField = JBTextField().apply {
         emptyText.setText("Ask about this step...")
+        border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(JBColor.border()),
+            JBUI.Borders.empty(4, 6),
+        )
     }
-    private val answerArea = JTextArea().apply {
-        isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
-        border = JBUI.Borders.empty(6)
-    }
-    private val answerScroll = JBScrollPane(answerArea).apply {
-        preferredSize = java.awt.Dimension(200, 140)
-    }
-    private val statusLabel = JBLabel(" ").apply {
-        foreground = JBColor(Color(120, 120, 120), Color(160, 160, 160))
-    }
+
+    private var currentAnswer: StepAnswer? = null
 
     init {
         border = JBUI.Borders.empty(10)
-        layout = BorderLayout()
         add(buildHeaderPanel(), BorderLayout.NORTH)
-        add(buildCenter(), BorderLayout.CENTER)
+        add(JBScrollPane(body).apply {
+            border = BorderFactory.createEmptyBorder()
+        }, BorderLayout.CENTER)
+        add(buildFollowUpStrip(), BorderLayout.SOUTH)
 
         prevButton.addActionListener { onPrev() }
         nextButton.addActionListener { onNext() }
         stopButton.addActionListener { onStop() }
-        goToCodeLink.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) { onGoToCode() }
-        })
 
         followUpField.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
@@ -90,91 +121,161 @@ class TourActiveCard(
             }
         })
 
-        registerArrowShortcuts()
+        registerShortcuts()
     }
 
     fun setStep(stepIndex: Int, totalSteps: Int, step: FlowStep) {
-        headerLabel.text = "Step ${stepIndex + 1}/$totalSteps · ${step.title}"
+        headerLabel.text = "Step ${stepIndex + 1}/$totalSteps \u00B7 ${step.title}"
         subtitleLabel.text = "${step.filePath}:${step.startLine}-${step.endLine}"
-        clearAnswer()
+        populateStepView(step)
+        currentAnswer = null
+        answerPunch.text = " "
+        answerBody.text = ""
+        whyItMattersLabel.text = " "
+        answerStatus.text = " "
+        showStepView()
     }
 
     fun setAnswer(answer: StepAnswer?, loading: Boolean, errorMessage: String?) {
         when {
             loading -> {
-                statusLabel.text = "Loading..."
-                answerArea.text = ""
+                answerStatus.text = "Loading\u2026"
+                showAnswerView()
             }
             errorMessage != null -> {
-                statusLabel.text = "Error: $errorMessage"
-                answerArea.text = ""
+                answerStatus.text = "Error: $errorMessage"
+                answerPunch.text = " "
+                answerBody.text = ""
+                whyItMattersLabel.text = " "
+                showAnswerView()
             }
             answer != null -> {
-                statusLabel.text = "Done"
-                answerArea.text = buildString {
-                    append(answer.answer.trim())
-                    answer.whyItMatters?.takeIf { it.isNotBlank() }?.let {
-                        append("\n\nWhy it matters: ")
-                        append(it.trim())
-                    }
-                }
-                answerArea.caretPosition = 0
+                currentAnswer = answer
+                val (punch, rest) = splitPunch(answer.answer)
+                answerPunch.text = punch
+                answerBody.text = rest
+                answerBody.caretPosition = 0
+                whyItMattersLabel.text = answer.whyItMatters
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { "Why it matters: ${it.trim()}" }
+                    ?: " "
+                answerStatus.text = "Done"
+                showAnswerView()
             }
             else -> {
-                statusLabel.text = " "
-                answerArea.text = ""
+                // No answer, no error, not loading — stay on step view.
+                currentAnswer = null
+                showStepView()
             }
         }
     }
 
     fun clearAnswer() {
-        statusLabel.text = " "
-        answerArea.text = ""
+        currentAnswer = null
+        answerPunch.text = " "
+        answerBody.text = ""
+        whyItMattersLabel.text = " "
+        answerStatus.text = " "
+        showStepView()
+    }
+
+    private fun showStepView() = bodyCards.show(body, VIEW_STEP)
+    private fun showAnswerView() = bodyCards.show(body, VIEW_ANSWER)
+
+    private fun populateStepView(step: FlowStep) {
+        stepPunch.text = step.whyIncluded.takeIf { it.isNotBlank() } ?: step.title
+        stepDetail.text = step.explanation.trim()
+        stepDetail.caretPosition = 0
+
+        annotationsList.removeAll()
+        val annotations = step.lineAnnotations.filter { it.text.isNotBlank() }
+        annotationsHeader.isVisible = annotations.isNotEmpty()
+        annotationsList.isVisible = annotations.isNotEmpty()
+        annotations.forEach { annotation ->
+            annotationsList.add(buildAnnotationRow(annotation))
+        }
+        annotationsList.revalidate()
+        annotationsList.repaint()
+    }
+
+    private fun buildStepView(): JPanel {
+        val panel = columnPanel()
+        panel.add(stepPunch.alignLeft())
+        panel.add(Box.createVerticalStrut(10))
+        panel.add(stepDetail.alignLeft())
+        panel.add(Box.createVerticalStrut(14))
+        panel.add(annotationsHeader.alignLeft())
+        panel.add(Box.createVerticalStrut(4))
+        panel.add(annotationsList.alignLeft())
+        panel.add(Box.createVerticalGlue())
+        return panel
+    }
+
+    private fun buildAnswerView(): JPanel {
+        val panel = columnPanel()
+        panel.add(backToStepLink.alignLeft())
+        panel.add(Box.createVerticalStrut(10))
+        panel.add(answerPunch.alignLeft())
+        panel.add(Box.createVerticalStrut(10))
+        panel.add(answerBody.alignLeft())
+        panel.add(Box.createVerticalStrut(10))
+        panel.add(whyItMattersLabel.alignLeft())
+        panel.add(Box.createVerticalStrut(6))
+        panel.add(answerStatus.alignLeft())
+        panel.add(Box.createVerticalGlue())
+        return panel
+    }
+
+    private fun buildAnnotationRow(annotation: LineAnnotation): JPanel {
+        val row = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }
+        val lineLabel = JBLabel("L${annotation.startLine}").apply {
+            font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
+            foreground = mutedForeground()
+        }
+        row.add(lineLabel)
+        row.add(JBLabel(annotation.text.trim()))
+        return row
     }
 
     private fun buildHeaderPanel(): JPanel {
-        val panel = JPanel(BorderLayout())
-        val left = JPanel()
-        left.layout = BoxLayout(left, BoxLayout.Y_AXIS)
-        left.add(headerLabel)
-        left.add(subtitleLabel)
-        panel.add(left, BorderLayout.WEST)
-
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
-        right.add(goToCodeLink)
-        panel.add(right, BorderLayout.EAST)
-
-        val navRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4))
-        navRow.add(prevButton)
-        navRow.add(nextButton)
-        navRow.add(stopButton)
-
+        val titleRow = JPanel(BorderLayout()).apply {
+            add(JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                add(headerLabel)
+                add(subtitleLabel)
+            }, BorderLayout.WEST)
+            add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+                add(goToCodeLink)
+            }, BorderLayout.EAST)
+        }
+        val navRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
+            add(prevButton)
+            add(nextButton)
+            add(stopButton)
+        }
         val wrapper = JPanel(BorderLayout())
-        wrapper.add(panel, BorderLayout.NORTH)
+        wrapper.add(titleRow, BorderLayout.NORTH)
         wrapper.add(navRow, BorderLayout.SOUTH)
+        wrapper.border = JBUI.Borders.emptyBottom(6)
         return wrapper
     }
 
-    private fun buildCenter(): JPanel {
-        val center = JPanel(BorderLayout())
-        val followUpPanel = JPanel(BorderLayout())
-        followUpField.border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(JBColor.border()),
-            JBUI.Borders.empty(4, 6),
-        )
-        followUpPanel.add(followUpField, BorderLayout.NORTH)
-        followUpPanel.add(Box.createVerticalStrut(6), BorderLayout.CENTER)
-        center.add(followUpPanel, BorderLayout.NORTH)
-        center.add(answerScroll, BorderLayout.CENTER)
-        center.add(statusLabel, BorderLayout.SOUTH)
-        return center
+    private fun buildFollowUpStrip(): JPanel {
+        val strip = JPanel(BorderLayout())
+        strip.border = JBUI.Borders.emptyTop(8)
+        strip.add(followUpField, BorderLayout.CENTER)
+        return strip
     }
 
-    private fun registerArrowShortcuts() {
+    private fun registerShortcuts() {
         val inputMap = getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
         val actionMap = actionMap
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0), "codeTour.prev")
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0), "codeTour.next")
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "codeTour.backToStep")
         actionMap.put("codeTour.prev", object : javax.swing.AbstractAction() {
             override fun actionPerformed(e: java.awt.event.ActionEvent?) {
                 if (!followUpField.isFocusOwner) onPrev()
@@ -185,5 +286,59 @@ class TourActiveCard(
                 if (!followUpField.isFocusOwner) onNext()
             }
         })
+        actionMap.put("codeTour.backToStep", object : javax.swing.AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                if (!followUpField.isFocusOwner) showStepView()
+            }
+        })
+    }
+
+    private fun columnPanel(): JPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        border = JBUI.Borders.empty(4, 2)
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+
+    private fun readOnlyText(): JTextArea = JTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+        isOpaque = false
+        border = BorderFactory.createEmptyBorder()
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+
+    private fun linkLabel(text: String, onClick: () -> Unit): JBLabel =
+        JBLabel(text).apply {
+            foreground = JBColor(Color(60, 110, 190), Color(130, 170, 225))
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) { onClick() }
+            })
+        }
+
+    private fun mutedForeground(): JBColor =
+        JBColor(Color(120, 120, 120), Color(160, 160, 160))
+
+    private fun splitPunch(text: String): Pair<String, String> {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return " " to ""
+        val breakIndex = listOf(
+            trimmed.indexOf("\n\n"),
+            trimmed.indexOf('\n'),
+            trimmed.indexOf(". ").let { if (it >= 0) it + 1 else -1 },
+        ).filter { it in 1..MAX_PUNCH_LENGTH }.minOrNull()
+        return if (breakIndex != null) {
+            trimmed.substring(0, breakIndex).trim() to trimmed.substring(breakIndex).trim()
+        } else if (trimmed.length <= MAX_PUNCH_LENGTH) {
+            trimmed to ""
+        } else {
+            " " to trimmed
+        }
+    }
+
+    private fun <T : JComponent> T.alignLeft(): T {
+        alignmentX = Component.LEFT_ALIGNMENT
+        return this
     }
 }
