@@ -34,8 +34,9 @@ object PromptContract {
               "symbol": "functionOrClassName",
               "start_line": 1,
               "end_line": 50,
-              "explanation": "1-2 sentence explanation of the overall purpose of this code.",
-              "why_included": "Why this step matters in the flow.",
+              "explanation": "1-2 sentence TL;DR of what this code does. Shown as an editor inlay; keep it tight.",
+              "detailed_explanation": "2-4 short paragraphs going deep: step-by-step behavior, edge cases handled, notable invariants, side effects. Shown in the plugin side panel; this is where reviewers read context that won't fit next to the code.",
+              "why_included": "One sentence: why this step matters in the flow.",
               "step_type": "entrypoint|method|class|module|branch|async_hop|sink",
               "importance": "high|medium|low",
               "uncertain": false,
@@ -138,7 +139,7 @@ object PromptContract {
         7. Populate entry_step_id and terminal_step_ids. entry_step_id must point to the first real step in the path.
         8. Include edges for the important path transitions. Every non-terminal step should usually have at least one outgoing edge unless the path legitimately stops there.
         9. Prefer call-site grounded edges. When possible, populate call_site_* for the exact line or branch that leads to the next step.
-        10. Keep explanation to 1-2 sentences covering the overall purpose. Put deeper reasoning in why_included.
+        10. explanation is the 1-2 sentence TL;DR rendered as an editor inlay — keep it tight. detailed_explanation is the 2-4 paragraph deep dive rendered in the plugin side panel: cover step-by-step behavior, edge cases, invariants, and side effects a reviewer would want. why_included is a single sentence on why this step matters in the flow. Do not repeat content across the three fields.
         11. Mark uncertain: true for steps or edges that are inferred rather than directly traced from code.
         12. Always populate the symbol field when the step targets a specific function, class, or method.
         13. Populate step_type and importance for each step.

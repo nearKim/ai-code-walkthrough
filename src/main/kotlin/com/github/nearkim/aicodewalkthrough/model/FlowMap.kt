@@ -79,6 +79,7 @@ data class FlowStep(
     @SerialName("start_line") val startLine: Int,
     @SerialName("end_line") val endLine: Int,
     val explanation: String,
+    @SerialName("detailed_explanation") val detailedExplanation: String? = null,
     @SerialName("why_included") val whyIncluded: String,
     @SerialName("step_type") val stepType: String? = null,
     val importance: String? = null,

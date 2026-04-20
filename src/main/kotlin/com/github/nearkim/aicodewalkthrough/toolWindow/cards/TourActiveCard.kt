@@ -184,7 +184,9 @@ class TourActiveCard(
 
     private fun populateStepView(step: FlowStep) {
         stepPunch.text = step.whyIncluded.takeIf { it.isNotBlank() } ?: step.title
-        stepDetail.text = step.explanation.trim()
+        stepDetail.text = step.detailedExplanation?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: step.explanation.trim()
         stepDetail.caretPosition = 0
 
         annotationsList.removeAll()
@@ -229,7 +231,7 @@ class TourActiveCard(
     private fun buildAnnotationRow(annotation: LineAnnotation): JPanel {
         val row = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
             alignmentX = Component.LEFT_ALIGNMENT
-            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+            isOpaque = false
         }
         val lineLabel = JBLabel("L${annotation.startLine}").apply {
             font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
@@ -237,6 +239,9 @@ class TourActiveCard(
         }
         row.add(lineLabel)
         row.add(JBLabel(annotation.text.trim()))
+        // Cap vertical growth *after* children are added so preferredSize.height is accurate;
+        // otherwise BoxLayout Y_AXIS stretches the row to fill and hides later rows.
+        row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
         return row
     }
 
