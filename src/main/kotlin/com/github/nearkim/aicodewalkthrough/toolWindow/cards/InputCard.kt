@@ -150,18 +150,35 @@ class InputCard(
 
     private fun buildContent(): JPanel {
         val root = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+
+        errorBanner.alignmentX = LEFT_ALIGNMENT
+        errorBanner.maximumSize = Dimension(Int.MAX_VALUE, errorBanner.preferredSize.height.coerceAtLeast(24))
         root.add(errorBanner)
-        root.add(buildModeRow())
+
+        root.add(buildModeRow().alignLeft())
+        root.add(Box.createVerticalStrut(4))
+
+        helperLabel.alignmentX = LEFT_ALIGNMENT
         root.add(helperLabel)
         root.add(Box.createVerticalStrut(6))
+
         val promptScroll = com.intellij.ui.components.JBScrollPane(promptArea).apply {
-            preferredSize = Dimension(200, 100)
             alignmentX = LEFT_ALIGNMENT
+            preferredSize = Dimension(200, 100)
+            maximumSize = Dimension(Int.MAX_VALUE, 140)
         }
         root.add(promptScroll)
-        root.add(Box.createVerticalStrut(6))
-        root.add(buildProviderRow())
+        root.add(Box.createVerticalStrut(8))
+
+        root.add(buildProviderRow().alignLeft().apply {
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+        })
         return root
+    }
+
+    private fun JPanel.alignLeft(): JPanel {
+        alignmentX = LEFT_ALIGNMENT
+        return this
     }
 
     private fun buildModeRow(): JPanel {
