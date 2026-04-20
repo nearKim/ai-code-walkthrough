@@ -127,10 +127,11 @@ class EditorDecorationController(private val project: Project) : Disposable {
 
         // 5. Next-hop marker.
         // HYPERLINK color reliably tracks each scheme's accent; falls back to default fg.
+        // BOXED draws a rectangle around the text on the line (not a full-width underline).
         val nextAttrs = TextAttributes().apply {
             effectColor = scheme.getAttributes(CodeInsightColors.HYPERLINK_ATTRIBUTES)?.foregroundColor
                 ?: scheme.defaultForeground
-            effectType = EffectType.BOLD_LINE_UNDERSCORE
+            effectType = EffectType.BOXED
         }
         val nextTooltip = nextStep?.let { "Next: ${it.title}" }
         val renderedNextHop = if (
@@ -217,11 +218,27 @@ class EditorDecorationController(private val project: Project) : Disposable {
         endLine: Int,
     ) {
         val line = (annotation.startLine - 1).coerceIn(startLine, endLine)
-        val lineEndOffset = document.getLineEndOffset(line)
-        val renderer = AnnotationRenderer(editor, annotation.text)
-        editor.inlayModel.addAfterLineEndElement(lineEndOffset, false, renderer)?.let {
+        val lineStartOffset = document.getLineStartOffset(line)
+        val indent = leadingIndent(document, line)
+        val renderer = AnnotationRenderer(editor, annotation.text, indent)
+        // showAbove=true places the block element on top of the target line.
+        editor.inlayModel.addBlockElement(lineStartOffset, true, true, 300, renderer)?.let {
             activeInlays.add(it)
         }
+    }
+
+    private fun leadingIndent(document: Document, line: Int): Int {
+        val chars = document.charsSequence
+        val start = document.getLineStartOffset(line)
+        val end = document.getLineEndOffset(line)
+        var count = 0
+        var i = start
+        while (i < end) {
+            val ch = chars[i]
+            if (ch == ' ' || ch == '\t') count++ else break
+            i++
+        }
+        return count
     }
 
     private fun highlightNextSymbolMatches(
@@ -374,14 +391,22 @@ class EditorDecorationController(private val project: Project) : Disposable {
     private class AnnotationRenderer(
         private val editor: Editor,
         private val text: String,
+        private val indentChars: Int,
     ) : EditorCustomElementRenderer {
 
-        private val hPad = JBUI.scale(8)
-        private val display = "  \u2190 $text"
+        private val vPad = JBUI.scale(1)
+        private val lineGap = JBUI.scale(1)
 
-        override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+        private var cachedWidth: Int = -1
+        private var cachedLines: List<String> = emptyList()
+
+        override fun calcWidthInPixels(inlay: Inlay<*>): Int =
+            editor.scrollingModel.visibleArea.width.coerceAtLeast(JBUI.scale(400))
+
+        override fun calcHeightInPixels(inlay: Inlay<*>): Int {
             val fm = editor.contentComponent.getFontMetrics(editor.colorsScheme.getFont(EditorFontType.ITALIC))
-            return fm.stringWidth(display) + hPad
+            val lines = layoutLines(calcWidthInPixels(inlay), fm).size.coerceAtLeast(1)
+            return vPad * 2 + lines * fm.height + (lines - 1) * lineGap
         }
 
         override fun paint(inlay: Inlay<*>, g: Graphics, region: Rectangle, textAttributes: TextAttributes) {
@@ -393,10 +418,29 @@ class EditorDecorationController(private val project: Project) : Disposable {
                 val fm = editor.contentComponent.getFontMetrics(italic)
                 g2.font = italic
                 g2.color = mutedForeground(scheme)
-                g2.drawString(display, region.x, region.y + fm.ascent)
+
+                val x = region.x + indentPx(fm)
+                var y = region.y + vPad + fm.ascent
+                for (line in layoutLines(region.width, fm)) {
+                    g2.drawString(line, x, y)
+                    y += fm.height + lineGap
+                }
             } finally {
                 g2.dispose()
             }
+        }
+
+        // Align to the target line's indentation so the hint sits visually above its code.
+        private fun indentPx(fm: FontMetrics): Int =
+            fm.charWidth(' ') * indentChars
+
+        private fun layoutLines(width: Int, fm: FontMetrics): List<String> {
+            if (width == cachedWidth && cachedLines.isNotEmpty()) return cachedLines
+            val available = (width - indentPx(fm)).coerceAtLeast(JBUI.scale(160))
+            val wrapped = wrapText(fm, text, available)
+            cachedWidth = width
+            cachedLines = wrapped
+            return wrapped
         }
     }
 
