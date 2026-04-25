@@ -318,11 +318,14 @@ class StepValidator(private val projectBasePath: String) {
 
     private fun readFileLines(relativePath: String): List<String>? {
         val resolvedPath = Path.of(projectBasePath).resolve(relativePath).normalize()
-        return fileCache.getOrPut(resolvedPath) {
-            if (!Files.exists(resolvedPath)) {
-                return null
-            }
-            Files.readAllLines(resolvedPath)
+        fileCache[resolvedPath]?.let { return it }
+        if (!Files.isRegularFile(resolvedPath)) {
+            return null
+        }
+        return try {
+            Files.readAllLines(resolvedPath).also { fileCache[resolvedPath] = it }
+        } catch (_: java.io.IOException) {
+            null
         }
     }
 
