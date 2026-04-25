@@ -46,6 +46,14 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
             add("--output-format"); add("stream-json")
             add("--verbose")
             add("--system-prompt"); add(PromptContract.buildSystemPrompt(promptKind, state.enableMcp))
+            val model = state.claudeModel.trim()
+            if (model.isNotEmpty()) {
+                add("--model"); add(model)
+            }
+            val effort = state.claudeEffort.trim()
+            if (effort.isNotEmpty()) {
+                add("--effort"); add(effort)
+            }
             val mcpPath = state.mcpConfigPath.trim()
             if (mcpPath.isNotEmpty()) {
                 add("--mcp-config"); add(mcpPath)

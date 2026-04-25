@@ -40,16 +40,25 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
 
         val outputFile = Files.createTempFile("codex-last-message", ".json").toFile()
         val wrappedPrompt = buildPrompt(prompt, promptKind)
-        val command = listOf(
-            settings.state.codexCliPath,
-            "exec",
-            "--json",
-            "--sandbox", "read-only",
-            "--skip-git-repo-check",
-            "-C", basePath,
-            "-o", outputFile.absolutePath,
-            wrappedPrompt,
-        )
+        val state = settings.state
+        val command = buildList {
+            add(state.codexCliPath)
+            add("exec")
+            add("--json")
+            add("--sandbox"); add("read-only")
+            add("--skip-git-repo-check")
+            add("-C"); add(basePath)
+            val model = state.codexModel.trim()
+            if (model.isNotEmpty()) {
+                add("-m"); add(model)
+            }
+            val reasoningEffort = state.codexReasoningEffort.trim()
+            if (reasoningEffort.isNotEmpty()) {
+                add("-c"); add("model_reasoning_effort=\"$reasoningEffort\"")
+            }
+            add("-o"); add(outputFile.absolutePath)
+            add(wrappedPrompt)
+        }
 
         val processBuilder = ProcessBuilder(command)
             .directory(File(basePath))
