@@ -21,6 +21,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
     private val settings get() = project.service<CodeTourSettings>()
     private val json = Json { ignoreUnknownKeys = true }
+    private val claudeBin get() = CliPathResolver.resolve(settings.state.claudePath)
     override val provider: AiProvider = AiProvider.CLAUDE_CLI
     override val capabilities: ProviderCapabilities = ProviderCapabilities(
         supportsRepoGroundedWalkthrough = true,
@@ -41,7 +42,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
         val state = settings.state
         val command = buildList {
-            add(state.claudePath)
+            add(claudeBin)
             add("--print")
             add("--output-format"); add("stream-json")
             add("--verbose")
@@ -214,7 +215,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
 
     override suspend fun checkAvailability(): ProviderStatus = withContext(Dispatchers.IO) {
         try {
-            val authResult = runQuickCommand(listOf(settings.state.claudePath, "auth", "status", "--text"))
+            val authResult = runQuickCommand(listOf(claudeBin, "auth", "status", "--text"))
             val authDetail = extractCliErrorDetail(authResult.stdout, authResult.stderr)
             when {
                 authResult.exitCode == 0 -> {
@@ -226,7 +227,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
                 }
             }
 
-            val versionResult = runQuickCommand(listOf(settings.state.claudePath, "--version"))
+            val versionResult = runQuickCommand(listOf(claudeBin, "--version"))
             if (versionResult.exitCode == 0) {
                 ProviderStatus(provider, false, "Claude CLI is installed but not authenticated. Run claude auth login.")
             } else {

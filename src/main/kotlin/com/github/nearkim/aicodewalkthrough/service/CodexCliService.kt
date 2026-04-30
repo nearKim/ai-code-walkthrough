@@ -21,6 +21,7 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
 
     private val settings get() = project.service<CodeTourSettings>()
     private val json = Json { ignoreUnknownKeys = true }
+    private val codexBin get() = CliPathResolver.resolve(settings.state.codexCliPath)
     override val provider: AiProvider = AiProvider.CODEX_CLI
     override val capabilities: ProviderCapabilities = ProviderCapabilities(
         supportsRepoGroundedWalkthrough = true,
@@ -110,7 +111,7 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
 
     override suspend fun checkAvailability(): ProviderStatus = withContext(Dispatchers.IO) {
         try {
-            val process = ProcessBuilder(settings.state.codexCliPath, "--version")
+            val process = ProcessBuilder(codexBin, "--version")
                 .redirectInput(ProcessBuilder.Redirect.from(File("/dev/null")))
                 .start()
             val output = process.inputStream.bufferedReader().readText().trim()
