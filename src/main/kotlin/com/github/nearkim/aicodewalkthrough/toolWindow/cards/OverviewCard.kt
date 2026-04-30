@@ -30,6 +30,7 @@ class OverviewCard(
     private val onStartTour: () -> Unit,
     private val onPreviewStep: (FlowStep) -> Unit,
     private val onCopyMarkdown: () -> Unit,
+    private val onNewQuestion: () -> Unit,
 ) : JPanel(BorderLayout()) {
 
     private val questionLabel = JBLabel(" ").apply {
@@ -59,6 +60,7 @@ class OverviewCard(
     private val startTourButton = JButton("Start tour").apply { isDefaultCapable = true }
     private val previewButton = JButton("Preview selected")
     private val copyButton = JButton("Copy as Markdown")
+    private val newQuestionButton = JButton("New question")
 
     init {
         border = JBUI.Borders.empty(6, 8)
@@ -74,6 +76,7 @@ class OverviewCard(
         actionRow.add(startTourButton)
         actionRow.add(previewButton)
         actionRow.add(copyButton)
+        actionRow.add(newQuestionButton)
         add(actionRow, BorderLayout.SOUTH)
 
         startTourButton.addActionListener { onStartTour() }
@@ -82,6 +85,7 @@ class OverviewCard(
             onPreviewStep(selected)
         }
         copyButton.addActionListener { onCopyMarkdown() }
+        newQuestionButton.addActionListener { onNewQuestion() }
         toggleLink.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 summaryExpanded = !summaryExpanded

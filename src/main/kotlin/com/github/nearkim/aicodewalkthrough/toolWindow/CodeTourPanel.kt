@@ -40,6 +40,7 @@ class CodeTourPanel(
         onStartTour = { session.startTour() },
         onPreviewStep = { session.previewStep(it) },
         onCopyMarkdown = ::copyMarkdown,
+        onNewQuestion = { session.newQuestion() },
     )
     private val tour = TourActiveCard(
         onPrev = { session.prevStep() },
