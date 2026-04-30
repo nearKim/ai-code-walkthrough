@@ -180,6 +180,11 @@ class TourSessionService(private val project: Project, private val scope: Corout
         transitionTo(TourState.OVERVIEW)
     }
 
+    fun newQuestion() {
+        project.service<EditorDecorationController>().clearDecorations()
+        transitionTo(TourState.INPUT)
+    }
+
     private fun navigateToCurrentStep() {
         val steps = currentFlowMap?.steps ?: return
         if (currentStepIndex < 0 || currentStepIndex >= steps.size) return

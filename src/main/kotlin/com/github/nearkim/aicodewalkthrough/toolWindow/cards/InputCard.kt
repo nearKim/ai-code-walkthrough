@@ -178,25 +178,20 @@ class InputCard(
             border = JBUI.Borders.emptyBottom(6)
         }
         AnalysisMode.entries.forEach { mode ->
-            val card = buildModeCard(mode)
+            val (card, cell) = buildModeCell(mode)
             modeCards[mode] = card
-            row.add(card)
+            row.add(cell)
         }
         return row
     }
 
-    private fun buildModeCard(mode: AnalysisMode): JPanel {
+    private fun buildModeCell(mode: AnalysisMode): Pair<JPanel, JPanel> {
         val titleLabel = JBLabel(mode.displayName).apply {
             font = font.deriveFont(Font.BOLD)
         }
         val descLabel = JBLabel("<html>${mode.description}</html>").apply {
             foreground = JBColor(Color(100, 100, 100), Color(150, 150, 150))
             font = font.deriveFont(font.size - 1f)
-        }
-        val exampleLabel = JBLabel("<html>${mode.example}</html>").apply {
-            foreground = JBColor(Color(130, 130, 130), Color(120, 120, 120))
-            font = font.deriveFont(Font.ITALIC, font.size - 1.5f)
-            border = JBUI.Borders.emptyTop(3)
         }
         val card = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -208,7 +203,6 @@ class InputCard(
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             add(titleLabel)
             add(descLabel)
-            add(exampleLabel)
             addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent) {
                     selectedMode = mode
@@ -216,7 +210,18 @@ class InputCard(
                 }
             })
         }
-        return card
+        val exampleLabel = JBLabel("<html>${mode.example}</html>").apply {
+            foreground = JBColor(Color(130, 130, 130), Color(120, 120, 120))
+            font = font.deriveFont(Font.ITALIC, font.size - 1.5f)
+            border = JBUI.Borders.emptyTop(3)
+        }
+        val cell = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(card)
+            add(exampleLabel)
+        }
+        return card to cell
     }
 
     private fun updateModeSelection() {
