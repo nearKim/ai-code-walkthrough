@@ -5,10 +5,15 @@ import kotlinx.serialization.Serializable
 enum class AnalysisMode(
     val id: String,
     val displayName: String,
+    val description: String,
+    val example: String,
 ) {
-    UNDERSTAND("understand", "Understand"),
-    REVIEW("review", "Review"),
-    TRACE("trace", "Trace"),
+    UNDERSTAND("understand", "Understand", "Explain what the code does and how pieces connect",
+        "e.g. \"How does the caching layer work?\""),
+    REVIEW("review", "Review", "Find bugs, regressions, and actionable improvements",
+        "e.g. \"Is this PR safe to merge?\""),
+    TRACE("trace", "Trace", "Follow a concrete execution path through callers and callees",
+        "e.g. \"What happens when a request hits /api/login?\""),
     ;
 
     companion object {

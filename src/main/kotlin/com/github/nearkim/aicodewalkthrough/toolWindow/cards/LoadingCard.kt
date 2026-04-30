@@ -51,7 +51,7 @@ class LoadingCard(
     }
 
     init {
-        border = JBUI.Borders.empty(12)
+        border = JBUI.Borders.empty(6, 8)
 
         add(buildTopBar(), BorderLayout.NORTH)
         add(logScroll, BorderLayout.CENTER)

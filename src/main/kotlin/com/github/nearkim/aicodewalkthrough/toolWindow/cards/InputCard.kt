@@ -16,20 +16,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Font
+import java.awt.GridLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
-import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.ButtonGroup
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JPanel
-import javax.swing.JToggleButton
-import javax.swing.SwingConstants
-import javax.swing.UIManager
 
 class InputCard(
     project: Project,
@@ -47,19 +47,13 @@ class InputCard(
         isVisible = false
     }
 
-    private val modeButtons = mutableMapOf<AnalysisMode, JToggleButton>()
-    private val helperLabel = JBLabel().apply {
-        foreground = JBColor(Color(120, 120, 120), Color(160, 160, 160))
-        border = JBUI.Borders.empty(2, 4, 6, 4)
-    }
+    private val modeCards = mutableMapOf<AnalysisMode, JPanel>()
 
-    private val promptArea = JBTextArea(4, 40).apply {
+    private val promptArea = JBTextArea().apply {
         lineWrap = true
         wrapStyleWord = true
-        border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(JBColor.border()),
-            JBUI.Borders.empty(6),
-        )
+        emptyText.setText("Ask about this codebase...")
+        margin = JBUI.insets(8, 10)
     }
 
     private val providerCombo = JComboBox(arrayOf(AiProvider.CLAUDE_CLI, AiProvider.CODEX_CLI))
@@ -77,7 +71,7 @@ class InputCard(
     private var selectedMode = AnalysisMode.UNDERSTAND
 
     init {
-        border = JBUI.Borders.empty(10)
+        border = JBUI.Borders.empty(6, 8)
         add(buildContent(), BorderLayout.CENTER)
 
         promptArea.addKeyListener(object : KeyAdapter() {
@@ -118,7 +112,7 @@ class InputCard(
 
         providerCombo.addActionListener { refreshProviderStatus() }
         refreshProviderStatus()
-        updateHelper()
+        updateModeSelection()
     }
 
     fun showError(message: String) {
@@ -149,55 +143,101 @@ class InputCard(
     }
 
     private fun buildContent(): JPanel {
-        val root = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+        val root = JPanel(BorderLayout())
 
-        errorBanner.alignmentX = LEFT_ALIGNMENT
-        errorBanner.maximumSize = Dimension(Int.MAX_VALUE, errorBanner.preferredSize.height.coerceAtLeast(24))
-        root.add(errorBanner)
-
-        root.add(buildModeRow().alignLeft())
-        root.add(Box.createVerticalStrut(4))
-
-        helperLabel.alignmentX = LEFT_ALIGNMENT
-        root.add(helperLabel)
-        root.add(Box.createVerticalStrut(6))
+        val topPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            errorBanner.alignmentX = LEFT_ALIGNMENT
+            errorBanner.maximumSize = Dimension(Int.MAX_VALUE, errorBanner.preferredSize.height.coerceAtLeast(24))
+            add(errorBanner)
+            val modeSelector = buildModeSelector().apply { alignmentX = LEFT_ALIGNMENT }
+            add(modeSelector)
+        }
+        root.add(topPanel, BorderLayout.NORTH)
 
         val promptScroll = com.intellij.ui.components.JBScrollPane(promptArea).apply {
-            alignmentX = LEFT_ALIGNMENT
-            preferredSize = Dimension(200, 100)
-            maximumSize = Dimension(Int.MAX_VALUE, 140)
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.border()),
+                BorderFactory.createEmptyBorder(),
+            )
+            minimumSize = Dimension(0, 80)
         }
-        root.add(promptScroll)
-        root.add(Box.createVerticalStrut(8))
+        root.add(promptScroll, BorderLayout.CENTER)
 
-        root.add(buildProviderRow().alignLeft().apply {
-            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
-        })
+        val bottomPanel = buildProviderRow().apply {
+            border = JBUI.Borders.emptyTop(6)
+        }
+        root.add(bottomPanel, BorderLayout.SOUTH)
+
         return root
     }
 
-    private fun JPanel.alignLeft(): JPanel {
-        alignmentX = LEFT_ALIGNMENT
-        return this
-    }
-
-    private fun buildModeRow(): JPanel {
-        val row = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        val group = ButtonGroup()
+    private fun buildModeSelector(): JPanel {
+        val row = JPanel(GridLayout(1, AnalysisMode.entries.size, 6, 0)).apply {
+            border = JBUI.Borders.emptyBottom(6)
+        }
         AnalysisMode.entries.forEach { mode ->
-            val btn = JToggleButton(mode.displayName).apply {
-                horizontalAlignment = SwingConstants.CENTER
-                addActionListener {
-                    selectedMode = mode
-                    updateHelper()
-                }
-            }
-            if (mode == selectedMode) btn.isSelected = true
-            group.add(btn)
-            row.add(btn)
-            modeButtons[mode] = btn
+            val card = buildModeCard(mode)
+            modeCards[mode] = card
+            row.add(card)
         }
         return row
+    }
+
+    private fun buildModeCard(mode: AnalysisMode): JPanel {
+        val titleLabel = JBLabel(mode.displayName).apply {
+            font = font.deriveFont(Font.BOLD)
+        }
+        val descLabel = JBLabel("<html>${mode.description}</html>").apply {
+            foreground = JBColor(Color(100, 100, 100), Color(150, 150, 150))
+            font = font.deriveFont(font.size - 1f)
+        }
+        val exampleLabel = JBLabel("<html>${mode.example}</html>").apply {
+            foreground = JBColor(Color(130, 130, 130), Color(120, 120, 120))
+            font = font.deriveFont(Font.ITALIC, font.size - 1.5f)
+            border = JBUI.Borders.emptyTop(3)
+        }
+        val card = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.border()),
+                JBUI.Borders.empty(8, 10),
+            )
+            isOpaque = true
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            add(titleLabel)
+            add(descLabel)
+            add(exampleLabel)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    selectedMode = mode
+                    updateModeSelection()
+                }
+            })
+        }
+        return card
+    }
+
+    private fun updateModeSelection() {
+        val selectedBorder = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(JBColor(Color(70, 130, 210), Color(90, 150, 230)), 2),
+            JBUI.Borders.empty(7, 9),
+        )
+        val defaultBorder = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(JBColor.border()),
+            JBUI.Borders.empty(8, 10),
+        )
+        val selectedBg = JBColor(Color(235, 244, 255), Color(40, 55, 75))
+        modeCards.forEach { (mode, card) ->
+            if (mode == selectedMode) {
+                card.border = selectedBorder
+                card.background = selectedBg
+            } else {
+                card.border = defaultBorder
+                card.background = JBColor.PanelBackground
+            }
+        }
     }
 
     private fun buildProviderRow(): JPanel {
@@ -211,14 +251,6 @@ class InputCard(
         rightGroup.add(submitButton)
         row.add(rightGroup, BorderLayout.EAST)
         return row
-    }
-
-    private fun updateHelper() {
-        helperLabel.text = when (selectedMode) {
-            AnalysisMode.UNDERSTAND -> "Explain what the code does and how the main pieces fit together."
-            AnalysisMode.REVIEW -> "Focus on correctness, regressions, and actionable review notes."
-            AnalysisMode.TRACE -> "Trace callers and callees along a concrete execution path."
-        }
     }
 
     private fun refreshProviderStatus() {

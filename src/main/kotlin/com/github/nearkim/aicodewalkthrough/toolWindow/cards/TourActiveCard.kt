@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.toolwindow.cards
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -25,9 +26,12 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JEditorPane
 import javax.swing.JPanel
 import javax.swing.JTextArea
 import javax.swing.KeyStroke
+import javax.swing.text.html.HTMLEditorKit
+import javax.swing.text.html.StyleSheet
 
 private const val VIEW_STEP = "STEP"
 private const val VIEW_ANSWER = "ANSWER"
@@ -70,13 +74,16 @@ class TourActiveCard(
     private val answerPunch = JBLabel(" ").apply {
         font = font.deriveFont(Font.BOLD, font.size + 1f)
     }
-    private val answerBody = readOnlyText()
+    private val answerBody = createHtmlPane()
     private val whyItMattersLabel = JBLabel(" ").apply {
         font = font.deriveFont(Font.ITALIC)
         foreground = mutedForeground()
     }
-    private val answerStatus = JBLabel(" ").apply {
-        foreground = mutedForeground()
+    private val loadingPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+        isOpaque = false
+        add(JBLabel(AnimatedIcon.Default.INSTANCE))
+        add(JBLabel("Thinking\u2026").apply { foreground = mutedForeground() })
+        isVisible = false
     }
     private val answerView = buildAnswerView()
 
@@ -97,7 +104,7 @@ class TourActiveCard(
     private var currentAnswer: StepAnswer? = null
 
     init {
-        border = JBUI.Borders.empty(10)
+        border = JBUI.Borders.empty(6, 8)
         add(buildHeaderPanel(), BorderLayout.NORTH)
         add(JBScrollPane(body).apply {
             border = BorderFactory.createEmptyBorder()
@@ -132,38 +139,41 @@ class TourActiveCard(
         answerPunch.text = " "
         answerBody.text = ""
         whyItMattersLabel.text = " "
-        answerStatus.text = " "
+        loadingPanel.isVisible = false
         showStepView()
     }
 
     fun setAnswer(answer: StepAnswer?, loading: Boolean, errorMessage: String?) {
         when {
             loading -> {
-                answerStatus.text = "Loading\u2026"
-                showAnswerView()
-            }
-            errorMessage != null -> {
-                answerStatus.text = "Error: $errorMessage"
+                loadingPanel.isVisible = true
                 answerPunch.text = " "
                 answerBody.text = ""
                 whyItMattersLabel.text = " "
                 showAnswerView()
             }
+            errorMessage != null -> {
+                loadingPanel.isVisible = false
+                answerPunch.text = " "
+                answerBody.text = renderHtml("<p style='color:#cc4444;'>Error: ${escapeHtml(errorMessage)}</p>")
+                whyItMattersLabel.text = " "
+                showAnswerView()
+            }
             answer != null -> {
+                loadingPanel.isVisible = false
                 currentAnswer = answer
                 val (punch, rest) = splitPunch(answer.answer)
                 answerPunch.text = punch
-                answerBody.text = rest
+                answerBody.text = renderHtml(markdownToHtml(rest))
                 answerBody.caretPosition = 0
                 whyItMattersLabel.text = answer.whyItMatters
                     ?.takeIf { it.isNotBlank() }
                     ?.let { "Why it matters: ${it.trim()}" }
                     ?: " "
-                answerStatus.text = "Done"
                 showAnswerView()
             }
             else -> {
-                // No answer, no error, not loading — stay on step view.
+                loadingPanel.isVisible = false
                 currentAnswer = null
                 showStepView()
             }
@@ -175,7 +185,7 @@ class TourActiveCard(
         answerPunch.text = " "
         answerBody.text = ""
         whyItMattersLabel.text = " "
-        answerStatus.text = " "
+        loadingPanel.isVisible = false
         showStepView()
     }
 
@@ -203,11 +213,11 @@ class TourActiveCard(
     private fun buildStepView(): JPanel {
         val panel = columnPanel()
         panel.add(stepPunch.alignLeft())
-        panel.add(Box.createVerticalStrut(10))
+        panel.add(Box.createVerticalStrut(6))
         panel.add(stepDetail.alignLeft())
-        panel.add(Box.createVerticalStrut(14))
+        panel.add(Box.createVerticalStrut(8))
         panel.add(annotationsHeader.alignLeft())
-        panel.add(Box.createVerticalStrut(4))
+        panel.add(Box.createVerticalStrut(2))
         panel.add(annotationsList.alignLeft())
         panel.add(Box.createVerticalGlue())
         return panel
@@ -216,14 +226,13 @@ class TourActiveCard(
     private fun buildAnswerView(): JPanel {
         val panel = columnPanel()
         panel.add(backToStepLink.alignLeft())
-        panel.add(Box.createVerticalStrut(10))
-        panel.add(answerPunch.alignLeft())
-        panel.add(Box.createVerticalStrut(10))
-        panel.add(answerBody.alignLeft())
-        panel.add(Box.createVerticalStrut(10))
-        panel.add(whyItMattersLabel.alignLeft())
         panel.add(Box.createVerticalStrut(6))
-        panel.add(answerStatus.alignLeft())
+        panel.add(loadingPanel.alignLeft())
+        panel.add(answerPunch.alignLeft())
+        panel.add(Box.createVerticalStrut(6))
+        panel.add(answerBody.alignLeft())
+        panel.add(Box.createVerticalStrut(6))
+        panel.add(whyItMattersLabel.alignLeft())
         panel.add(Box.createVerticalGlue())
         return panel
     }
@@ -256,7 +265,7 @@ class TourActiveCard(
                 add(goToCodeLink)
             }, BorderLayout.EAST)
         }
-        val navRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
+        val navRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             add(prevButton)
             add(nextButton)
             add(stopButton)
@@ -264,13 +273,13 @@ class TourActiveCard(
         val wrapper = JPanel(BorderLayout())
         wrapper.add(titleRow, BorderLayout.NORTH)
         wrapper.add(navRow, BorderLayout.SOUTH)
-        wrapper.border = JBUI.Borders.emptyBottom(6)
+        wrapper.border = JBUI.Borders.emptyBottom(4)
         return wrapper
     }
 
     private fun buildFollowUpStrip(): JPanel {
         val strip = JPanel(BorderLayout())
-        strip.border = JBUI.Borders.emptyTop(8)
+        strip.border = JBUI.Borders.emptyTop(4)
         strip.add(followUpField, BorderLayout.CENTER)
         return strip
     }
@@ -345,5 +354,95 @@ class TourActiveCard(
     private fun <T : JComponent> T.alignLeft(): T {
         alignmentX = Component.LEFT_ALIGNMENT
         return this
+    }
+
+    private fun createHtmlPane(): JEditorPane = JEditorPane().apply {
+        contentType = "text/html"
+        isEditable = false
+        isOpaque = false
+        border = BorderFactory.createEmptyBorder()
+        alignmentX = Component.LEFT_ALIGNMENT
+        val kit = HTMLEditorKit()
+        val ss = StyleSheet()
+        val fg = JBColor.foreground()
+        val fgHex = String.format("#%02x%02x%02x", fg.red, fg.green, fg.blue)
+        val codeBg = JBColor(Color(245, 245, 245), Color(45, 45, 45))
+        val codeBgHex = String.format("#%02x%02x%02x", codeBg.red, codeBg.green, codeBg.blue)
+        ss.addRule("body { font-family: sans-serif; font-size: 12px; color: $fgHex; margin: 0; padding: 0; }")
+        ss.addRule("code { font-family: monospace; background: $codeBgHex; padding: 1px 4px; border-radius: 3px; }")
+        ss.addRule("pre { font-family: monospace; background: $codeBgHex; padding: 8px; border-radius: 4px; overflow-x: auto; }")
+        ss.addRule("ul, ol { margin: 4px 0 4px 16px; padding: 0; }")
+        ss.addRule("li { margin: 2px 0; }")
+        ss.addRule("p { margin: 4px 0; }")
+        kit.styleSheet = ss
+        editorKit = kit
+    }
+
+    private fun renderHtml(bodyHtml: String): String =
+        "<html><body>$bodyHtml</body></html>"
+
+    private fun escapeHtml(text: String): String =
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    private fun markdownToHtml(markdown: String): String {
+        if (markdown.isBlank()) return ""
+        val lines = markdown.lines()
+        val sb = StringBuilder()
+        var inCodeBlock = false
+        var inList = false
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
+            if (line.trimStart().startsWith("```")) {
+                if (inCodeBlock) {
+                    sb.append("</pre>")
+                    inCodeBlock = false
+                } else {
+                    if (inList) { sb.append("</ul>"); inList = false }
+                    sb.append("<pre>")
+                    inCodeBlock = true
+                }
+                i++
+                continue
+            }
+            if (inCodeBlock) {
+                sb.append(escapeHtml(line)).append("\n")
+                i++
+                continue
+            }
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                if (inList) { sb.append("</ul>"); inList = false }
+                i++
+                continue
+            }
+            if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+                if (!inList) { sb.append("<ul>"); inList = true }
+                sb.append("<li>").append(inlineFormat(escapeHtml(trimmed.substring(2)))).append("</li>")
+                i++
+                continue
+            }
+            val numberedMatch = Regex("^(\\d+)\\.\\s+(.*)").find(trimmed)
+            if (numberedMatch != null) {
+                if (!inList) { sb.append("<ul>"); inList = true }
+                sb.append("<li>").append(inlineFormat(escapeHtml(numberedMatch.groupValues[2]))).append("</li>")
+                i++
+                continue
+            }
+            if (inList) { sb.append("</ul>"); inList = false }
+            sb.append("<p>").append(inlineFormat(escapeHtml(trimmed))).append("</p>")
+            i++
+        }
+        if (inCodeBlock) sb.append("</pre>")
+        if (inList) sb.append("</ul>")
+        return sb.toString()
+    }
+
+    private fun inlineFormat(escaped: String): String {
+        var result = escaped
+        result = Regex("`([^`]+)`").replace(result) { "<code>${it.groupValues[1]}</code>" }
+        result = Regex("\\*\\*([^*]+)\\*\\*").replace(result) { "<b>${it.groupValues[1]}</b>" }
+        result = Regex("\\*([^*]+)\\*").replace(result) { "<i>${it.groupValues[1]}</i>" }
+        return result
     }
 }

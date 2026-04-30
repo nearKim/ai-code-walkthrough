@@ -104,7 +104,7 @@ class CodeTourPanel(
             }
             TourState.OVERVIEW -> {
                 loading.stopLoading()
-                overview.setFlowMap(session.currentFlowMap, settings.state.provider.displayName)
+                overview.setFlowMap(session.currentFlowMap, settings.state.provider.displayName, session.currentQuestion)
                 cardLayout.show(cards, CARD_OVERVIEW)
             }
             TourState.TOUR_ACTIVE -> {
