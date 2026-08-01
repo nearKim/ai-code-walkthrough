@@ -1,6 +1,8 @@
 package com.github.nearkim.aicodewalkthrough.settings
 
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
+import com.github.nearkim.aicodewalkthrough.model.ProviderModelCatalog
+import com.github.nearkim.aicodewalkthrough.model.ProviderModelOption
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
@@ -18,10 +20,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
 
     private lateinit var providerCombo: JComboBox<AiProvider>
     private lateinit var codexCliPathField: JBTextField
-    private lateinit var codexModelField: JBTextField
+    private lateinit var codexModelCombo: JComboBox<ProviderModelOption>
     private lateinit var codexReasoningCombo: JComboBox<String>
     private lateinit var claudePathField: JBTextField
-    private lateinit var claudeModelField: JBTextField
+    private lateinit var claudeModelCombo: JComboBox<ProviderModelOption>
     private lateinit var claudeEffortCombo: JComboBox<String>
     private lateinit var requestTimeoutSpinner: JSpinner
     private lateinit var maxStepsSpinner: JSpinner
@@ -34,17 +36,15 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
     override fun createComponent(): JComponent {
         providerCombo = JComboBox(AiProvider.entries.toTypedArray())
         codexCliPathField = JBTextField()
-        codexModelField = JBTextField().apply {
-            emptyText.setText("Leave blank to use Codex CLI default")
-            toolTipText = "Codex model id, e.g. gpt-5.5, gpt-5-codex, o3"
+        codexModelCombo = JComboBox(ProviderModelCatalog.codexModels.toTypedArray()).apply {
+            toolTipText = "Grounded walkthroughs use the GPT-5.6 Sol model."
         }
-        codexReasoningCombo = JComboBox(CODEX_REASONING_OPTIONS).apply {
-            toolTipText = "Maps to -c model_reasoning_effort=<value>; blank = use Codex default"
+        codexReasoningCombo = JComboBox(ProviderModelCatalog.codexReasoningEfforts.toTypedArray()).apply {
+            toolTipText = "Ultra uses maximum reasoning with subagent delegation; Max uses maximum single-agent reasoning."
         }
         claudePathField = JBTextField()
-        claudeModelField = JBTextField().apply {
-            emptyText.setText("Leave blank to use Claude CLI default")
-            toolTipText = "Claude model id or alias, e.g. claude-opus-4-7, opus, sonnet"
+        claudeModelCombo = JComboBox(ProviderModelCatalog.claudeModels.toTypedArray()).apply {
+            toolTipText = "Claude Code resolves the fable and opus aliases to the supported Claude 5 models."
         }
         claudeEffortCombo = JComboBox(CLAUDE_EFFORT_OPTIONS).apply {
             toolTipText = "Claude --effort level; blank = use CLI default. 'max' = maximum thinking."
@@ -70,12 +70,12 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
             .addLabeledComponent("Max steps:", maxStepsSpinner)
             .addSeparator()
             .addLabeledComponent("Codex CLI path:", codexCliPathField)
-            .addLabeledComponent("Codex model:", codexModelField)
+            .addLabeledComponent("Codex model:", codexModelCombo)
             .addLabeledComponent("Codex reasoning effort:", codexReasoningCombo)
             .addComponent(JBLabel("Codex CLI uses your local Codex login or API-key setup and supports grounded repo walkthroughs."))
             .addSeparator()
             .addLabeledComponent("Claude CLI path:", claudePathField)
-            .addLabeledComponent("Claude model:", claudeModelField)
+            .addLabeledComponent("Claude model:", claudeModelCombo)
             .addLabeledComponent("Claude effort (thinking):", claudeEffortCombo)
             .addComponent(enableMcpCheckBox)
             .addLabeledComponent("MCP config path (optional):", mcpConfigPathField)
@@ -91,10 +91,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         val settings = project.service<CodeTourSettings>().state
         return providerCombo.selectedItem != settings.provider ||
             codexCliPathField.text != settings.codexCliPath ||
-            codexModelField.text != settings.codexModel ||
+            (codexModelCombo.selectedItem as ProviderModelOption).id != settings.codexModel ||
             (codexReasoningCombo.selectedItem as String) != settings.codexReasoningEffort ||
             claudePathField.text != settings.claudePath ||
-            claudeModelField.text != settings.claudeModel ||
+            (claudeModelCombo.selectedItem as ProviderModelOption).id != settings.claudeModel ||
             (claudeEffortCombo.selectedItem as String) != settings.claudeEffort ||
             requestTimeoutSpinner.value as Int != settings.requestTimeout ||
             maxStepsSpinner.value as Int != settings.maxSteps ||
@@ -108,10 +108,10 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
             CodeTourSettings.State(
                 providerId = (providerCombo.selectedItem as AiProvider).id,
                 codexCliPath = codexCliPathField.text.trim(),
-                codexModel = codexModelField.text.trim(),
+                codexModel = (codexModelCombo.selectedItem as ProviderModelOption).id,
                 codexReasoningEffort = (codexReasoningCombo.selectedItem as String).trim(),
                 claudePath = claudePathField.text.trim(),
-                claudeModel = claudeModelField.text.trim(),
+                claudeModel = (claudeModelCombo.selectedItem as ProviderModelOption).id,
                 claudeEffort = (claudeEffortCombo.selectedItem as String).trim(),
                 requestTimeout = requestTimeoutSpinner.value as Int,
                 maxSteps = maxStepsSpinner.value as Int,
@@ -125,11 +125,11 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         val settings = project.service<CodeTourSettings>().state
         providerCombo.selectedItem = settings.provider
         codexCliPathField.text = settings.codexCliPath
-        codexModelField.text = settings.codexModel
-        codexReasoningCombo.selectedItem = settings.codexReasoningEffort
-            .takeIf { it in CODEX_REASONING_OPTIONS } ?: ""
+        codexModelCombo.selectedItem = ProviderModelCatalog.codexOption(settings.codexModel)
+        codexReasoningCombo.selectedItem =
+            ProviderModelCatalog.normalizeCodexReasoningEffort(settings.codexReasoningEffort)
         claudePathField.text = settings.claudePath
-        claudeModelField.text = settings.claudeModel
+        claudeModelCombo.selectedItem = ProviderModelCatalog.claudeOption(settings.claudeModel)
         claudeEffortCombo.selectedItem = settings.claudeEffort
             .takeIf { it in CLAUDE_EFFORT_OPTIONS } ?: ""
         requestTimeoutSpinner.value = settings.requestTimeout
@@ -141,6 +141,5 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
 
     companion object {
         private val CLAUDE_EFFORT_OPTIONS = arrayOf("", "low", "medium", "high", "xhigh", "max")
-        private val CODEX_REASONING_OPTIONS = arrayOf("", "minimal", "low", "medium", "high")
     }
 }

@@ -17,6 +17,8 @@ Choose **Learn** and leave the prompt blank to generate a whole-codebase lesson.
 The model proposes the architecture and code path; the plugin validates before rendering:
 
 - Grounded walkthroughs require Codex CLI or Claude CLI so the provider can inspect the local repository.
+- Codex CLI is fixed to `gpt-5.6-sol` with `ultra` or `max` reasoning.
+- Claude CLI offers only Claude Fable 5 (`fable`) and Claude Opus 5 (`opus`).
 - Component anchors must resolve inside the project.
 - Step files, symbols, line annotations, evidence, and next-hop call sites are checked or repaired.
 - Invalid component relationships and learning-stage references are removed.

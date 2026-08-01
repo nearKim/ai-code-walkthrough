@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
+import com.github.nearkim.aicodewalkthrough.model.ProviderModelCatalog
 import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
@@ -49,14 +50,9 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
             add("--sandbox"); add("read-only")
             add("--skip-git-repo-check")
             add("-C"); add(basePath)
-            val model = state.codexModel.trim()
-            if (model.isNotEmpty()) {
-                add("-m"); add(model)
-            }
-            val reasoningEffort = state.codexReasoningEffort.trim()
-            if (reasoningEffort.isNotEmpty()) {
-                add("-c"); add("model_reasoning_effort=\"$reasoningEffort\"")
-            }
+            add("-m"); add(ProviderModelCatalog.normalizeCodexModel(state.codexModel))
+            val reasoningEffort = ProviderModelCatalog.normalizeCodexReasoningEffort(state.codexReasoningEffort)
+            add("-c"); add("model_reasoning_effort=\"$reasoningEffort\"")
             add("-o"); add(outputFile.absolutePath)
             add(wrappedPrompt)
         }

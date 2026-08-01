@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
+import com.github.nearkim.aicodewalkthrough.model.ProviderModelCatalog
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.intellij.openapi.Disposable
@@ -48,10 +49,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
             add("--output-format"); add("stream-json")
             add("--verbose")
             add("--system-prompt"); add(PromptContract.buildSystemPrompt(promptKind, state.enableMcp))
-            val model = state.claudeModel.trim()
-            if (model.isNotEmpty()) {
-                add("--model"); add(model)
-            }
+            add("--model"); add(ProviderModelCatalog.normalizeClaudeModel(state.claudeModel))
             val effort = state.claudeEffort.trim()
             if (effort.isNotEmpty()) {
                 add("--effort"); add(effort)
