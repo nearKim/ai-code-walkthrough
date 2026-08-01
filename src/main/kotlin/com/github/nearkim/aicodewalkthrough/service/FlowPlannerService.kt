@@ -13,6 +13,8 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
@@ -70,12 +72,15 @@ class FlowPlannerService(private val project: Project) {
             val metadata = buildMetadata(providerResponse.metadata, finalResponse)
             Result.success(MappingResult(finalResponse, metadata))
         } catch (e: SerializationException) {
+            currentCoroutineContext().ensureActive()
             thisLogger().warn("Failed to parse model response", e)
             Result.failure(IllegalStateException("Failed to parse response: ${e.message}", e))
         } catch (e: IllegalStateException) {
+            currentCoroutineContext().ensureActive()
             thisLogger().warn("Provider error", e)
             Result.failure(e)
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             thisLogger().warn("Unexpected error during flow mapping", e)
             Result.failure(IllegalStateException("Unexpected error: ${e.message}", e))
         }
@@ -112,12 +117,15 @@ class FlowPlannerService(private val project: Project) {
                 ),
             )
         } catch (e: SerializationException) {
+            currentCoroutineContext().ensureActive()
             thisLogger().warn("Failed to parse step answer response", e)
             Result.failure(IllegalStateException("Failed to parse response: ${e.message}", e))
         } catch (e: IllegalStateException) {
+            currentCoroutineContext().ensureActive()
             thisLogger().warn("Provider error during step answer", e)
             Result.failure(e)
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             thisLogger().warn("Unexpected error during step answer", e)
             Result.failure(IllegalStateException("Unexpected error: ${e.message}", e))
         }

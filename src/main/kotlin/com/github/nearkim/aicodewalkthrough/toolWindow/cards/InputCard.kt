@@ -4,6 +4,7 @@ import com.github.nearkim.aicodewalkthrough.model.AiProvider
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.github.nearkim.aicodewalkthrough.service.LlmProviderService
 import com.github.nearkim.aicodewalkthrough.service.ProviderStatus
+import com.github.nearkim.aicodewalkthrough.settings.CodeTourSettings
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
@@ -56,7 +57,9 @@ class InputCard(
         margin = JBUI.insets(8, 10)
     }
 
-    private val providerCombo = JComboBox(arrayOf(AiProvider.CLAUDE_CLI, AiProvider.CODEX_CLI))
+    private val providerCombo = JComboBox(arrayOf(AiProvider.CLAUDE_CLI, AiProvider.CODEX_CLI)).apply {
+        selectedItem = project.service<CodeTourSettings>().state.provider
+    }
     private val providerStatusDot = JBLabel("\u25CF").apply {
         foreground = JBColor.GRAY
         toolTipText = "Checking provider..."

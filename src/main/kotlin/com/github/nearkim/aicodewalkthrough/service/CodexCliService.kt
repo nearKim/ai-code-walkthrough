@@ -14,7 +14,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.nio.file.Files
-import java.util.concurrent.TimeUnit
+import java.time.Duration
 
 @Service(Service.Level.PROJECT)
 class CodexCliService(private val project: Project) : Disposable, LlmProvider {
@@ -70,28 +70,18 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
         activeProcess = process
 
         try {
-            val stderrThread = Thread.ofVirtual().start {
-                process.errorStream.bufferedReader().useLines { lines ->
-                    lines.forEach { line ->
-                        onProgress?.invoke(line.trim())
-                    }
-                }
-            }
-
-            process.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    parseProgress(line)?.let { onProgress?.invoke(it) }
-                }
-            }
-
             val timeoutSeconds = settings.state.requestTimeout.toLong()
-            val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            val finished = CliProcessRunner.run(
+                process = process,
+                timeout = Duration.ofSeconds(timeoutSeconds),
+                onStdoutLine = { line ->
+                    parseProgress(line)?.let { onProgress?.invoke(it) }
+                },
+                onStderrLine = { line -> onProgress?.invoke(line.trim()) },
+            )
             if (!finished) {
-                process.destroyForcibly()
                 throw IllegalStateException("Codex CLI timed out after ${timeoutSeconds}s")
             }
-
-            stderrThread.join(1000)
 
             if (process.exitValue() != 0) {
                 throw IllegalStateException("Codex CLI exited with code ${process.exitValue()}")
@@ -114,16 +104,25 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
             val process = ProcessBuilder(codexBin, "--version")
                 .redirectInput(ProcessBuilder.Redirect.from(File("/dev/null")))
                 .start()
-            val output = process.inputStream.bufferedReader().readText().trim()
-            val finished = process.waitFor(5, TimeUnit.SECONDS)
+            val stdout = StringBuilder()
+            val stderr = StringBuilder()
+            val finished = CliProcessRunner.run(
+                process = process,
+                timeout = Duration.ofSeconds(5),
+                onStdoutLine = { stdout.appendLine(it) },
+                onStderrLine = { stderr.appendLine(it) },
+            )
             if (!finished) {
-                process.destroyForcibly()
                 return@withContext ProviderStatus(provider, false, "Codex CLI timed out")
             }
+            val stdoutText = stdout.toString().trim()
+            val stderrText = stderr.toString().trim()
             if (process.exitValue() == 0) {
-                ProviderStatus(provider, true, output)
+                ProviderStatus(provider, true, stdoutText.ifBlank { "Codex CLI is available" })
             } else {
-                ProviderStatus(provider, false, "codex exited with code ${process.exitValue()}")
+                val detail = stderrText.ifBlank { stdoutText }
+                val message = "codex exited with code ${process.exitValue()}"
+                ProviderStatus(provider, false, if (detail.isBlank()) message else "$message: ${detail.take(500)}")
             }
         } catch (e: Exception) {
             ProviderStatus(provider, false, e.message ?: "codex not found")

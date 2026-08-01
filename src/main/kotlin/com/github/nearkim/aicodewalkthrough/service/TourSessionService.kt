@@ -19,6 +19,7 @@ import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 @Service(Service.Level.PROJECT)
 class TourSessionService(private val project: Project, private val scope: CoroutineScope) {
@@ -65,6 +66,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
     private val tourNavigator = TourNavigator()
     private val progressLock = Any()
     private val pendingProgressLines = ArrayDeque<String>()
+    private val mappingRequestGeneration = AtomicLong()
     private var progressFlushQueued = false
     private var activeMappingJob: Job? = null
 
@@ -241,16 +243,18 @@ class TourSessionService(private val project: Project, private val scope: Corout
         transitionTo(TourState.LOADING)
 
         activeMappingJob?.cancel()
+        val requestGeneration = mappingRequestGeneration.incrementAndGet()
         activeMappingJob = scope.launch {
             val planner = project.service<FlowPlannerService>()
             val result = planner.mapFlow(question, mode, queryContext, followUpContext, featureScope) { line ->
                 notifyProgress(line)
             }
-            handleMappingResult(result)
+            handleMappingResult(requestGeneration, result)
         }
     }
 
     fun cancelRequest() {
+        mappingRequestGeneration.incrementAndGet()
         activeMappingJob?.cancel()
         activeMappingJob = null
         project.service<FlowPlannerService>().cancel()
@@ -293,8 +297,10 @@ class TourSessionService(private val project: Project, private val scope: Corout
         }
     }
 
-    private fun handleMappingResult(result: Result<MappingResult>) {
+    private fun handleMappingResult(requestGeneration: Long, result: Result<MappingResult>) {
         ApplicationManager.getApplication().invokeLater {
+            if (mappingRequestGeneration.get() != requestGeneration) return@invokeLater
+            activeMappingJob = null
             result.fold(
                 onSuccess = { mappingResult ->
                     lastMetadata = mappingResult.metadata

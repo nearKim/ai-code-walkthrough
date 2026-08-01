@@ -14,7 +14,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.util.concurrent.TimeUnit
+import java.time.Duration
+import java.util.concurrent.atomic.AtomicReference
 
 @Service(Service.Level.PROJECT)
 class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
@@ -75,24 +76,22 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
         try {
             val stderrLines = ArrayDeque<String>()
             val stdoutLines = ArrayDeque<String>()
-            val stderrThread = Thread.ofVirtual().start {
-                process.errorStream.bufferedReader().useLines { lines ->
-                    lines.forEach { line ->
-                        thisLogger().debug("claude stderr: $line")
-                        synchronized(stderrLines) {
-                            stderrLines.addLast(line)
-                            while (stderrLines.size > MAX_STDERR_LINES) {
-                                stderrLines.removeFirst()
-                            }
+            val resultJson = AtomicReference<String?>()
+            val timeoutSeconds = settings.state.requestTimeout.toLong()
+            val finished = CliProcessRunner.run(
+                process = process,
+                timeout = Duration.ofSeconds(timeoutSeconds),
+                onStderrLine = { line ->
+                    thisLogger().debug("claude stderr: $line")
+                    synchronized(stderrLines) {
+                        stderrLines.addLast(line)
+                        while (stderrLines.size > MAX_STDERR_LINES) {
+                            stderrLines.removeFirst()
                         }
                     }
-                }
-            }
-
-            var resultJson: String? = null
-            process.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    if (line.isBlank()) return@forEach
+                },
+                onStdoutLine = stdout@{ line ->
+                    if (line.isBlank()) return@stdout
                     synchronized(stdoutLines) {
                         stdoutLines.addLast(line)
                         while (stdoutLines.size > MAX_STDOUT_LINES) {
@@ -101,7 +100,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
                     }
                     try {
                         val event = json.parseToJsonElement(line).jsonObject
-                        val type = event["type"]?.jsonPrimitive?.content ?: return@forEach
+                        val type = event["type"]?.jsonPrimitive?.content ?: return@stdout
 
                         when (type) {
                             "assistant" -> {
@@ -118,23 +117,17 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
                                 }
                             }
                             "result" -> {
-                                resultJson = line
+                                resultJson.set(line)
                             }
                         }
                     } catch (e: Exception) {
                         thisLogger().debug("Failed to parse stream event: $line")
                     }
-                }
-            }
-
-            val timeoutSeconds = settings.state.requestTimeout.toLong()
-            val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+                },
+            )
             if (!finished) {
-                process.destroyForcibly()
                 throw IllegalStateException("Claude CLI timed out after ${timeoutSeconds}s")
             }
-
-            stderrThread.join(1000)
 
             val exitCode = process.exitValue()
             if (exitCode != 0) {
@@ -143,7 +136,8 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
                 throw IllegalStateException(buildCliFailureMessage(exitCode, stdoutOutput, stderrOutput))
             }
 
-            if (resultJson.isNullOrBlank()) {
+            val resultLine = resultJson.get()
+            if (resultLine.isNullOrBlank()) {
                 val stderrOutput = captureRecentOutput(stderrLines)
                 val stdoutOutput = captureRecentOutput(stdoutLines)
                 val detail = extractCliErrorDetail(stdoutOutput, stderrOutput)
@@ -156,7 +150,7 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
                 )
             }
 
-            val envelope = json.decodeFromString<com.github.nearkim.aicodewalkthrough.model.ClaudeEnvelope>(resultJson)
+            val envelope = json.decodeFromString<com.github.nearkim.aicodewalkthrough.model.ClaudeEnvelope>(resultLine)
             if (envelope.isError) {
                 throw IllegalStateException("Claude returned error: ${envelope.result}")
             }
@@ -274,14 +268,24 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
             .redirectInput(ProcessBuilder.Redirect.from(java.io.File("/dev/null")))
         augmentPath(processBuilder)
         val process = processBuilder.start()
-        val stdout = process.inputStream.bufferedReader().readText().trim()
-        val stderr = process.errorStream.bufferedReader().readText().trim()
-        val finished = process.waitFor(5, TimeUnit.SECONDS)
+        val stdout = StringBuilder()
+        val stderr = StringBuilder()
+        val finished = CliProcessRunner.run(
+            process = process,
+            timeout = Duration.ofSeconds(5),
+            onStdoutLine = { stdout.appendLine(it) },
+            onStderrLine = { stderr.appendLine(it) },
+        )
+        val stdoutText = stdout.toString().trim()
+        val stderrText = stderr.toString().trim()
         if (!finished) {
-            process.destroyForcibly()
-            return QuickCommandResult(exitCode = -1, stdout = stdout, stderr = stderr.ifBlank { "Claude CLI timed out" })
+            return QuickCommandResult(
+                exitCode = -1,
+                stdout = stdoutText,
+                stderr = stderrText.ifBlank { "Claude CLI timed out" },
+            )
         }
-        return QuickCommandResult(exitCode = process.exitValue(), stdout = stdout, stderr = stderr)
+        return QuickCommandResult(exitCode = process.exitValue(), stdout = stdoutText, stderr = stderrText)
     }
 
     private fun captureRecentOutput(lines: ArrayDeque<String>): String = synchronized(lines) {
