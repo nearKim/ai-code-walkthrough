@@ -7,18 +7,48 @@ import java.util.concurrent.atomic.AtomicReference
 
 internal object CliProcessRunner {
 
+    fun runUntilExit(
+        process: Process,
+        onStdoutLine: (String) -> Unit = {},
+        onStderrLine: (String) -> Unit = {},
+    ) {
+        runProcess(
+            process = process,
+            timeout = null,
+            onStdoutLine = onStdoutLine,
+            onStderrLine = onStderrLine,
+        )
+    }
+
     fun run(
         process: Process,
         timeout: Duration,
         onStdoutLine: (String) -> Unit = {},
         onStderrLine: (String) -> Unit = {},
+    ): Boolean = runProcess(
+        process = process,
+        timeout = timeout,
+        onStdoutLine = onStdoutLine,
+        onStderrLine = onStderrLine,
+    )
+
+    private fun runProcess(
+        process: Process,
+        timeout: Duration?,
+        onStdoutLine: (String) -> Unit,
+        onStderrLine: (String) -> Unit,
     ): Boolean {
         val readerFailure = AtomicReference<Throwable?>()
         val stdoutThread = pumpLines(process.inputStream, onStdoutLine, readerFailure)
         val stderrThread = pumpLines(process.errorStream, onStderrLine, readerFailure)
 
         val finished = try {
-            process.waitFor(timeout.toMillis().coerceAtLeast(1), TimeUnit.MILLISECONDS)
+            if (timeout == null) {
+                process.waitFor()
+                true
+            } else {
+                process.waitFor(timeout.toMillis().coerceAtLeast(1), TimeUnit.MILLISECONDS)
+            }
         } catch (e: InterruptedException) {
             process.destroyForcibly()
             throw e

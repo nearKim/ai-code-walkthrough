@@ -20,7 +20,6 @@ class CodeTourSettings : PersistentStateComponent<CodeTourSettings.State> {
         var claudePath: String = "claude",
         var claudeModel: String = ProviderModelCatalog.DEFAULT_CLAUDE_MODEL,
         var claudeEffort: String = "max",
-        var requestTimeout: Int = 120,
         var maxSteps: Int = 20,
         var defaultModeId: String = AnalysisMode.UNDERSTAND.id,
         var enableMcp: Boolean = false,

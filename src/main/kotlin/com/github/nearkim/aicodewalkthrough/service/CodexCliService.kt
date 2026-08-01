@@ -43,19 +43,12 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
         val outputFile = Files.createTempFile("codex-last-message", ".json").toFile()
         val wrappedPrompt = buildPrompt(prompt, promptKind)
         val state = settings.state
-        val command = buildList {
-            add(state.codexCliPath)
-            add("exec")
-            add("--json")
-            add("--sandbox"); add("read-only")
-            add("--skip-git-repo-check")
-            add("-C"); add(basePath)
-            add("-m"); add(ProviderModelCatalog.normalizeCodexModel(state.codexModel))
-            val reasoningEffort = ProviderModelCatalog.normalizeCodexReasoningEffort(state.codexReasoningEffort)
-            add("-c"); add("model_reasoning_effort=\"$reasoningEffort\"")
-            add("-o"); add(outputFile.absolutePath)
-            add(wrappedPrompt)
-        }
+        val command = CodexCliCommand.build(
+            state = state,
+            basePath = basePath,
+            outputPath = outputFile.absolutePath,
+            prompt = wrappedPrompt,
+        )
 
         val processBuilder = ProcessBuilder(command)
             .directory(File(basePath))
@@ -66,18 +59,13 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
         activeProcess = process
 
         try {
-            val timeoutSeconds = settings.state.requestTimeout.toLong()
-            val finished = CliProcessRunner.run(
+            CliProcessRunner.runUntilExit(
                 process = process,
-                timeout = Duration.ofSeconds(timeoutSeconds),
                 onStdoutLine = { line ->
                     parseProgress(line)?.let { onProgress?.invoke(it) }
                 },
                 onStderrLine = { line -> onProgress?.invoke(line.trim()) },
             )
-            if (!finished) {
-                throw IllegalStateException("Codex CLI timed out after ${timeoutSeconds}s")
-            }
 
             if (process.exitValue() != 0) {
                 throw IllegalStateException("Codex CLI exited with code ${process.exitValue()}")
@@ -164,5 +152,27 @@ class CodexCliService(private val project: Project) : Disposable, LlmProvider {
             "command_execution" -> item["command"]?.jsonPrimitive?.content?.let { "Running: ${it.take(80)}" }
             else -> null
         }
+    }
+}
+
+internal object CodexCliCommand {
+    fun build(
+        state: CodeTourSettings.State,
+        basePath: String,
+        outputPath: String,
+        prompt: String,
+        resolveExecutable: (String) -> String = CliPathResolver::resolve,
+    ): List<String> = buildList {
+        add(resolveExecutable(state.codexCliPath))
+        add("exec")
+        add("--json")
+        add("--sandbox"); add("read-only")
+        add("--skip-git-repo-check")
+        add("-C"); add(basePath)
+        add("-m"); add(ProviderModelCatalog.normalizeCodexModel(state.codexModel))
+        val reasoningEffort = ProviderModelCatalog.normalizeCodexReasoningEffort(state.codexReasoningEffort)
+        add("-c"); add("model_reasoning_effort=\"$reasoningEffort\"")
+        add("-o"); add(outputPath)
+        add(prompt)
     }
 }

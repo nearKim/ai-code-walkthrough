@@ -75,10 +75,8 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
             val stderrLines = ArrayDeque<String>()
             val stdoutLines = ArrayDeque<String>()
             val resultJson = AtomicReference<String?>()
-            val timeoutSeconds = settings.state.requestTimeout.toLong()
-            val finished = CliProcessRunner.run(
+            CliProcessRunner.runUntilExit(
                 process = process,
-                timeout = Duration.ofSeconds(timeoutSeconds),
                 onStderrLine = { line ->
                     thisLogger().debug("claude stderr: $line")
                     synchronized(stderrLines) {
@@ -123,9 +121,6 @@ class ClaudeCliService(private val project: Project) : Disposable, LlmProvider {
                     }
                 },
             )
-            if (!finished) {
-                throw IllegalStateException("Claude CLI timed out after ${timeoutSeconds}s")
-            }
 
             val exitCode = process.exitValue()
             if (exitCode != 0) {

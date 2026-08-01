@@ -105,7 +105,7 @@ Important edge fields:
 | `EditorDecorationController` | Applies highlights and inlays, and previews the next hop using validated callsites when available |
 | `CodeTourPanel` | Swing tool window UI for input, overview, active tour, and step-scoped follow-up questions |
 | `ArchitecturePanel` | Architecture-first overview of validated components, relationships, cross-cutting concerns, and coverage gaps |
-| `CodeTourSettings` | Persistent per-project settings for provider selection, timeouts, MCP config, and UI toggles |
+| `CodeTourSettings` | Persistent per-project settings for provider selection, model selection, MCP config, and UI toggles |
 
 ### Models (`model/` package)
 
@@ -156,6 +156,7 @@ All major services are `@Service(Service.Level.PROJECT)` and declared in `plugin
 ### Threading model
 
 - Provider requests run on `Dispatchers.IO` inside `TourSessionService.scope`
+- Repository-analysis requests have no wall-clock deadline and run until the CLI exits or the user presses Stop
 - All UI updates and listener callbacks are posted through `ApplicationManager.getApplication().invokeLater { }`
 
 ### Testing

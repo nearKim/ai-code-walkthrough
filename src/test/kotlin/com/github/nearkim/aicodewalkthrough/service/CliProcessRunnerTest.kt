@@ -17,6 +17,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 class CliProcessRunnerTest {
 
     @Test
+    fun `unbounded run waits for process exit without using timed wait`() {
+        val process = CompletionOnlyProcess()
+
+        CliProcessRunner.runUntilExit(process)
+
+        assertTrue(process.waitedUntilExit)
+        assertFalse(process.usedTimedWait)
+        assertFalse(process.wasDestroyed)
+    }
+
+    @Test
     fun `completed process output is drained before returning`() {
         val process = CompletedOutputProcess(
             stdout = "first\nsecond\n",
@@ -120,6 +131,41 @@ class CliProcessRunnerTest {
         override fun destroy() = Unit
 
         override fun destroyForcibly(): Process = this
+
+        override fun isAlive(): Boolean = false
+    }
+
+    private class CompletionOnlyProcess : Process() {
+        var waitedUntilExit = false
+        var usedTimedWait = false
+        var wasDestroyed = false
+
+        override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+
+        override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+        override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+        override fun waitFor(): Int {
+            waitedUntilExit = true
+            return 0
+        }
+
+        override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+            usedTimedWait = true
+            return false
+        }
+
+        override fun exitValue(): Int = 0
+
+        override fun destroy() {
+            wasDestroyed = true
+        }
+
+        override fun destroyForcibly(): Process {
+            wasDestroyed = true
+            return this
+        }
 
         override fun isAlive(): Boolean = false
     }

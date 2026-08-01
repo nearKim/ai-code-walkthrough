@@ -25,7 +25,6 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
     private lateinit var claudePathField: JBTextField
     private lateinit var claudeModelCombo: JComboBox<ProviderModelOption>
     private lateinit var claudeEffortCombo: JComboBox<String>
-    private lateinit var requestTimeoutSpinner: JSpinner
     private lateinit var maxStepsSpinner: JSpinner
     private lateinit var enableMcpCheckBox: JBCheckBox
     private lateinit var mcpConfigPathField: JBTextField
@@ -49,7 +48,6 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         claudeEffortCombo = JComboBox(CLAUDE_EFFORT_OPTIONS).apply {
             toolTipText = "Claude --effort level; blank = use CLI default. 'max' = maximum thinking."
         }
-        requestTimeoutSpinner = JSpinner(SpinnerNumberModel(120, 10, 600, 10))
         maxStepsSpinner = JSpinner(SpinnerNumberModel(20, 1, 100, 1))
 
         enableMcpCheckBox = JBCheckBox("Enable MCP semantic navigation for Claude CLI").apply {
@@ -66,8 +64,8 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
 
         panel = FormBuilder.createFormBuilder()
             .addLabeledComponent("Provider:", providerCombo)
-            .addLabeledComponent("Request timeout (seconds):", requestTimeoutSpinner)
             .addLabeledComponent("Max steps:", maxStepsSpinner)
+            .addComponent(JBLabel("Repository analysis runs until completion; use Stop to cancel it."))
             .addSeparator()
             .addLabeledComponent("Codex CLI path:", codexCliPathField)
             .addLabeledComponent("Codex model:", codexModelCombo)
@@ -96,7 +94,6 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
             claudePathField.text != settings.claudePath ||
             (claudeModelCombo.selectedItem as ProviderModelOption).id != settings.claudeModel ||
             (claudeEffortCombo.selectedItem as String) != settings.claudeEffort ||
-            requestTimeoutSpinner.value as Int != settings.requestTimeout ||
             maxStepsSpinner.value as Int != settings.maxSteps ||
             enableMcpCheckBox.isSelected != settings.enableMcp ||
             mcpConfigPathField.text != settings.mcpConfigPath
@@ -113,7 +110,6 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
                 claudePath = claudePathField.text.trim(),
                 claudeModel = (claudeModelCombo.selectedItem as ProviderModelOption).id,
                 claudeEffort = (claudeEffortCombo.selectedItem as String).trim(),
-                requestTimeout = requestTimeoutSpinner.value as Int,
                 maxSteps = maxStepsSpinner.value as Int,
                 enableMcp = enableMcpCheckBox.isSelected,
                 mcpConfigPath = mcpConfigPathField.text.trim(),
@@ -132,7 +128,6 @@ class CodeTourConfigurable(private val project: Project) : Configurable {
         claudeModelCombo.selectedItem = ProviderModelCatalog.claudeOption(settings.claudeModel)
         claudeEffortCombo.selectedItem = settings.claudeEffort
             .takeIf { it in CLAUDE_EFFORT_OPTIONS } ?: ""
-        requestTimeoutSpinner.value = settings.requestTimeout
         maxStepsSpinner.value = settings.maxSteps
         enableMcpCheckBox.isSelected = settings.enableMcp
         mcpConfigPathField.text = settings.mcpConfigPath
