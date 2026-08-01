@@ -2,10 +2,14 @@ package com.github.nearkim.aicodewalkthrough.toolwindow.cards
 
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.LearningStage
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.WrapLayout
+import com.github.nearkim.aicodewalkthrough.toolwindow.layout.WrappingTextArea
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
@@ -57,28 +61,48 @@ class OverviewCard(
         selectionMode = ListSelectionModel.SINGLE_SELECTION
         cellRenderer = StepRenderer()
     }
-    private val startTourButton = JButton("Start tour").apply { isDefaultCapable = true }
+    private val architecturePanel = ArchitecturePanel()
+    private val learningStageContext = WrappingTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+        isOpaque = false
+        foreground = JBColor(Color(95, 95, 95), Color(175, 175, 175))
+        border = JBUI.Borders.empty(6, 8)
+    }
+    private val tabs = JBTabbedPane().apply {
+        addTab("Architecture", architecturePanel)
+        addTab("Learning path", buildLearningPathPanel())
+    }
+    private val continueButton = JButton("Continue to learning path \u2192")
+    private val backButton = JButton("\u2190 Architecture")
+    private val startTourButton = JButton("Start guided tour").apply { isDefaultCapable = true }
     private val previewButton = JButton("Preview selected")
     private val copyButton = JButton("Copy as Markdown")
     private val newQuestionButton = JButton("New question")
+    private var stageByStepId: Map<String, LearningStage> = emptyMap()
+    private var stageIndexById: Map<String, Int> = emptyMap()
+    private var boundFlowMap: FlowMap? = null
 
     init {
         border = JBUI.Borders.empty(6, 8)
 
         add(buildHeader(), BorderLayout.NORTH)
-        add(JBScrollPane(stepList).apply {
-            border = BorderFactory.createMatteBorder(1, 0, 1, 0, JBColor.border())
-        }, BorderLayout.CENTER)
+        add(tabs, BorderLayout.CENTER)
 
-        val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+        val actionRow = JPanel(WrapLayout(FlowLayout.LEFT, 4, 2)).apply {
             border = JBUI.Borders.emptyTop(4)
         }
+        actionRow.add(continueButton)
+        actionRow.add(backButton)
         actionRow.add(startTourButton)
         actionRow.add(previewButton)
         actionRow.add(copyButton)
         actionRow.add(newQuestionButton)
         add(actionRow, BorderLayout.SOUTH)
 
+        continueButton.addActionListener { tabs.selectedIndex = LEARNING_PATH_TAB }
+        backButton.addActionListener { tabs.selectedIndex = ARCHITECTURE_TAB }
         startTourButton.addActionListener { onStartTour() }
         previewButton.addActionListener {
             val selected = stepList.selectedValue ?: return@addActionListener
@@ -92,11 +116,20 @@ class OverviewCard(
                 applySummaryText()
             }
         })
+        tabs.addChangeListener { updateSectionActions() }
+        stepList.addListSelectionListener { event ->
+            if (!event.valueIsAdjusting) updateSelectedStage()
+        }
+        updateSectionActions()
     }
 
     fun setFlowMap(flowMap: FlowMap?, providerName: String, question: String? = null) {
         listModel.clear()
         if (flowMap == null) {
+            boundFlowMap = null
+            architecturePanel.setArchitecture(null)
+            stageByStepId = emptyMap()
+            stageIndexById = emptyMap()
             questionLabel.text = " "
             summaryLabel.text = " "
             metaLabel.text = " "
@@ -106,6 +139,8 @@ class OverviewCard(
             copyButton.isEnabled = false
             return
         }
+        val isNewFlowMap = flowMap !== boundFlowMap
+        boundFlowMap = flowMap
         questionLabel.text = question?.takeIf { it.isNotBlank() } ?: "Walkthrough"
         fullSummary = flowMap.summary
         summaryExpanded = false
@@ -113,12 +148,67 @@ class OverviewCard(
         val entryTitle = flowMap.steps.firstOrNull { it.id == flowMap.entryStepId }?.title
             ?: flowMap.steps.firstOrNull()?.title
             ?: "—"
-        metaLabel.text = "${flowMap.steps.size} steps · $entryTitle · $providerName"
+        val componentCount = flowMap.architecture?.components?.size ?: 0
+        val stageCount = flowMap.learningPath.size
+        metaLabel.text = buildList {
+            if (componentCount > 0) add("$componentCount components")
+            if (stageCount > 0) add("$stageCount stages")
+            add("${flowMap.steps.size} steps")
+            add(entryTitle)
+            add(providerName)
+        }.joinToString(" · ")
+        architecturePanel.setArchitecture(flowMap.architecture)
+        stageByStepId = buildMap {
+            flowMap.learningPath.forEach { stage -> stage.stepIds.forEach { put(it, stage) } }
+        }
+        stageIndexById = flowMap.learningPath.mapIndexed { index, stage -> stage.id to index }.toMap()
+        tabs.setTitleAt(ARCHITECTURE_TAB, "Architecture${componentCount.takeIf { it > 0 }?.let { " ($it)" }.orEmpty()}")
+        tabs.setTitleAt(LEARNING_PATH_TAB, "Learning path (${flowMap.steps.size})")
+        tabs.setEnabledAt(ARCHITECTURE_TAB, flowMap.architecture != null)
         flowMap.steps.forEach { listModel.addElement(it) }
         startTourButton.isEnabled = flowMap.steps.any { !it.broken }
         previewButton.isEnabled = flowMap.steps.isNotEmpty()
         copyButton.isEnabled = true
-        if (flowMap.steps.isNotEmpty()) stepList.selectedIndex = 0
+        if (flowMap.steps.isNotEmpty()) {
+            stepList.selectedIndex = 0
+        } else {
+            learningStageContext.text = "No validated code stops were returned."
+        }
+        if (isNewFlowMap) {
+            tabs.selectedIndex = if (flowMap.architecture != null) ARCHITECTURE_TAB else LEARNING_PATH_TAB
+        }
+        updateSelectedStage()
+        updateSectionActions()
+    }
+
+    private fun buildLearningPathPanel(): JPanel = JPanel(BorderLayout()).apply {
+        add(learningStageContext, BorderLayout.NORTH)
+        add(JBScrollPane(stepList).apply {
+            border = BorderFactory.createMatteBorder(1, 0, 1, 0, JBColor.border())
+        }, BorderLayout.CENTER)
+    }
+
+    private fun updateSelectedStage() {
+        val step = stepList.selectedValue
+        val stage = step?.let { stageByStepId[it.id] }
+        learningStageContext.text = if (stage == null) {
+            "Follow the validated code stops in order to connect architecture to runtime behavior."
+        } else {
+            val index = stageIndexById[stage.id]?.plus(1) ?: 1
+            val checkpoint = stage.checkpoint?.takeIf { it.isNotBlank() }?.let { "\nCheckpoint: $it" }.orEmpty()
+            "Stage $index/${stageIndexById.size} · ${stage.title}\n${stage.goal}$checkpoint"
+        }
+        previewButton.isEnabled = step != null && !step.broken
+    }
+
+    private fun updateSectionActions() {
+        val showingArchitecture = tabs.selectedIndex == ARCHITECTURE_TAB && tabs.isEnabledAt(ARCHITECTURE_TAB)
+        continueButton.isVisible = showingArchitecture
+        backButton.isVisible = !showingArchitecture && tabs.isEnabledAt(ARCHITECTURE_TAB)
+        startTourButton.isVisible = !showingArchitecture
+        previewButton.isVisible = !showingArchitecture
+        revalidate()
+        repaint()
     }
 
     private fun buildHeader(): JPanel {
@@ -166,7 +256,7 @@ class OverviewCard(
     private fun escapeHtml(text: String): String =
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    private class StepRenderer : JPanel(BorderLayout()), ListCellRenderer<FlowStep> {
+    private inner class StepRenderer : JPanel(BorderLayout()), ListCellRenderer<FlowStep> {
 
         private val indexLabel = JBLabel().apply {
             font = font.deriveFont(Font.BOLD)
@@ -207,7 +297,8 @@ class OverviewCard(
             value ?: return this
             indexLabel.text = "${index + 1}."
             titleLabel.text = value.title
-            subtitleLabel.text = formatPath(value.filePath, value.startLine)
+            val stageTitle = stageByStepId[value.id]?.title
+            subtitleLabel.text = listOfNotNull(stageTitle, formatPath(value.filePath, value.startLine)).joinToString(" · ")
             val type = value.stepType?.takeIf { it.isNotBlank() } ?: value.importance ?: ""
             typeChip.text = if (type.isNotBlank()) type else ""
             typeChip.isVisible = type.isNotBlank()
@@ -226,5 +317,10 @@ class OverviewCard(
             val dir = filePath.substringBeforeLast('/', "").substringAfterLast('/')
             return if (dir.isNotEmpty()) "$dir/$name:$startLine" else "$name:$startLine"
         }
+    }
+
+    companion object {
+        private const val ARCHITECTURE_TAB = 0
+        private const val LEARNING_PATH_TAB = 1
     }
 }

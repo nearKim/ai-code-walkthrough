@@ -58,4 +58,29 @@ class PromptEnvelopeFactoryTest {
         assertTrue(featureScope.getValue("supporting_symbols").jsonArray.any { it.jsonPrimitive.content == "Feature.run" })
         assertTrue(featureScope.getValue("boundary_notes").jsonArray.any { it.jsonPrimitive.content.contains("shared infrastructure") })
     }
+
+    @Test
+    fun `blank understand prompt requests an architecture first whole codebase lesson`() {
+        val question = AnalysisMode.UNDERSTAND.resolveQuestion("")
+            ?: error("Understand mode should provide a default question")
+        val prompt = PromptEnvelopeFactory.buildWalkthroughPrompt(
+            question = question,
+            mode = AnalysisMode.UNDERSTAND,
+            maxSteps = 20,
+            queryContext = null,
+            followUpContext = null,
+            featureScope = null,
+            providerCapabilities = ProviderCapabilities(supportsRepoGroundedWalkthrough = true),
+            json = json,
+        )
+
+        val envelope = json.parseToJsonElement(prompt).jsonObject
+        val strategy = envelope.getValue("learning_strategy").jsonObject
+
+        assertEquals(AnalysisMode.DEFAULT_CODEBASE_QUESTION, envelope.getValue("question").jsonPrimitive.content)
+        assertEquals("true", strategy.getValue("architecture_first").jsonPrimitive.content)
+        assertEquals("whole_codebase", strategy.getValue("breadth").jsonPrimitive.content)
+        assertEquals("system_to_components_to_runtime_paths", strategy.getValue("progression").jsonPrimitive.content)
+        assertTrue(AnalysisMode.REVIEW.resolveQuestion("  ") == null)
+    }
 }

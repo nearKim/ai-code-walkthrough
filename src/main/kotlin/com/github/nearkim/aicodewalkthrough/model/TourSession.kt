@@ -8,8 +8,8 @@ enum class AnalysisMode(
     val description: String,
     val example: String,
 ) {
-    UNDERSTAND("understand", "Understand", "Explain what the code does and how pieces connect",
-        "e.g. \"How does the caching layer work?\""),
+    UNDERSTAND("understand", "Learn", "Map architecture, relationships, and runtime behavior",
+        "Leave blank to learn the entire codebase"),
     REVIEW("review", "Review", "Find bugs, regressions, and actionable improvements",
         "e.g. \"Is this PR safe to merge?\""),
     TRACE("trace", "Trace", "Follow a concrete execution path through callers and callees",
@@ -17,7 +17,16 @@ enum class AnalysisMode(
     ;
 
     companion object {
+        const val DEFAULT_CODEBASE_QUESTION =
+            "Teach me this codebase from its architecture and component relationships through its most important execution paths."
+
         fun fromId(id: String?): AnalysisMode = entries.firstOrNull { it.id == id } ?: UNDERSTAND
+    }
+
+    fun resolveQuestion(input: String): String? {
+        val question = input.trim()
+        if (question.isNotEmpty()) return question
+        return DEFAULT_CODEBASE_QUESTION.takeIf { this == UNDERSTAND }
     }
 
     override fun toString(): String = displayName

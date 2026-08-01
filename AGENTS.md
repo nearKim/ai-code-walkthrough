@@ -25,7 +25,7 @@ There are also pre-configured run configurations in `.run/` for the IDE.
 
 ## Architecture
 
-This is an **IntelliJ Platform Plugin** (targeting IDEA 2025.2+) that answers natural-language questions about a repo by generating a grounded execution-path walkthrough, then guiding the user through that path in the editor.
+This is an **IntelliJ Platform Plugin** (targeting IDEA 2025.2+) that teaches an unfamiliar repository from architecture to implementation. It generates a grounded component map and staged learning path, then guides the user through validated execution-path stops in the editor.
 
 The core principle is:
 
@@ -42,7 +42,7 @@ User question (CodeTourPanel)
       → LlmProviderService.requireRepoGroundedWalkthroughSupport()
       → currentProvider().query()                     # CLI providers only for grounded walkthroughs
       → parse JSON into LlmResponse / FlowMap
-      → StepValidator.validate(flowMap)              # validates steps, annotations, evidence, edges
+      → StepValidator.validate(flowMap)              # validates architecture, curriculum, steps, evidence, edges
     → TourSessionService.handleMappingResult()
       → transitions to OVERVIEW
   → user clicks "Start Tour"
@@ -71,6 +71,8 @@ User question (CodeTourPanel)
 
 The walkthrough contract is no longer just an ordered list of files. A `flow_map` now contains:
 
+- `architecture`: system purpose, validated `ArchitectureComponent` anchors, grounded `ComponentRelationship` edges, cross-cutting concerns, and honest coverage notes
+- `learning_path`: ordered `LearningStage` items that connect architecture components to concrete walkthrough steps and checkpoints
 - `steps`: validated `FlowStep` items
 - `entry_step_id`: explicit entrypoint for the traced path
 - `terminal_step_ids`: validated path endpoints
@@ -102,11 +104,14 @@ Important edge fields:
 | `StepValidator` | Validates `FlowMap` objects: re-anchors symbols, clamps annotations/evidence, validates/synthesizes edges, resolves entry/terminal steps |
 | `EditorDecorationController` | Applies highlights and inlays, and previews the next hop using validated callsites when available |
 | `CodeTourPanel` | Swing tool window UI for input, overview, active tour, and step-scoped follow-up questions |
+| `ArchitecturePanel` | Architecture-first overview of validated components, relationships, cross-cutting concerns, and coverage gaps |
 | `CodeTourSettings` | Persistent per-project settings for provider selection, timeouts, MCP config, and UI toggles |
 
 ### Models (`model/` package)
 
 - `FlowMap` — validated walkthrough path
+- `CodebaseArchitecture` / `ArchitectureComponent` / `ComponentRelationship` — grounded system structure
+- `LearningStage` — curriculum stage referencing validated components and steps
 - `FlowStep` — one rendered walkthrough step
 - `StepEdge` — validated transition between steps
 - `AnalysisTrace` — optional grounding metadata
@@ -120,6 +125,9 @@ Important edge fields:
 
 It currently:
 
+- rejects architecture anchors and evidence paths that escape the project
+- removes nonexistent component anchors and relationships to invalid components
+- filters learning-stage component/step references and assigns otherwise-unassigned validated steps
 - re-anchors step ranges to real symbol locations when possible
 - clamps step ranges to the file
 - clamps `line_annotations` into the validated step range
@@ -132,7 +140,9 @@ It does not do full language-aware call resolution. For now, symbol lookup is st
 
 ### Tour navigation and UI behavior
 
-- The active tour prefers validated outgoing `StepEdge` hops when choosing the next step.
+- Learn mode can be started with a blank prompt to request a whole-codebase curriculum.
+- The overview opens on architecture first, then advances to the staged learning path.
+- The active tour shows the current learning-stage goal and checkpoint and prefers validated outgoing `StepEdge` hops when choosing the next step.
 - If no valid outgoing hop exists, it falls back to the next non-broken step in list order.
 - The editor preview highlights the next hop's validated `call_site_*` range when available.
 - If no callsite is available, the preview falls back to a symbol-name match inside the current step.
@@ -150,4 +160,4 @@ All major services are `@Service(Service.Level.PROJECT)` and declared in `plugin
 
 ### Testing
 
-There is an active `src/test/` tree. Current tests cover validator behavior, markdown export, and step metadata formatting. Run `./gradlew test` after changing the response contract, validator, or walkthrough rendering.
+There is an active `src/test/` tree. Current tests cover response deserialization, validator behavior, markdown export, navigation, prompt envelopes, and editor decoration. Run `./gradlew test` after changing the response contract, validator, or walkthrough rendering.

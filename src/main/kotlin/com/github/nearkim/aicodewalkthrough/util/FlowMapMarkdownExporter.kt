@@ -29,6 +29,85 @@ object FlowMapMarkdownExporter {
         builder.appendLine()
         builder.appendLine(flowMap.summary)
 
+        flowMap.architecture?.let { architecture ->
+            builder.appendLine()
+            builder.appendLine("## Architecture")
+            builder.appendLine()
+            builder.appendLine(architecture.systemPurpose)
+
+            if (architecture.components.isNotEmpty()) {
+                builder.appendLine()
+                builder.appendLine("### Components")
+                architecture.components.forEach { component ->
+                    builder.appendLine()
+                    builder.appendLine("#### ${component.name}")
+                    builder.appendLine()
+                    builder.appendLine("- Kind: ${component.kind.replace('_', ' ')}")
+                    builder.appendLine("- Responsibility: ${component.responsibility}")
+                    builder.appendLine("- Anchors: ${component.keyPaths.joinToString(", ") { "`$it`" }}")
+                    if (component.keySymbols.isNotEmpty()) {
+                        builder.appendLine("- Key symbols: ${component.keySymbols.joinToString(", ") { "`$it`" }}")
+                    }
+                    if (component.uncertain) builder.appendLine("- Grounding: uncertain")
+                    component.validationNote?.takeIf { it.isNotBlank() }
+                        ?.let { builder.appendLine("- Validation note: $it") }
+                }
+            }
+
+            if (architecture.relationships.isNotEmpty()) {
+                builder.appendLine()
+                builder.appendLine("### Component Relationships")
+                builder.appendLine()
+                val componentNames = architecture.components.associate { it.id to it.name }
+                architecture.relationships.forEach { relationship ->
+                    val from = componentNames[relationship.fromComponentId] ?: relationship.fromComponentId
+                    val to = componentNames[relationship.toComponentId] ?: relationship.toComponentId
+                    val uncertainty = if (relationship.uncertain) " · uncertain" else ""
+                    builder.appendLine(
+                        "- $from → $to (${relationship.kind.replace('_', ' ')}$uncertainty): ${relationship.description}",
+                    )
+                }
+            }
+
+            if (architecture.crossCuttingConcerns.isNotEmpty()) {
+                builder.appendLine()
+                builder.appendLine("### Cross-cutting Concerns")
+                builder.appendLine()
+                architecture.crossCuttingConcerns.forEach { builder.appendLine("- $it") }
+            }
+
+            if (architecture.coverageNotes.isNotEmpty()) {
+                builder.appendLine()
+                builder.appendLine("### Coverage Notes")
+                builder.appendLine()
+                architecture.coverageNotes.forEach { builder.appendLine("- $it") }
+            }
+        }
+
+        if (flowMap.learningPath.isNotEmpty()) {
+            builder.appendLine()
+            builder.appendLine("## Learning Path")
+            val componentNames = flowMap.architecture?.components?.associate { it.id to it.name }.orEmpty()
+            flowMap.learningPath.forEachIndexed { index, stage ->
+                builder.appendLine()
+                builder.appendLine("### ${index + 1}. ${stage.title}")
+                builder.appendLine()
+                builder.appendLine(stage.goal)
+                val components = stage.componentIds.mapNotNull(componentNames::get)
+                if (components.isNotEmpty()) {
+                    builder.appendLine("- Components: ${components.joinToString(", ")}")
+                }
+                val stops = stage.stepIds.mapNotNull { stepId ->
+                    flowMap.steps.firstOrNull { it.id == stepId }?.title
+                }
+                if (stops.isNotEmpty()) {
+                    builder.appendLine("- Code stops: ${stops.joinToString(" → ")}")
+                }
+                stage.checkpoint?.takeIf { it.isNotBlank() }
+                    ?.let { builder.appendLine("- Checkpoint: $it") }
+            }
+        }
+
         val entryTitle = flowMap.steps.firstOrNull { it.id == flowMap.entryStepId }?.title
         val terminalTitles = flowMap.terminalStepIds.mapNotNull { terminalId ->
             flowMap.steps.firstOrNull { it.id == terminalId }?.title

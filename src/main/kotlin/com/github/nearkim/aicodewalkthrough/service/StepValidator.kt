@@ -1,17 +1,24 @@
 package com.github.nearkim.aicodewalkthrough.service
 
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
+import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.LearningStage
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
 class StepValidator(private val projectBasePath: String) {
 
     private val symbolPatterns = listOf("def ", "class ", "fun ", "function ")
     private val fileCache = mutableMapOf<Path, List<String>>()
+    private val projectRoot = Path.of(projectBasePath).toAbsolutePath().normalize()
+    private val realProjectRoot = runCatching { projectRoot.toRealPath() }.getOrDefault(projectRoot)
 
     fun validate(flowMap: FlowMap): FlowMap {
         val validatedSteps = validate(flowMap.steps)
@@ -19,9 +26,13 @@ class StepValidator(private val projectBasePath: String) {
         val validatedEdges = validateEdges(flowMap.edges, validatedSteps, stepById)
         val entryStepId = resolveEntryStepId(flowMap.entryStepId, validatedSteps, validatedEdges)
         val terminalStepIds = resolveTerminalStepIds(flowMap.terminalStepIds, validatedSteps, validatedEdges)
+        val architecture = validateArchitecture(flowMap.architecture)
+        val learningPath = validateLearningPath(flowMap.learningPath, architecture, validatedSteps)
 
         return flowMap.copy(
             steps = validatedSteps,
+            architecture = architecture,
+            learningPath = learningPath,
             entryStepId = entryStepId,
             terminalStepIds = terminalStepIds,
             edges = validatedEdges,
@@ -31,6 +42,132 @@ class StepValidator(private val projectBasePath: String) {
     fun validate(steps: List<FlowStep>): List<FlowStep> {
         val validated = steps.map { step -> validateStep(step) }
         return deduplicate(validated)
+    }
+
+    private fun validateArchitecture(architecture: CodebaseArchitecture?): CodebaseArchitecture? {
+        architecture ?: return null
+        if (architecture.systemPurpose.isBlank()) return null
+        val components = architecture.components
+            .mapNotNull(::validateArchitectureComponent)
+            .distinctBy { it.id }
+        if (components.isEmpty()) return null
+
+        val componentById = components.associateBy { it.id }
+        val relationships = architecture.relationships
+            .mapNotNull { validateComponentRelationship(it, componentById) }
+            .groupBy { Triple(it.fromComponentId, it.toComponentId, it.kind) }
+            .values
+            .map { duplicates ->
+                duplicates.maxWithOrNull(
+                    compareBy<ComponentRelationship> { if (it.uncertain) 0 else 1 }
+                        .thenBy { it.evidence.size },
+                ) ?: duplicates.first()
+            }
+
+        return architecture.copy(
+            components = components,
+            relationships = relationships,
+            crossCuttingConcerns = architecture.crossCuttingConcerns.cleanTextItems(),
+            coverageNotes = architecture.coverageNotes.cleanTextItems(),
+        )
+    }
+
+    private fun validateArchitectureComponent(component: ArchitectureComponent): ArchitectureComponent? {
+        if (component.id.isBlank() || component.name.isBlank() || component.responsibility.isBlank()) return null
+
+        val validationNotes = mutableListOf<String>()
+        val keyPaths = component.keyPaths.mapNotNull(::normalizeExistingProjectPath).distinct()
+        val pathsChanged = keyPaths.size != component.keyPaths.distinct().size
+        if (pathsChanged) {
+            validationNotes += "Removed architecture paths that do not resolve inside the project."
+        }
+        if (keyPaths.isEmpty()) return null
+
+        val defaultEvidencePath = keyPaths.firstOrNull { path ->
+            resolveProjectPath(path)?.let(Files::isRegularFile) == true
+        }.orEmpty()
+        val evidenceResult = sanitizeEvidence(component.evidence, defaultEvidencePath, validationNotes)
+
+        return component.copy(
+            kind = component.kind.ifBlank { "component" },
+            keyPaths = keyPaths,
+            keySymbols = component.keySymbols.cleanTextItems(),
+            evidence = evidenceResult.value,
+            uncertain = component.uncertain || pathsChanged || evidenceResult.changed,
+            validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+        )
+    }
+
+    private fun validateComponentRelationship(
+        relationship: ComponentRelationship,
+        componentById: Map<String, ArchitectureComponent>,
+    ): ComponentRelationship? {
+        if (relationship.id.isBlank() || relationship.description.isBlank()) return null
+        val fromComponent = componentById[relationship.fromComponentId] ?: return null
+        if (componentById[relationship.toComponentId] == null) return null
+        if (relationship.fromComponentId == relationship.toComponentId) return null
+
+        val validationNotes = mutableListOf<String>()
+        val defaultEvidencePath = fromComponent.keyPaths.firstOrNull { path ->
+            resolveProjectPath(path)?.let(Files::isRegularFile) == true
+        }.orEmpty()
+        val evidenceResult = sanitizeEvidence(relationship.evidence, defaultEvidencePath, validationNotes)
+        val missingFileEvidence = evidenceResult.value.none { !it.filePath.isNullOrBlank() }
+        if (missingFileEvidence) {
+            validationNotes += "No valid file evidence was supplied for this component relationship."
+        }
+
+        return relationship.copy(
+            kind = relationship.kind.ifBlank { "depends_on" },
+            evidence = evidenceResult.value,
+            uncertain = relationship.uncertain || evidenceResult.changed || missingFileEvidence,
+            validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+        )
+    }
+
+    private fun validateLearningPath(
+        learningPath: List<LearningStage>,
+        architecture: CodebaseArchitecture?,
+        steps: List<FlowStep>,
+    ): List<LearningStage> {
+        val componentIds = architecture?.components?.mapTo(mutableSetOf()) { it.id }.orEmpty()
+        val navigableSteps = steps.filterNot { it.broken }
+        val assignedStepIds = mutableSetOf<String>()
+
+        val validatedStages = learningPath.distinctBy { it.id }.mapNotNull { stage ->
+            if (stage.id.isBlank() || stage.title.isBlank() || stage.goal.isBlank()) return@mapNotNull null
+            val validStageComponents = stage.componentIds.filter { it in componentIds }.distinct()
+            val validStageSteps = navigableSteps
+                .filter { it.id in stage.stepIds && assignedStepIds.add(it.id) }
+                .map { it.id }
+            if (validStageComponents.isEmpty() && validStageSteps.isEmpty()) return@mapNotNull null
+            stage.copy(
+                componentIds = validStageComponents,
+                stepIds = validStageSteps,
+                checkpoint = stage.checkpoint?.trim()?.takeIf { it.isNotEmpty() },
+            )
+        }.toMutableList()
+
+        val unassignedStepIds = navigableSteps.map { it.id }.filter { it !in assignedStepIds }
+        if (validatedStages.isNotEmpty() && unassignedStepIds.isNotEmpty()) {
+            val lastIndex = validatedStages.lastIndex
+            validatedStages[lastIndex] = validatedStages[lastIndex].copy(
+                stepIds = (validatedStages[lastIndex].stepIds + unassignedStepIds).distinct(),
+            )
+        }
+
+        if (validatedStages.isEmpty() && architecture != null && navigableSteps.isNotEmpty()) {
+            return listOf(
+                LearningStage(
+                    id = "derived-guided-path",
+                    title = "Guided code path",
+                    goal = "Connect the system architecture to its representative runtime behavior.",
+                    componentIds = architecture.components.map { it.id },
+                    stepIds = navigableSteps.map { it.id },
+                ),
+            )
+        }
+        return validatedStages
     }
 
     private fun validateStep(step: FlowStep): FlowStep {
@@ -148,26 +285,35 @@ class StepValidator(private val projectBasePath: String) {
         validationNotes: MutableList<String>,
     ): ValidationResult<List<EvidenceItem>> {
         var changed = false
-        val sanitized = evidence.map { item ->
-            val targetPath = item.filePath?.takeIf { it.isNotBlank() } ?: defaultFilePath
-            val lines = readFileLines(targetPath)
-            if (lines == null || item.startLine == null) {
-                item
-            } else {
-                val fileLineCount = lines.size
-                val start = item.startLine.coerceIn(1, fileLineCount)
-                val requestedEnd = item.endLine ?: item.startLine
-                val end = requestedEnd.coerceIn(start, fileLineCount)
-                if (start != item.startLine || end != requestedEnd) {
-                    changed = true
-                    validationNotes += "Clamped evidence ${item.label.quote()} to L$start-L$end."
-                }
-                item.copy(
-                    filePath = targetPath,
-                    startLine = start,
-                    endLine = end,
-                )
+        val sanitized = evidence.mapNotNull { item ->
+            val explicitPath = item.filePath?.takeIf { it.isNotBlank() }
+            if (explicitPath == null && item.startLine == null) return@mapNotNull item
+
+            val targetPath = explicitPath ?: defaultFilePath
+            val normalizedPath = normalizeExistingProjectPath(targetPath, requireRegularFile = true)
+            val lines = normalizedPath?.let(::readFileLines)
+            if (normalizedPath == null || lines == null || (item.startLine != null && lines.isEmpty())) {
+                changed = true
+                validationNotes += "Dropped evidence ${item.label.quote()} because it does not resolve to a project file."
+                return@mapNotNull null
             }
+            if (item.startLine == null) {
+                return@mapNotNull item.copy(filePath = normalizedPath)
+            }
+
+            val fileLineCount = lines.size
+            val start = item.startLine.coerceIn(1, fileLineCount)
+            val requestedEnd = item.endLine ?: item.startLine
+            val end = requestedEnd.coerceIn(start, fileLineCount)
+            if (start != item.startLine || end != requestedEnd) {
+                changed = true
+                validationNotes += "Clamped evidence ${item.label.quote()} to L$start-L$end."
+            }
+            item.copy(
+                filePath = normalizedPath,
+                startLine = start,
+                endLine = end,
+            )
         }
         return ValidationResult(sanitized, changed)
     }
@@ -317,7 +463,7 @@ class StepValidator(private val projectBasePath: String) {
     }
 
     private fun readFileLines(relativePath: String): List<String>? {
-        val resolvedPath = Path.of(projectBasePath).resolve(relativePath).normalize()
+        val resolvedPath = resolveProjectPath(relativePath) ?: return null
         fileCache[resolvedPath]?.let { return it }
         if (!Files.isRegularFile(resolvedPath)) {
             return null
@@ -325,6 +471,39 @@ class StepValidator(private val projectBasePath: String) {
         return try {
             Files.readAllLines(resolvedPath).also { fileCache[resolvedPath] = it }
         } catch (_: java.io.IOException) {
+            null
+        }
+    }
+
+    private fun normalizeExistingProjectPath(
+        path: String,
+        requireRegularFile: Boolean = false,
+    ): String? {
+        val resolvedPath = resolveProjectPath(path) ?: return null
+        if (!Files.exists(resolvedPath)) return null
+        if (requireRegularFile && !Files.isRegularFile(resolvedPath)) return null
+        return projectRoot.relativize(resolvedPath)
+            .joinToString("/") { it.toString() }
+            .ifBlank { "." }
+    }
+
+    private fun resolveProjectPath(path: String): Path? {
+        if (path.isBlank()) return null
+        return try {
+            val requestedPath = Path.of(path)
+            val resolvedPath = if (requestedPath.isAbsolute) {
+                requestedPath.normalize()
+            } else {
+                projectRoot.resolve(requestedPath).normalize()
+            }
+            if (!resolvedPath.startsWith(projectRoot)) return null
+
+            if (Files.exists(resolvedPath)) {
+                val realPath = runCatching { resolvedPath.toRealPath() }.getOrNull() ?: return null
+                if (!realPath.startsWith(realProjectRoot)) return null
+            }
+            resolvedPath
+        } catch (_: InvalidPathException) {
             null
         }
     }
@@ -358,6 +537,8 @@ class StepValidator(private val projectBasePath: String) {
     }
 
     private fun String.orNullIfBlank(): String? = takeIf { it.isNotBlank() }
+
+    private fun List<String>.cleanTextItems(): List<String> = map(String::trim).filter(String::isNotEmpty).distinct()
 
     private fun String.quote(): String = "\"$this\""
 

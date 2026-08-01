@@ -1,9 +1,13 @@
 package com.github.nearkim.aicodewalkthrough.util
 
 import com.github.nearkim.aicodewalkthrough.model.AnalysisTrace
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
+import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.LearningStage
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
@@ -129,5 +133,74 @@ class FlowMapMarkdownExporterTest {
 
         assertTrue(markdown.contains("- Status: needs repair"))
         assertTrue(markdown.contains("- Repair note: Resolved line range exceeded file length"))
+    }
+
+    @Test
+    fun `build presents architecture before the staged learning path`() {
+        val flowMap = FlowMap(
+            mode = "understand",
+            summary = "A controller delegates to the application service.",
+            architecture = CodebaseArchitecture(
+                systemPurpose = "Turn user requests into grounded code tours.",
+                components = listOf(
+                    ArchitectureComponent(
+                        id = "ui",
+                        name = "Tool window",
+                        kind = "presentation",
+                        responsibility = "Collects questions and renders walkthrough state.",
+                        keyPaths = listOf("src/CodeTourPanel.kt"),
+                        keySymbols = listOf("CodeTourPanel"),
+                    ),
+                    ArchitectureComponent(
+                        id = "session",
+                        name = "Tour session",
+                        kind = "application",
+                        responsibility = "Coordinates mapping and navigation.",
+                        keyPaths = listOf("src/TourSessionService.kt"),
+                    ),
+                ),
+                relationships = listOf(
+                    ComponentRelationship(
+                        id = "ui-session",
+                        fromComponentId = "ui",
+                        toComponentId = "session",
+                        kind = "calls",
+                        description = "UI actions delegate to the session service.",
+                    ),
+                ),
+                crossCuttingConcerns = listOf("All rendered locations are validated."),
+                coverageNotes = listOf("Provider internals were summarized, not traced line by line."),
+            ),
+            learningPath = listOf(
+                LearningStage(
+                    id = "orientation",
+                    title = "Orient to the system",
+                    goal = "Understand the UI-to-session boundary.",
+                    componentIds = listOf("ui", "session"),
+                    stepIds = listOf("step-1"),
+                    checkpoint = "Which service owns state transitions?",
+                ),
+            ),
+            steps = listOf(
+                FlowStep(
+                    id = "step-1",
+                    title = "Submit a question",
+                    filePath = "src/CodeTourPanel.kt",
+                    startLine = 1,
+                    endLine = 10,
+                    explanation = "The UI delegates the request.",
+                    whyIncluded = "This is the learning path entrypoint.",
+                ),
+            ),
+        )
+
+        val markdown = FlowMapMarkdownExporter.build(null, flowMap, null)
+
+        assertTrue(markdown.contains("## Architecture"))
+        assertTrue(markdown.contains("Tool window → Tour session (calls)"))
+        assertTrue(markdown.contains("## Learning Path"))
+        assertTrue(markdown.contains("Checkpoint: Which service owns state transitions?"))
+        assertTrue(markdown.indexOf("## Architecture") < markdown.indexOf("## Learning Path"))
+        assertTrue(markdown.indexOf("## Learning Path") < markdown.indexOf("## Steps"))
     }
 }

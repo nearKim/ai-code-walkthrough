@@ -9,6 +9,61 @@ object PromptContract {
           "type": "flow_map",
           "mode": "understand|review|trace|risk|comment",
           "summary": "One-paragraph high-level answer.",
+          "architecture": {
+            "system_purpose": "What the system is for and the primary behavior it owns.",
+            "components": [
+              {
+                "id": "component-application",
+                "name": "Application layer",
+                "kind": "entrypoint|presentation|application|domain|data|integration|infrastructure|shared|test",
+                "responsibility": "The cohesive responsibility owned by this component.",
+                "key_paths": ["src/main/relative/path"],
+                "key_symbols": ["ImportantType", "importantFunction"],
+                "evidence": [
+                  {
+                    "kind": "symbol|reference|line_range|config|test|note",
+                    "label": "What proves this responsibility",
+                    "file_path": "relative/path/to/file.kt",
+                    "start_line": 12,
+                    "end_line": 18,
+                    "text": "Optional short supporting text."
+                  }
+                ],
+                "uncertain": false
+              }
+            ],
+            "relationships": [
+              {
+                "id": "relationship-1",
+                "from_component_id": "component-application",
+                "to_component_id": "component-domain",
+                "kind": "calls|depends_on|creates|publishes|subscribes|reads|writes|configures|tests",
+                "description": "How and why the two components interact.",
+                "evidence": [
+                  {
+                    "kind": "reference|line_range|config|test|note",
+                    "label": "The concrete interaction",
+                    "file_path": "relative/path/to/file.kt",
+                    "start_line": 20,
+                    "end_line": 20
+                  }
+                ],
+                "uncertain": false
+              }
+            ],
+            "cross_cutting_concerns": ["Configuration, error handling, observability, security, or testing patterns."],
+            "coverage_notes": ["Areas intentionally not inspected deeply or conclusions that remain uncertain."]
+          },
+          "learning_path": [
+            {
+              "id": "stage-1",
+              "title": "System orientation",
+              "goal": "What the learner will understand after this stage.",
+              "component_ids": ["component-application", "component-domain"],
+              "step_ids": ["step-1", "step-2"],
+              "checkpoint": "A concrete question the learner should be able to answer before continuing."
+            }
+          ],
           "entry_step_id": "step-1",
           "terminal_step_ids": ["step-6"],
           "analysis_trace": {
@@ -131,15 +186,15 @@ object PromptContract {
 
         Rules:
         1. Always respond with valid JSON matching one of the schemas above. No markdown, no extra text.
-        2. Explore the codebase thoroughly before answering.
+        2. Explore the codebase thoroughly before answering. Read repository instructions, build manifests, module boundaries, dependency wiring, entrypoints, core domain models, persistence/integrations, and tests when they exist and are relevant.
         3. Use file paths relative to the project root.
         4. Return type "clarification" when the question is ambiguous or you need more information to give a useful answer.
-        5. Return a grounded execution path, not a bag of related files. Identify the entrypoint, the important hops, and where the path terminates.
+        5. Return a grounded execution path, not a bag of related files. Identify the entrypoint, the important hops, and where the path terminates. For understand mode, place that path inside a grounded architecture and curriculum.
         6. Order steps by execution sequence or reviewer priority depending on the requested mode. For review/risk mode, order by severity and relevance rather than strict file order.
         7. Populate entry_step_id and terminal_step_ids. entry_step_id must point to the first real step in the path.
         8. Include edges for the important path transitions. Every non-terminal step should usually have at least one outgoing edge unless the path legitimately stops there.
         9. Prefer call-site grounded edges. When possible, populate call_site_* for the exact line or branch that leads to the next step.
-        10. explanation is the 1-2 sentence TL;DR rendered as an editor inlay — keep it tight. detailed_explanation is the 2-4 paragraph deep dive rendered in the plugin side panel: cover step-by-step behavior, edge cases, invariants, and side effects a reviewer would want. why_included is a single sentence on why this step matters in the flow. Do not repeat content across the three fields.
+        10. explanation is the 1-2 sentence TL;DR rendered as an editor inlay — keep it tight. detailed_explanation is the 2-4 paragraph deep dive rendered in the plugin side panel: teach inputs, outputs, control flow, collaborators, state changes, invariants, edge cases, side effects, and important design tradeoffs when they apply. why_included is a single sentence on why this step matters in the flow. Do not repeat content across the three fields.
         11. Mark uncertain: true for steps or edges that are inferred rather than directly traced from code.
         12. Always populate the symbol field when the step targets a specific function, class, or method.
         13. Populate step_type and importance for each step.
@@ -160,11 +215,19 @@ object PromptContract {
         25. Keep the path focused. Include side branches only when they materially change execution, risk, or review outcome.
         26. If a feature_scope is provided in the user request, keep the walkthrough bounded to that feature's allowed_file_paths and supporting_symbols unless you are explicitly documenting a boundary crossing.
         27. If a feature_scope is provided, treat files outside the scope as external boundaries, not as primary steps, unless they are necessary to explain a dependency edge.
+        28. For understand mode, always populate architecture and learning_path. For review and trace modes, include them only when they materially clarify the requested scope.
+        29. Build architecture components from cohesive runtime or ownership boundaries, not one component per directory. Every internal component must include at least one existing key_path and concrete evidence.
+        30. Ground each architecture relationship in an import, call, dependency-injection binding, configuration edge, message contract, schema, or test. Mark inferred relationships uncertain.
+        31. Order learning_path from system orientation to component responsibilities to representative end-to-end behavior. Every returned step must belong to exactly one learning stage, and stage step_ids must follow the order of steps.
+        32. For a whole-codebase learning request, cover every major first-party subsystem at architecture level, then choose representative execution paths that explain how those subsystems collaborate. Do not exhaust the step budget on repetitive files.
+        33. Use coverage_notes to name generated/vendor/build output that was intentionally excluded, important areas not inspected deeply, and any material uncertainty. Never claim complete coverage when evidence is incomplete.
+        34. Treat tests as executable documentation: use them to confirm component contracts, boundary behavior, and important variants, but do not replace production-code steps with test-only steps unless the test is the clearest contract.
+        35. Respect max_steps from the user payload. Prefer fewer high-information steps with precise ranges over broad file-sized steps.
     """.trimIndent()
 
     private val mcpAddendum = """
 
-        28. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
+        36. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
             - get_symbols_overview(relative_path): understand a file's full symbol structure without reading every line. Start here when opening any file.
             - find_symbol(name_path, relative_path, depth=1, include_body=true): use this to locate the exact symbol and get precise start/end lines.
             - find_referencing_symbols(name_path, relative_path): use this to trace call flow between symbols.

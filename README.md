@@ -1,52 +1,44 @@
-# ai-code-walkthrough
+# AI Code Walkthrough
 
-![Build](https://github.com/nearKim/ai-code-walkthrough/workflows/Build/badge.svg)
-[![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
-[![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
+AI Code Walkthrough is an IntelliJ Platform plugin for learning an unfamiliar repository from the outside in. It maps the system architecture and component relationships first, builds a staged learning path, and then walks the validated code stops directly in the editor.
 
-## Template ToDo list
-- [x] Create a new [IntelliJ Platform Plugin Template][template] project.
-- [ ] Get familiar with the [template documentation][template].
-- [ ] Adjust the [pluginGroup](./gradle.properties) and [pluginName](./gradle.properties), as well as the [id](./src/main/resources/META-INF/plugin.xml) and [sources package](./src/main/kotlin).
-- [ ] Adjust the plugin description in `README` (see [Tips][docs:plugin-description])
-- [ ] Review the [Legal Agreements](https://plugins.jetbrains.com/docs/marketplace/legal-agreements.html?from=IJPluginTemplate).
-- [ ] [Publish a plugin manually](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate) for the first time.
-- [ ] Set the `MARKETPLACE_ID` in the above README badges. You can obtain it once the plugin is published to JetBrains Marketplace.
-- [ ] Set the [Plugin Signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html?from=IJPluginTemplate) related [secrets](https://github.com/JetBrains/intellij-platform-plugin-template#environment-variables).
-- [ ] Set the [Deployment Token](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html?from=IJPluginTemplate).
-- [ ] Click the <kbd>Watch</kbd> button on the top of the [IntelliJ Platform Plugin Template][template] to be notified about releases containing new features and fixes.
-- [ ] Configure the [CODECOV_TOKEN](https://docs.codecov.com/docs/quick-start) secret for automated test coverage reports on PRs
+## Learning workflow
 
-<!-- Plugin description -->
-This Fancy IntelliJ Platform Plugin is going to be your implementation of the brilliant ideas that you have.
+1. **Map the architecture** — identify the system purpose, major components, ownership boundaries, representative paths, and cross-cutting concerns.
+2. **Understand the relationships** — show grounded calls, dependencies, data movement, configuration, and test boundaries between components.
+3. **Follow a curriculum** — progress from system orientation through component responsibilities to representative end-to-end execution paths.
+4. **Read the real code** — open validated symbols and line ranges with editor explanations, important-line annotations, and next-hop previews.
+5. **Interrogate each step** — ask scoped follow-up questions without remapping the repository.
 
-This specific section is a source for the [plugin.xml](/src/main/resources/META-INF/plugin.xml) file which will be extracted by the [Gradle](/build.gradle.kts) during the build process.
+Choose **Learn** and leave the prompt blank to generate a whole-codebase lesson. Add a prompt to focus the architecture and curriculum on a subsystem or behavior. **Review** and **Trace** remain available for risk-oriented and concrete execution-path walkthroughs.
 
-To keep everything working, do not remove `<!-- ... -->` sections. 
-<!-- Plugin description end -->
+## Grounding model
+
+The model proposes the architecture and code path; the plugin validates before rendering:
+
+- Grounded walkthroughs require Codex CLI or Claude CLI so the provider can inspect the local repository.
+- Component anchors must resolve inside the project.
+- Step files, symbols, line annotations, evidence, and next-hop call sites are checked or repaired.
+- Invalid component relationships and learning-stage references are removed.
+- Coverage notes identify areas that were intentionally excluded or not inspected deeply.
+
+The plugin is language-agnostic and targets IntelliJ Platform 2025.2 or newer.
+
+## Build and test
+
+```bash
+./gradlew build
+./gradlew test
+./gradlew runIde
+./gradlew verifyPlugin
+```
 
 ## Installation
 
-- Using the IDE built-in plugin system:
+Build the plugin and install the generated archive through:
 
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>Marketplace</kbd> > <kbd>Search for "ai-code-walkthrough"</kbd> >
-  <kbd>Install</kbd>
+<kbd>Settings/Preferences</kbd> → <kbd>Plugins</kbd> → <kbd>⚙</kbd> → <kbd>Install Plugin from Disk…</kbd>
 
-- Using JetBrains Marketplace:
-
-  Go to [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID) and install it by clicking the <kbd>Install to ...</kbd> button in case your IDE is running.
-
-  You can also download the [latest release](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID/versions) from JetBrains Marketplace and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
-
-- Manually:
-
-  Download the [latest release](https://github.com/nearKim/ai-code-walkthrough/releases/latest) and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
-
-
----
-Plugin based on the [IntelliJ Platform Plugin Template][template].
-
-[template]: https://github.com/JetBrains/intellij-platform-plugin-template
-[docs:plugin-description]: https://plugins.jetbrains.com/docs/intellij/plugin-user-experience.html#plugin-description-and-presentation
+<!-- Plugin description -->
+AI Code Walkthrough turns an unfamiliar repository into a grounded learning path. It maps component architecture and relationships, organizes the important concepts into stages, and guides you through validated code locations directly in the editor. Use Codex CLI or Claude CLI for repository-aware analysis, next-hop previews, and scoped follow-up questions.
+<!-- Plugin description end -->

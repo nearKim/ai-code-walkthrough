@@ -52,7 +52,7 @@ class InputCard(
     private val promptArea = JBTextArea().apply {
         lineWrap = true
         wrapStyleWord = true
-        emptyText.setText("Ask about this codebase...")
+        emptyText.setText("Optional: focus the codebase lesson on a subsystem or question")
         margin = JBUI.insets(8, 10)
     }
 
@@ -103,8 +103,8 @@ class InputCard(
         })
 
         promptArea.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-            override fun insertUpdate(e: javax.swing.event.DocumentEvent) = clearError()
-            override fun removeUpdate(e: javax.swing.event.DocumentEvent) = clearError()
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent) = promptChanged()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent) = promptChanged()
             override fun changedUpdate(e: javax.swing.event.DocumentEvent) {}
         })
 
@@ -130,8 +130,8 @@ class InputCard(
     }
 
     private fun submit() {
-        val prompt = promptArea.text?.trim().orEmpty()
-        if (prompt.isEmpty()) {
+        val prompt = selectedMode.resolveQuestion(promptArea.text.orEmpty())
+        if (prompt == null) {
             showError("Please enter a prompt before starting a walkthrough.")
             return
         }
@@ -242,6 +242,28 @@ class InputCard(
                 card.border = defaultBorder
                 card.background = JBColor.PanelBackground
             }
+        }
+        updatePromptAffordance()
+    }
+
+    private fun promptChanged() {
+        clearError()
+        updatePromptAffordance()
+    }
+
+    private fun updatePromptAffordance() {
+        val canLearnWholeCodebase = selectedMode == AnalysisMode.UNDERSTAND
+        promptArea.emptyText.setText(
+            if (canLearnWholeCodebase) {
+                "Optional: focus the codebase lesson on a subsystem or question"
+            } else {
+                "Ask about this codebase..."
+            },
+        )
+        submitButton.text = if (canLearnWholeCodebase && promptArea.text.isNullOrBlank()) {
+            "Learn codebase"
+        } else {
+            "Start walkthrough"
         }
     }
 

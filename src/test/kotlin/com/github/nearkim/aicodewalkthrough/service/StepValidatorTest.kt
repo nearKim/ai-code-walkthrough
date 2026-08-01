@@ -1,8 +1,12 @@
 package com.github.nearkim.aicodewalkthrough.service
 
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
+import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.LearningStage
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import org.junit.Assert.assertEquals
@@ -300,6 +304,166 @@ class StepValidatorTest {
             assertNotNull(edge.validationNote)
         } finally {
             root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `validate grounds architecture relationships and learning stages`() {
+        val root = Files.createTempDirectory("architecture-validator")
+        try {
+            val sourceDir = root.resolve("src")
+            Files.createDirectories(sourceDir)
+            Files.writeString(sourceDir.resolve("App.kt"), "fun start() = runService()\n")
+            Files.writeString(sourceDir.resolve("Service.kt"), "fun runService() = Unit\n")
+
+            val validated = StepValidator(root.toString()).validate(
+                FlowMap(
+                    mode = "understand",
+                    summary = "Application delegates to a service.",
+                    architecture = CodebaseArchitecture(
+                        systemPurpose = "Demonstrate an application boundary.",
+                        components = listOf(
+                            ArchitectureComponent(
+                                id = "application",
+                                name = "Application",
+                                kind = "application",
+                                responsibility = "Owns the entrypoint.",
+                                keyPaths = listOf("src/App.kt", "../outside.kt"),
+                                evidence = listOf(
+                                    EvidenceItem(
+                                        kind = "symbol",
+                                        label = "start",
+                                        filePath = "src/App.kt",
+                                        startLine = 1,
+                                    ),
+                                ),
+                            ),
+                            ArchitectureComponent(
+                                id = "service",
+                                name = "Service",
+                                kind = "domain",
+                                responsibility = "Runs the core behavior.",
+                                keyPaths = listOf("src/Service.kt"),
+                            ),
+                            ArchitectureComponent(
+                                id = "invented",
+                                name = "Invented",
+                                kind = "integration",
+                                responsibility = "Does not exist.",
+                                keyPaths = listOf("src/Missing.kt"),
+                            ),
+                        ),
+                        relationships = listOf(
+                            ComponentRelationship(
+                                id = "application-service",
+                                fromComponentId = "application",
+                                toComponentId = "service",
+                                kind = "calls",
+                                description = "The entrypoint calls the service.",
+                                evidence = listOf(
+                                    EvidenceItem(
+                                        kind = "reference",
+                                        label = "runService call",
+                                        filePath = "src/App.kt",
+                                        startLine = 1,
+                                    ),
+                                ),
+                            ),
+                            ComponentRelationship(
+                                id = "application-invented",
+                                fromComponentId = "application",
+                                toComponentId = "invented",
+                                kind = "calls",
+                                description = "This target is not grounded.",
+                            ),
+                        ),
+                    ),
+                    learningPath = listOf(
+                        LearningStage(
+                            id = "orientation",
+                            title = "Orientation",
+                            goal = "Understand the application boundary.",
+                            componentIds = listOf("application", "invented"),
+                            stepIds = listOf("start", "missing"),
+                        ),
+                        LearningStage(
+                            id = "core",
+                            title = "Core behavior",
+                            goal = "Follow the service call.",
+                            componentIds = listOf("service"),
+                            stepIds = listOf("start", "service"),
+                        ),
+                    ),
+                    steps = listOf(
+                        FlowStep(
+                            id = "start",
+                            title = "Start",
+                            filePath = "src/App.kt",
+                            symbol = "start",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Starts the app.",
+                            whyIncluded = "It is the entrypoint.",
+                        ),
+                        FlowStep(
+                            id = "service",
+                            title = "Run service",
+                            filePath = "src/Service.kt",
+                            symbol = "runService",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Runs the service.",
+                            whyIncluded = "It owns the core behavior.",
+                        ),
+                    ),
+                ),
+            )
+
+            val architecture = validated.architecture ?: error("Expected a validated architecture")
+            assertEquals(listOf("application", "service"), architecture.components.map { it.id })
+            val application = architecture.components.first()
+            assertEquals(listOf("src/App.kt"), application.keyPaths)
+            assertTrue(application.uncertain)
+            assertEquals(1, architecture.relationships.size)
+            assertEquals("application-service", architecture.relationships.single().id)
+            assertEquals(
+                listOf("start", "service"),
+                validated.learningPath.flatMap { it.stepIds },
+            )
+            assertEquals(listOf("application"), validated.learningPath.first().componentIds)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `validate rejects a step path that escapes the project`() {
+        val root = Files.createTempDirectory("step-validator-root")
+        val outside = Files.createTempFile("step-validator-outside", ".kt")
+        try {
+            Files.writeString(outside, "fun outside() = Unit\n")
+            val escapedPath = root.relativize(outside).toString()
+
+            val validated = StepValidator(root.toString()).validate(
+                listOf(
+                    FlowStep(
+                        id = "outside",
+                        title = "Outside",
+                        filePath = escapedPath,
+                        symbol = "outside",
+                        startLine = 1,
+                        endLine = 1,
+                        explanation = "Must not be read.",
+                        whyIncluded = "The model returned an unsafe path.",
+                    ),
+                ),
+            ).single()
+
+            assertTrue(validated.broken)
+            assertTrue(validated.breakReason!!.contains("File not found"))
+        } finally {
+            root.toFile().deleteRecursively()
+            Files.deleteIfExists(outside)
         }
     }
 

@@ -30,6 +30,9 @@ object PromptEnvelopeFactory {
             put("max_steps", maxSteps)
             put("question", question)
             put("grounding_capabilities", groundingCapabilities(providerCapabilities))
+            if (mode == AnalysisMode.UNDERSTAND) {
+                put("learning_strategy", learningStrategy(question))
+            }
             queryContext?.let { put("query_context", queryContextPayload(it)) }
             followUpContext?.let { put("follow_up_context", followUpContextPayload(it, json)) }
             featureScope?.let { put("feature_scope", featureScopePayload(it)) }
@@ -62,6 +65,16 @@ object PromptEnvelopeFactory {
         put("repo_grounded_walkthrough", providerCapabilities.supportsRepoGroundedWalkthrough)
         put("semantic_navigation_hints", providerCapabilities.supportsSemanticNavigationHints)
         put("delegated_analysis_hints", providerCapabilities.supportsDelegatedAnalysisHints)
+    }
+
+    private fun learningStrategy(question: String) = buildJsonObject {
+        put("architecture_first", true)
+        put(
+            "breadth",
+            if (question == AnalysisMode.DEFAULT_CODEBASE_QUESTION) "whole_codebase" else "question_scoped",
+        )
+        put("progression", "system_to_components_to_runtime_paths")
+        put("report_coverage_gaps", true)
     }
 
     private fun queryContextPayload(context: QueryContext) = buildJsonObject {

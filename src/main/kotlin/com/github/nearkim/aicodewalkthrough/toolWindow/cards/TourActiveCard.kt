@@ -2,6 +2,7 @@ package com.github.nearkim.aicodewalkthrough.toolwindow.cards
 
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
+import com.github.nearkim.aicodewalkthrough.model.LearningStage
 import com.github.nearkim.aicodewalkthrough.model.StepAnswer
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
@@ -51,6 +52,11 @@ class TourActiveCard(
     private val subtitleLabel = JBLabel(" ").apply {
         foreground = mutedForeground()
     }
+    private val stageLabel = JBLabel(" ").apply {
+        foreground = mutedForeground()
+        font = font.deriveFont(Font.BOLD, font.size - 1f)
+        isVisible = false
+    }
     private val goToCodeLink = linkLabel("Go to code") { onGoToCode() }
 
     private val prevButton = JButton("\u25C0 Prev")
@@ -60,6 +66,11 @@ class TourActiveCard(
     private val stepPunch = JBLabel(" ").apply {
         font = font.deriveFont(Font.BOLD, font.size + 1f)
     }
+    private val learningGoal = readOnlyText().apply {
+        foreground = mutedForeground()
+        font = font.deriveFont(Font.ITALIC)
+        isVisible = false
+    }
     private val stepDetail = readOnlyText()
     private val annotationsHeader = JBLabel("Important lines:").apply {
         foreground = mutedForeground()
@@ -67,6 +78,10 @@ class TourActiveCard(
     private val annotationsList = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         alignmentX = Component.LEFT_ALIGNMENT
+    }
+    private val checkpoint = readOnlyText().apply {
+        foreground = mutedForeground()
+        isVisible = false
     }
     private val stepView = buildStepView()
 
@@ -131,9 +146,28 @@ class TourActiveCard(
         registerShortcuts()
     }
 
-    fun setStep(stepIndex: Int, totalSteps: Int, step: FlowStep) {
+    fun setStep(
+        stepIndex: Int,
+        totalSteps: Int,
+        step: FlowStep,
+        stage: LearningStage? = null,
+        stageIndex: Int = -1,
+        totalStages: Int = 0,
+    ) {
         headerLabel.text = "Step ${stepIndex + 1}/$totalSteps \u00B7 ${step.title}"
         subtitleLabel.text = "${step.filePath}:${step.startLine}-${step.endLine}"
+        stageLabel.text = if (stage != null) {
+            "Stage ${stageIndex + 1}/$totalStages · ${stage.title}"
+        } else {
+            " "
+        }
+        stageLabel.isVisible = stage != null
+        learningGoal.text = stage?.let { "Learning goal: ${it.goal}" }.orEmpty()
+        learningGoal.isVisible = stage != null
+        checkpoint.text = stage?.checkpoint?.takeIf { it.isNotBlank() }
+            ?.let { "Before moving on: $it" }
+            .orEmpty()
+        checkpoint.isVisible = checkpoint.text.isNotBlank()
         populateStepView(step)
         currentAnswer = null
         answerPunch.text = " "
@@ -212,6 +246,8 @@ class TourActiveCard(
 
     private fun buildStepView(): JPanel {
         val panel = columnPanel()
+        panel.add(learningGoal.alignLeft())
+        panel.add(Box.createVerticalStrut(6))
         panel.add(stepPunch.alignLeft())
         panel.add(Box.createVerticalStrut(6))
         panel.add(stepDetail.alignLeft())
@@ -219,6 +255,8 @@ class TourActiveCard(
         panel.add(annotationsHeader.alignLeft())
         panel.add(Box.createVerticalStrut(2))
         panel.add(annotationsList.alignLeft())
+        panel.add(Box.createVerticalStrut(8))
+        panel.add(checkpoint.alignLeft())
         panel.add(Box.createVerticalGlue())
         return panel
     }
@@ -259,6 +297,7 @@ class TourActiveCard(
             add(JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 add(headerLabel)
+                add(stageLabel)
                 add(subtitleLabel)
             }, BorderLayout.WEST)
             add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {

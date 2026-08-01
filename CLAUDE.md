@@ -25,7 +25,7 @@ There are also pre-configured run configurations in `.run/` for the IDE.
 
 ## Architecture
 
-This is an **IntelliJ Platform Plugin** (targeting IDEA 2025.2+) that answers natural-language questions about a repo by building a grounded execution-path walkthrough, then stepping the user through that path in the editor.
+This is an **IntelliJ Platform Plugin** (targeting IDEA 2025.2+) that teaches an unfamiliar repository from architecture to implementation. It builds a grounded component map and staged learning path, then steps the user through validated execution-path stops in the editor.
 
 The core principle is:
 
@@ -42,7 +42,7 @@ User question (CodeTourPanel)
       → LlmProviderService.requireRepoGroundedWalkthroughSupport()
       → currentProvider().query()                     # grounded walkthroughs require CLI providers
       → parse JSON into LlmResponse / FlowMap
-      → StepValidator.validate(flowMap)              # validates steps, annotations, evidence, and edges
+      → StepValidator.validate(flowMap)              # validates architecture, curriculum, steps, evidence, and edges
     → TourSessionService.handleMappingResult()
       → transitions to OVERVIEW
   → user clicks "Start Tour"
@@ -73,6 +73,8 @@ User question (CodeTourPanel)
 
 Important `FlowMap` fields:
 
+- `architecture`: system purpose, validated components and relationships, cross-cutting concerns, and coverage notes
+- `learning_path`: ordered curriculum stages referencing architecture components and walkthrough steps
 - `steps`: validated `FlowStep` items
 - `entry_step_id`: explicit path entrypoint
 - `terminal_step_ids`: explicit path endpoints
@@ -111,6 +113,8 @@ Important `StepEdge` fields:
 ### Models (`model/` package)
 
 - `FlowMap`
+- `CodebaseArchitecture`, `ArchitectureComponent`, `ComponentRelationship`
+- `LearningStage`
 - `FlowStep`
 - `StepEdge`
 - `AnalysisTrace`
@@ -126,6 +130,8 @@ Important `StepEdge` fields:
 
 It currently:
 
+- rejects component anchors and evidence paths outside the project
+- filters invalid architecture relationships and learning-stage references
 - re-anchors steps to real symbols when possible
 - clamps ranges into real files
 - clamps `line_annotations` into the validated step range
@@ -138,7 +144,9 @@ It does not perform full language-aware call resolution by itself. Strongest res
 
 ### Navigation and rendering behavior
 
-- The active tour uses validated outgoing edges first when picking the next step.
+- Learn mode accepts a blank prompt for a whole-codebase architecture and curriculum.
+- The overview presents architecture before the staged learning path.
+- The active tour shows the current learning-stage goal/checkpoint and uses validated outgoing edges first when picking the next step.
 - If no usable edge exists, it falls back to the next non-broken step in list order.
 - The editor preview highlights the validated next-hop `call_site_*` range when available.
 - If no callsite exists, the preview falls back to a symbol-name match inside the current step.

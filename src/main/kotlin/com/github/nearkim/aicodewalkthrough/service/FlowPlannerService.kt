@@ -56,6 +56,8 @@ class FlowPlannerService(private val project: Project) {
                 val validatedFlow = validator().validate(flowMap)
                 llmResponse.copy(
                     steps = validatedFlow.steps,
+                    architecture = validatedFlow.architecture,
+                    learningPath = validatedFlow.learningPath,
                     entryStepId = validatedFlow.entryStepId,
                     terminalStepIds = validatedFlow.terminalStepIds,
                     edges = validatedFlow.edges,

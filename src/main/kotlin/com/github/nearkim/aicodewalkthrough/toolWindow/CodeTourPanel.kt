@@ -67,8 +67,11 @@ class CodeTourPanel(
 
     override fun onStepChanged(stepIndex: Int, step: FlowStep) {
         ApplicationManager.getApplication().invokeLater {
-            val total = session.currentFlowMap?.steps?.size ?: 0
-            tour.setStep(stepIndex, total, step)
+            val flowMap = session.currentFlowMap
+            val total = flowMap?.steps?.size ?: 0
+            val stageIndex = flowMap?.learningPath?.indexOfFirst { step.id in it.stepIds } ?: -1
+            val stage = flowMap?.learningPath?.getOrNull(stageIndex)
+            tour.setStep(stepIndex, total, step, stage, stageIndex, flowMap?.learningPath?.size ?: 0)
         }
     }
 
