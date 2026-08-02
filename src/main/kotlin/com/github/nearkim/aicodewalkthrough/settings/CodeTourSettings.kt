@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.settings
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.github.nearkim.aicodewalkthrough.model.ProviderModelCatalog
+import com.github.nearkim.aicodewalkthrough.model.WalkthroughSettings
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
@@ -42,4 +43,18 @@ class CodeTourSettings : PersistentStateComponent<CodeTourSettings.State> {
         state.claudeModel = ProviderModelCatalog.normalizeClaudeModel(state.claudeModel)
         this.state = state
     }
+
+    fun toWalkthroughSettings(): WalkthroughSettings = WalkthroughSettings(
+        providerId = state.providerId,
+        codexCliPath = state.codexCliPath,
+        codexModel = state.codexModel,
+        codexReasoningEffort = state.codexReasoningEffort,
+        claudePath = state.claudePath,
+        claudeModel = state.claudeModel,
+        claudeEffort = state.claudeEffort,
+        maxSteps = state.maxSteps,
+        defaultModeId = state.defaultModeId,
+        enableMcp = state.enableMcp,
+        mcpConfigPath = state.mcpConfigPath,
+    ).normalized()
 }

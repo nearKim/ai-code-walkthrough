@@ -134,15 +134,17 @@ class EditorDecorationController(private val project: Project) : Disposable {
             effectType = EffectType.BOXED
         }
         val nextTooltip = nextStep?.let { "Next: ${it.title}" }
+        val callSiteStartLine = nextEdge?.callSiteStartLine
+        val callSiteEndLine = nextEdge?.callSiteEndLine
         val renderedNextHop = if (
             nextStep != null &&
             nextEdge != null &&
             nextEdge.callSiteFilePath == step.filePath &&
-            nextEdge.callSiteStartLine != null &&
-            nextEdge.callSiteEndLine != null
+            callSiteStartLine != null &&
+            callSiteEndLine != null
         ) {
-            val callStart = (nextEdge.callSiteStartLine - 1).coerceIn(startLine, endLine)
-            val callEnd = (nextEdge.callSiteEndLine - 1).coerceIn(callStart, endLine)
+            val callStart = (callSiteStartLine - 1).coerceIn(startLine, endLine)
+            val callEnd = (callSiteEndLine - 1).coerceIn(callStart, endLine)
             val callStartOffset = document.getLineStartOffset(callStart)
             val callEndOffset = document.getLineEndOffset(callEnd)
             val hl = editor.markupModel.addRangeHighlighter(

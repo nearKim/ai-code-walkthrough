@@ -178,10 +178,11 @@ data class ClaudeEnvelope(
     @SerialName("num_turns") val numTurns: Int? = null,
 )
 
+@Serializable
 data class ResponseMetadata(
-    val durationMs: Long,
-    val costUsd: Double?,
-    val numTurns: Int,
-    val stepCount: Int,
-    val fileCount: Int,
+    @SerialName("duration_ms") val durationMs: Long,
+    @SerialName("cost_usd") val costUsd: Double?,
+    @SerialName("num_turns") val numTurns: Int,
+    @SerialName("step_count") val stepCount: Int,
+    @SerialName("file_count") val fileCount: Int,
 )

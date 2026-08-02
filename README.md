@@ -1,6 +1,6 @@
 # AI Code Walkthrough
 
-AI Code Walkthrough is an IntelliJ Platform plugin for learning an unfamiliar repository from the outside in. It maps the system architecture and component relationships first, builds a staged learning path, and then walks the validated code stops directly in the editor.
+AI Code Walkthrough is an IntelliJ Platform plugin and local web application for learning an unfamiliar repository from the outside in. It maps the system architecture and component relationships first, builds a staged learning path, and then walks the validated code stops in a read-only editor.
 
 ## Learning workflow
 
@@ -14,7 +14,7 @@ Choose **Learn** and leave the prompt blank to generate a whole-codebase lesson.
 
 ## Grounding model
 
-The model proposes the architecture and code path; the plugin validates before rendering:
+The model proposes the architecture and code path; the shared walkthrough engine validates before either UI renders it:
 
 - Grounded walkthroughs require Codex CLI or Claude CLI so the provider can inspect the local repository.
 - Codex CLI is fixed to `gpt-5.6-sol` with `ultra` or `max` reasoning.
@@ -24,7 +24,21 @@ The model proposes the architecture and code path; the plugin validates before r
 - Invalid component relationships and learning-stage references are removed.
 - Coverage notes identify areas that were intentionally excluded or not inspected deeply.
 
-The plugin is language-agnostic and targets IntelliJ Platform 2025.2 or newer.
+Both clients are language-agnostic. The plugin targets IntelliJ Platform 2025.2 or newer.
+
+## Local web application
+
+Building the web application requires Node.js 22.13 or newer. Run one repository per local server process:
+
+```bash
+./gradlew :web-server:run --args="/path/to/repository"
+
+# Or build a reusable launcher
+./gradlew :web-server:installDist
+./web-server/build/install/ai-code-walkthrough/bin/ai-code-walkthrough /path/to/repository
+```
+
+The server binds to `127.0.0.1`, opens the browser, and serves a resizable split view: local source and temporary line explanations on the left, walkthrough controls on the right. Add `--no-open` or `--port 8080` inside the `--args` value when needed. CLI providers are launched with read-only repository access; browser source requests are restricted to existing UTF-8 files inside the selected repository.
 
 ## Build and test
 
@@ -33,6 +47,11 @@ The plugin is language-agnostic and targets IntelliJ Platform 2025.2 or newer.
 ./gradlew test
 ./gradlew runIde
 ./gradlew verifyPlugin
+
+cd web
+npm test
+npx playwright install chromium # once per machine
+npm run test:e2e
 ```
 
 ## Installation

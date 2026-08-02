@@ -10,15 +10,13 @@ import com.github.nearkim.aicodewalkthrough.model.LearningStage
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import java.nio.file.Files
-import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
 class StepValidator(private val projectBasePath: String) {
 
     private val symbolPatterns = listOf("def ", "class ", "fun ", "function ")
-    private val fileCache = mutableMapOf<Path, List<String>>()
     private val projectRoot = Path.of(projectBasePath).toAbsolutePath().normalize()
-    private val realProjectRoot = runCatching { projectRoot.toRealPath() }.getOrDefault(projectRoot)
+    private val projectFiles = ProjectFiles(projectRoot)
 
     fun validate(flowMap: FlowMap): FlowMap {
         val validatedSteps = validate(flowMap.steps)
@@ -84,7 +82,7 @@ class StepValidator(private val projectBasePath: String) {
         if (keyPaths.isEmpty()) return null
 
         val defaultEvidencePath = keyPaths.firstOrNull { path ->
-            resolveProjectPath(path)?.let(Files::isRegularFile) == true
+            projectFiles.resolveExisting(path, requireRegularFile = true) != null
         }.orEmpty()
         val evidenceResult = sanitizeEvidence(component.evidence, defaultEvidencePath, validationNotes)
 
@@ -109,7 +107,7 @@ class StepValidator(private val projectBasePath: String) {
 
         val validationNotes = mutableListOf<String>()
         val defaultEvidencePath = fromComponent.keyPaths.firstOrNull { path ->
-            resolveProjectPath(path)?.let(Files::isRegularFile) == true
+            projectFiles.resolveExisting(path, requireRegularFile = true) != null
         }.orEmpty()
         val evidenceResult = sanitizeEvidence(relationship.evidence, defaultEvidencePath, validationNotes)
         val missingFileEvidence = evidenceResult.value.none { !it.filePath.isNullOrBlank() }
@@ -463,49 +461,14 @@ class StepValidator(private val projectBasePath: String) {
     }
 
     private fun readFileLines(relativePath: String): List<String>? {
-        val resolvedPath = resolveProjectPath(relativePath) ?: return null
-        fileCache[resolvedPath]?.let { return it }
-        if (!Files.isRegularFile(resolvedPath)) {
-            return null
-        }
-        return try {
-            Files.readAllLines(resolvedPath).also { fileCache[resolvedPath] = it }
-        } catch (_: java.io.IOException) {
-            null
-        }
+        return projectFiles.readLines(relativePath)
     }
 
     private fun normalizeExistingProjectPath(
         path: String,
         requireRegularFile: Boolean = false,
     ): String? {
-        val resolvedPath = resolveProjectPath(path) ?: return null
-        if (!Files.exists(resolvedPath)) return null
-        if (requireRegularFile && !Files.isRegularFile(resolvedPath)) return null
-        return projectRoot.relativize(resolvedPath)
-            .joinToString("/") { it.toString() }
-            .ifBlank { "." }
-    }
-
-    private fun resolveProjectPath(path: String): Path? {
-        if (path.isBlank()) return null
-        return try {
-            val requestedPath = Path.of(path)
-            val resolvedPath = if (requestedPath.isAbsolute) {
-                requestedPath.normalize()
-            } else {
-                projectRoot.resolve(requestedPath).normalize()
-            }
-            if (!resolvedPath.startsWith(projectRoot)) return null
-
-            if (Files.exists(resolvedPath)) {
-                val realPath = runCatching { resolvedPath.toRealPath() }.getOrNull() ?: return null
-                if (!realPath.startsWith(realProjectRoot)) return null
-            }
-            resolvedPath
-        } catch (_: InvalidPathException) {
-            null
-        }
+        return projectFiles.normalizeExisting(path, requireRegularFile)
     }
 
     private fun deduplicate(steps: List<FlowStep>): List<FlowStep> {

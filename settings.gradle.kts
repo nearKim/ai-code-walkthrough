@@ -3,3 +3,5 @@ plugins {
 }
 
 rootProject.name = "ai-code-walkthrough"
+
+include(":core", ":web-server")

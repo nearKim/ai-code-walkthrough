@@ -19,19 +19,34 @@ This file provides guidance to coding agents when working with code in this repo
 
 # Check (compile + test + verify)
 ./gradlew check
+
+# Run the localhost web client for one repository
+./gradlew :web-server:run --args="/path/to/repository"
+
+# Run browser-client checks
+cd web
+npm test
+npm run test:e2e
 ```
 
 There are also pre-configured run configurations in `.run/` for the IDE.
 
 ## Architecture
 
-This is an **IntelliJ Platform Plugin** (targeting IDEA 2025.2+) that teaches an unfamiliar repository from architecture to implementation. It generates a grounded component map and staged learning path, then guides the user through validated execution-path stops in the editor.
+This repository contains an **IntelliJ Platform Plugin** (targeting IDEA 2025.2+) and a **localhost web client**. Both teach an unfamiliar repository from architecture to implementation using the same grounded component map, staged learning path, validation, and path navigation.
 
 The core principle is:
 
 - The model proposes a path.
-- The plugin validates and repairs that path.
-- The IDE only renders validated locations and validated next-hop previews.
+- The shared `core` module validates and repairs that path.
+- The IDE and browser only render validated locations and validated next-hop previews.
+
+The modules are:
+
+- `core/` — provider commands, prompt contracts, response models, validation, navigation, and Markdown export; no IntelliJ dependency
+- root plugin — Swing tool window and IntelliJ editor integration
+- `web-server/` — loopback Ktor server, in-memory session, settings, and repository-contained source API
+- `web/` — React/Mantine controls and a read-only Monaco editor with temporary line explanations
 
 ### Data flow
 
@@ -53,18 +68,25 @@ User question (CodeTourPanel)
     → TourSessionService.askAboutCurrentStep()
       → FlowPlannerService.answerStepQuestion()
       → step-scoped answer + evidence shown in tour panel
+
+Browser request (App)
+  → WebApplication route
+    → WebSession
+      → WalkthroughEngine
+        → CLI provider → parse and validate shared FlowMap
+    → session events over SSE
+  → CodePane fetches repository-contained source and renders validated highlights/inlays
 ```
 
 ### State machine (`TourState`)
 
 `INPUT → LOADING → OVERVIEW → TOUR_ACTIVE`
 
-`TourSessionService` owns the state and notifies observers via `TourSessionListener`. All UI transitions go through this service. `CodeTourPanel` implements `TourSessionListener` and drives the `CardLayout`.
+`TourSessionService` owns plugin state and notifies `TourSessionListener`. `WebSession` owns the equivalent single-process browser state and emits snapshots over SSE.
 
 ### Grounding and provider rules
 
 - Grounded walkthroughs require a provider that can inspect the local repository. In practice, that means `Codex CLI` or `Claude CLI`.
-- API-only providers are available in settings, but the walkthrough planner rejects them for repo-grounded analysis to avoid hallucinating over missing code context.
 - Claude CLI can be augmented with MCP semantic navigation (`find_symbol`, `get_symbols_overview`, `find_referencing_symbols`) for tighter symbol and edge grounding.
 
 ### Response contract
@@ -98,7 +120,8 @@ Important edge fields:
 | Class | Role |
 |---|---|
 | `TourSessionService` | Central session/state coordinator. Tracks walkthrough state, current step, step-answer state, and path-aware navigation history |
-| `FlowPlannerService` | Builds prompts, enforces provider capability checks, parses responses, and runs validation |
+| `WalkthroughEngine` | Shared prompt, provider capability, parsing, validation, and step-answer pipeline |
+| `FlowPlannerService` | Thin IntelliJ adapter over `WalkthroughEngine` |
 | `LlmProviderService` | Chooses provider implementations and blocks unsafe providers for grounded walkthroughs |
 | `ClaudeCliService` / `CodexCliService` | CLI-backed providers that can inspect the local repo |
 | `StepValidator` | Validates `FlowMap` objects: re-anchors symbols, clamps annotations/evidence, validates/synthesizes edges, resolves entry/terminal steps |
@@ -106,8 +129,10 @@ Important edge fields:
 | `CodeTourPanel` | Swing tool window UI for input, overview, active tour, and step-scoped follow-up questions |
 | `ArchitecturePanel` | Architecture-first overview of validated components, relationships, cross-cutting concerns, and coverage gaps |
 | `CodeTourSettings` | Persistent per-project settings for provider selection, model selection, MCP config, and UI toggles |
+| `WebSession` / `WebApplication` | Browser state machine and loopback HTTP/SSE boundary |
+| `App` / `CodePane` | Browser split view and read-only Monaco source decorations |
 
-### Models (`model/` package)
+### Models (`core/.../model/` package)
 
 - `FlowMap` — validated walkthrough path
 - `CodebaseArchitecture` / `ArchitectureComponent` / `ComponentRelationship` — grounded system structure
@@ -158,7 +183,8 @@ All major services are `@Service(Service.Level.PROJECT)` and declared in `plugin
 - Provider requests run on `Dispatchers.IO` inside `TourSessionService.scope`
 - Repository-analysis requests have no wall-clock deadline and run until the CLI exits or the user presses Stop
 - All UI updates and listener callbacks are posted through `ApplicationManager.getApplication().invokeLater { }`
+- The web server uses a coroutine-backed `WebSession`; each process owns one repository and one active mapping request.
 
 ### Testing
 
-There is an active `src/test/` tree. Current tests cover response deserialization, validator behavior, markdown export, navigation, prompt envelopes, and editor decoration. Run `./gradlew test` after changing the response contract, validator, or walkthrough rendering.
+Tests live under `core/src/test`, `src/test`, `web-server/src/test`, `web/src`, and `web/e2e`. Run `./gradlew test`, `npm test`, and `npm run test:e2e` after changing the shared contract or either walkthrough renderer.
