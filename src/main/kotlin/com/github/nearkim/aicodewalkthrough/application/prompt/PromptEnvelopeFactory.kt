@@ -25,9 +25,16 @@ object PromptEnvelopeFactory {
         providerCapabilities: ProviderCapabilities,
         json: Json,
     ): String {
+        val stepLimit = if (
+            mode == AnalysisMode.UNDERSTAND && question == AnalysisMode.DEFAULT_CODEBASE_QUESTION
+        ) {
+            minOf(maxSteps, 12)
+        } else {
+            maxSteps
+        }
         return buildJsonObject {
             put("mode", mode.id)
-            put("max_steps", maxSteps)
+            put("max_steps", stepLimit)
             put("question", question)
             put("grounding_capabilities", groundingCapabilities(providerCapabilities))
             if (mode == AnalysisMode.UNDERSTAND) {
@@ -68,12 +75,14 @@ object PromptEnvelopeFactory {
     }
 
     private fun learningStrategy(question: String) = buildJsonObject {
+        val wholeCodebase = question == AnalysisMode.DEFAULT_CODEBASE_QUESTION
         put("architecture_first", true)
         put(
             "breadth",
-            if (question == AnalysisMode.DEFAULT_CODEBASE_QUESTION) "whole_codebase" else "question_scoped",
+            if (wholeCodebase) "whole_codebase" else "question_scoped",
         )
-        put("progression", "system_to_components_to_runtime_paths")
+        put("progression", "purpose_to_system_map_to_relationships_to_representative_paths_to_code")
+        put("detail_policy", "progressive_disclosure")
         put("report_coverage_gaps", true)
     }
 

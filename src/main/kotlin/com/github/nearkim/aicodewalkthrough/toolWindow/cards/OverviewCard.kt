@@ -21,8 +21,10 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
+import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListModel
 import javax.swing.JButton
+import javax.swing.JComboBox
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListCellRenderer
@@ -56,6 +58,7 @@ class OverviewCard(
     private var fullSummary = ""
     private var summaryExpanded = false
 
+    private val stageSelector = JComboBox<String>()
     private val listModel = DefaultListModel<FlowStep>()
     private val stepList = JBList(listModel).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
@@ -80,8 +83,8 @@ class OverviewCard(
     private val previewButton = JButton("Preview selected")
     private val copyButton = JButton("Copy as Markdown")
     private val newQuestionButton = JButton("New question")
-    private var stageByStepId: Map<String, LearningStage> = emptyMap()
-    private var stageIndexById: Map<String, Int> = emptyMap()
+    private var displayStages: List<LearningStage> = emptyList()
+    private var stepsById: Map<String, FlowStep> = emptyMap()
     private var boundFlowMap: FlowMap? = null
 
     init {
@@ -117,22 +120,26 @@ class OverviewCard(
             }
         })
         tabs.addChangeListener { updateSectionActions() }
+        stageSelector.addActionListener { updateSelectedStage() }
         stepList.addListSelectionListener { event ->
-            if (!event.valueIsAdjusting) updateSelectedStage()
+            if (!event.valueIsAdjusting) updatePreviewAction()
         }
         updateSectionActions()
     }
 
     fun setFlowMap(flowMap: FlowMap?, providerName: String, question: String? = null) {
+        stepList.clearSelection()
+        stageSelector.model = DefaultComboBoxModel()
         listModel.clear()
         if (flowMap == null) {
             boundFlowMap = null
             architecturePanel.setArchitecture(null)
-            stageByStepId = emptyMap()
-            stageIndexById = emptyMap()
+            displayStages = emptyList()
+            stepsById = emptyMap()
             questionLabel.text = " "
             summaryLabel.text = " "
             metaLabel.text = " "
+            learningStageContext.text = ""
             toggleLink.isVisible = false
             startTourButton.isEnabled = false
             previewButton.isEnabled = false
@@ -149,7 +156,17 @@ class OverviewCard(
             ?: flowMap.steps.firstOrNull()?.title
             ?: "—"
         val componentCount = flowMap.architecture?.components?.size ?: 0
-        val stageCount = flowMap.learningPath.size
+        displayStages = flowMap.learningPath.ifEmpty {
+            if (flowMap.steps.isEmpty()) emptyList() else listOf(
+                LearningStage(
+                    id = "walkthrough",
+                    title = "Walkthrough path",
+                    goal = "Follow the validated code stops in order.",
+                    stepIds = flowMap.steps.map { it.id },
+                ),
+            )
+        }
+        val stageCount = displayStages.size
         metaLabel.text = buildList {
             if (componentCount > 0) add("$componentCount components")
             if (stageCount > 0) add("$stageCount stages")
@@ -158,21 +175,22 @@ class OverviewCard(
             add(providerName)
         }.joinToString(" · ")
         architecturePanel.setArchitecture(flowMap.architecture)
-        stageByStepId = buildMap {
-            flowMap.learningPath.forEach { stage -> stage.stepIds.forEach { put(it, stage) } }
-        }
-        stageIndexById = flowMap.learningPath.mapIndexed { index, stage -> stage.id to index }.toMap()
+        stepsById = flowMap.steps.associateBy { it.id }
+        stageSelector.model = DefaultComboBoxModel(
+            displayStages.mapIndexed { index, stage ->
+                "${index + 1}. ${stage.title} · ${stage.stepIds.size} stops"
+            }.toTypedArray(),
+        )
         tabs.setTitleAt(ARCHITECTURE_TAB, "Architecture${componentCount.takeIf { it > 0 }?.let { " ($it)" }.orEmpty()}")
-        tabs.setTitleAt(LEARNING_PATH_TAB, "Learning path (${flowMap.steps.size})")
+        tabs.setTitleAt(LEARNING_PATH_TAB, "Learning path ($stageCount stages · ${flowMap.steps.size} stops)")
         tabs.setEnabledAt(ARCHITECTURE_TAB, flowMap.architecture != null)
-        flowMap.steps.forEach { listModel.addElement(it) }
         startTourButton.isEnabled = flowMap.steps.any { !it.broken }
-        previewButton.isEnabled = flowMap.steps.isNotEmpty()
         copyButton.isEnabled = true
-        if (flowMap.steps.isNotEmpty()) {
-            stepList.selectedIndex = 0
+        if (displayStages.isNotEmpty()) {
+            stageSelector.selectedIndex = 0
         } else {
             learningStageContext.text = "No validated code stops were returned."
+            previewButton.isEnabled = false
         }
         if (isNewFlowMap) {
             tabs.selectedIndex = if (flowMap.architecture != null) ARCHITECTURE_TAB else LEARNING_PATH_TAB
@@ -182,23 +200,46 @@ class OverviewCard(
     }
 
     private fun buildLearningPathPanel(): JPanel = JPanel(BorderLayout()).apply {
-        add(learningStageContext, BorderLayout.NORTH)
+        val stagePanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(6, 0, 4, 0)
+            isOpaque = false
+            add(JBLabel("Learning stages").apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                font = font.deriveFont(Font.BOLD)
+                border = JBUI.Borders.empty(0, 8, 3, 8)
+            })
+            add(stageSelector.apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                maximumSize = java.awt.Dimension(Int.MAX_VALUE, preferredSize.height)
+            })
+            add(learningStageContext.apply { alignmentX = Component.LEFT_ALIGNMENT })
+            add(JBLabel("Code stops").apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                font = font.deriveFont(Font.BOLD)
+                border = JBUI.Borders.empty(4, 8, 3, 8)
+            })
+        }
+        add(stagePanel, BorderLayout.NORTH)
         add(JBScrollPane(stepList).apply {
             border = BorderFactory.createMatteBorder(1, 0, 1, 0, JBColor.border())
         }, BorderLayout.CENTER)
     }
 
     private fun updateSelectedStage() {
-        val step = stepList.selectedValue
-        val stage = step?.let { stageByStepId[it.id] }
-        learningStageContext.text = if (stage == null) {
-            "Follow the validated code stops in order to connect architecture to runtime behavior."
-        } else {
-            val index = stageIndexById[stage.id]?.plus(1) ?: 1
-            val checkpoint = stage.checkpoint?.takeIf { it.isNotBlank() }?.let { "\nCheckpoint: $it" }.orEmpty()
-            "Stage $index/${stageIndexById.size} · ${stage.title}\n${stage.goal}$checkpoint"
-        }
-        previewButton.isEnabled = step != null && !step.broken
+        val index = stageSelector.selectedIndex
+        if (index < 0) return
+        val stage = displayStages[index]
+        val checkpoint = stage.checkpoint?.takeIf { it.isNotBlank() }?.let { "\nCheckpoint: $it" }.orEmpty()
+        learningStageContext.text = "Stage ${index + 1}/${displayStages.size} · ${stage.title}\n${stage.goal}$checkpoint"
+        listModel.clear()
+        stage.stepIds.mapNotNull(stepsById::get).forEach(listModel::addElement)
+        if (listModel.size > 0) stepList.selectedIndex = 0
+        updatePreviewAction()
+    }
+
+    private fun updatePreviewAction() {
+        previewButton.isEnabled = stepList.selectedValue?.broken == false
     }
 
     private fun updateSectionActions() {
@@ -297,8 +338,7 @@ class OverviewCard(
             value ?: return this
             indexLabel.text = "${index + 1}."
             titleLabel.text = value.title
-            val stageTitle = stageByStepId[value.id]?.title
-            subtitleLabel.text = listOfNotNull(stageTitle, formatPath(value.filePath, value.startLine)).joinToString(" · ")
+            subtitleLabel.text = formatPath(value.filePath, value.startLine)
             val type = value.stepType?.takeIf { it.isNotBlank() } ?: value.importance ?: ""
             typeChip.text = if (type.isNotBlank()) type else ""
             typeChip.isVisible = type.isNotBlank()

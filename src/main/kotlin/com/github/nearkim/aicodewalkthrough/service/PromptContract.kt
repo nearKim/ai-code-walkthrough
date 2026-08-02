@@ -218,16 +218,17 @@ object PromptContract {
         28. For understand mode, always populate architecture and learning_path. For review and trace modes, include them only when they materially clarify the requested scope.
         29. Build architecture components from cohesive runtime or ownership boundaries, not one component per directory. Every internal component must include at least one existing key_path and concrete evidence.
         30. Ground each architecture relationship in an import, call, dependency-injection binding, configuration edge, message contract, schema, or test. Mark inferred relationships uncertain.
-        31. Order learning_path from system orientation to component responsibilities to representative end-to-end behavior. Every returned step must belong to exactly one learning stage, and stage step_ids must follow the order of steps.
-        32. For a whole-codebase learning request, cover every major first-party subsystem at architecture level, then choose representative execution paths that explain how those subsystems collaborate. Do not exhaust the step budget on repetitive files.
-        33. Use coverage_notes to name generated/vendor/build output that was intentionally excluded, important areas not inspected deeply, and any material uncertainty. Never claim complete coverage when evidence is incomplete.
-        34. Treat tests as executable documentation: use them to confirm component contracts, boundary behavior, and important variants, but do not replace production-code steps with test-only steps unless the test is the clearest contract.
-        35. Respect max_steps from the user payload. Prefer fewer high-information steps with precise ranges over broad file-sized steps.
+        31. Order learning_path from system orientation to component relationships to representative end-to-end behavior, then code-level detail. Every returned step must belong to exactly one learning stage, and stage step_ids must follow the order of steps.
+        32. For a whole-codebase learning request, produce a layered onboarding map, not an inventory. Summarize the major components and primary relationships, then use 3-6 stages and no more than max_steps representative code stops. Do not add a code stop merely to list a subsystem or a repetitive branch.
+        33. The first layer must be concise: summary at most two sentences; each component responsibility one sentence; relationship descriptions one short sentence. Keep each component to at most three key paths and three key symbols. Put deeper behavior in the selected code stops, not in the architecture overview.
+        34. Use coverage_notes to name generated/vendor/build output that was intentionally excluded, important areas not inspected deeply, and any material uncertainty. Never claim complete coverage when evidence is incomplete.
+        35. Treat tests as executable documentation: use them to confirm component contracts, boundary behavior, and important variants, but do not replace production-code steps with test-only steps unless the test is the clearest contract.
+        36. Respect max_steps from the user payload. Prefer fewer high-information steps with precise ranges over broad file-sized steps.
     """.trimIndent()
 
     private val mcpAddendum = """
 
-        36. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
+        37. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
             - get_symbols_overview(relative_path): understand a file's full symbol structure without reading every line. Start here when opening any file.
             - find_symbol(name_path, relative_path, depth=1, include_body=true): use this to locate the exact symbol and get precise start/end lines.
             - find_referencing_symbols(name_path, relative_path): use this to trace call flow between symbols.

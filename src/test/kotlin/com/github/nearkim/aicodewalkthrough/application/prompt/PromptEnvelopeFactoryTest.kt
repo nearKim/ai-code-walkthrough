@@ -78,9 +78,11 @@ class PromptEnvelopeFactoryTest {
         val strategy = envelope.getValue("learning_strategy").jsonObject
 
         assertEquals(AnalysisMode.DEFAULT_CODEBASE_QUESTION, envelope.getValue("question").jsonPrimitive.content)
+        assertEquals("12", envelope.getValue("max_steps").jsonPrimitive.content)
         assertEquals("true", strategy.getValue("architecture_first").jsonPrimitive.content)
         assertEquals("whole_codebase", strategy.getValue("breadth").jsonPrimitive.content)
-        assertEquals("system_to_components_to_runtime_paths", strategy.getValue("progression").jsonPrimitive.content)
+        assertEquals("purpose_to_system_map_to_relationships_to_representative_paths_to_code", strategy.getValue("progression").jsonPrimitive.content)
+        assertEquals("progressive_disclosure", strategy.getValue("detail_policy").jsonPrimitive.content)
         assertTrue(AnalysisMode.REVIEW.resolveQuestion("  ") == null)
     }
 }
