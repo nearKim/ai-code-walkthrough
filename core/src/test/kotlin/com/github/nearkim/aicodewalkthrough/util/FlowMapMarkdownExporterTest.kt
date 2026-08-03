@@ -2,6 +2,7 @@ package com.github.nearkim.aicodewalkthrough.util
 
 import com.github.nearkim.aicodewalkthrough.model.AnalysisTrace
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureResponsibility
 import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
 import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
@@ -148,6 +149,23 @@ class FlowMapMarkdownExporterTest {
                         name = "Tool window",
                         kind = "presentation",
                         responsibility = "Collects questions and renders walkthrough state.",
+                        responsibilities = listOf(
+                            ArchitectureResponsibility(
+                                id = "submit-question",
+                                title = "Submit a walkthrough question",
+                                description = "Transfers the operator request into the session boundary.",
+                                evidence = listOf(
+                                    EvidenceItem(
+                                        kind = "class",
+                                        label = "CodeTourPanel",
+                                        filePath = "src/CodeTourPanel.kt",
+                                        startLine = 1,
+                                    ),
+                                ),
+                                collaboratorComponentIds = listOf("session"),
+                                relationshipIds = listOf("ui-session"),
+                            ),
+                        ),
                         keyPaths = listOf("src/CodeTourPanel.kt"),
                         keySymbols = listOf("CodeTourPanel"),
                     ),
@@ -197,6 +215,9 @@ class FlowMapMarkdownExporterTest {
         val markdown = FlowMapMarkdownExporter.build(null, flowMap, null)
 
         assertTrue(markdown.contains("## Architecture"))
+        assertTrue(markdown.contains("**Submit a walkthrough question:**"))
+        assertTrue(markdown.contains("`CodeTourPanel` (src/CodeTourPanel.kt:L1)"))
+        assertTrue(markdown.contains("Collaborators: Tour session"))
         assertTrue(markdown.contains("Tool window → Tour session (calls)"))
         assertTrue(markdown.contains("## Learning Path"))
         assertTrue(markdown.contains("Checkpoint: Which service owns state transitions?"))

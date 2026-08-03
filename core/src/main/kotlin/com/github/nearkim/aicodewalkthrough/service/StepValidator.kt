@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureResponsibility
 import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
 import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
@@ -61,9 +62,13 @@ class StepValidator(private val projectBasePath: String) {
                         .thenBy { it.evidence.size },
                 ) ?: duplicates.first()
             }
+        val relationshipById = relationships.associateBy { it.id }
+        val groundedComponents = components.map { component ->
+            validateResponsibilityReferences(component, componentById.keys, relationshipById)
+        }
 
         return architecture.copy(
-            components = components,
+            components = groundedComponents,
             relationships = relationships,
             crossCuttingConcerns = architecture.crossCuttingConcerns.cleanTextItems(),
             coverageNotes = architecture.coverageNotes.cleanTextItems(),
@@ -85,14 +90,100 @@ class StepValidator(private val projectBasePath: String) {
             projectFiles.resolveExisting(path, requireRegularFile = true) != null
         }.orEmpty()
         val evidenceResult = sanitizeEvidence(component.evidence, defaultEvidencePath, validationNotes)
+        val responsibilities = component.responsibilities
+            .mapNotNull { validateArchitectureResponsibility(it, defaultEvidencePath) }
+            .distinctBy { it.id }
+        val responsibilitiesChanged = responsibilities.size != component.responsibilities.size
+        if (responsibilitiesChanged) {
+            validationNotes += "Removed architecture responsibilities without a grounded code owner or component collaborator."
+        }
 
         return component.copy(
             kind = component.kind.ifBlank { "component" },
+            responsibilities = responsibilities,
             keyPaths = keyPaths,
             keySymbols = component.keySymbols.cleanTextItems(),
             evidence = evidenceResult.value,
-            uncertain = component.uncertain || pathsChanged || evidenceResult.changed,
+            uncertain = component.uncertain || pathsChanged || evidenceResult.changed || responsibilitiesChanged,
             validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+        )
+    }
+
+    private fun validateArchitectureResponsibility(
+        responsibility: ArchitectureResponsibility,
+        defaultEvidencePath: String,
+    ): ArchitectureResponsibility? {
+        if (responsibility.id.isBlank() || responsibility.title.isBlank() || responsibility.description.isBlank()) {
+            return null
+        }
+
+        val validationNotes = mutableListOf<String>()
+        val evidenceResult = sanitizeEvidence(responsibility.evidence, defaultEvidencePath, validationNotes)
+        val codeEvidence = evidenceResult.value.filter { it.filePath != null && it.startLine != null }
+        val collaborators = responsibility.collaboratorComponentIds.cleanTextItems()
+        val relationships = responsibility.relationshipIds.cleanTextItems()
+        val evidenceChanged = codeEvidence.size != responsibility.evidence.size
+        if (evidenceChanged) {
+            validationNotes += "Removed responsibility evidence without an exact project line."
+        }
+        if (codeEvidence.isEmpty() && collaborators.isEmpty()) return null
+
+        return responsibility.copy(
+            evidence = codeEvidence,
+            collaboratorComponentIds = collaborators,
+            relationshipIds = relationships,
+            uncertain = responsibility.uncertain || evidenceResult.changed || evidenceChanged,
+            validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+        )
+    }
+
+    private fun validateResponsibilityReferences(
+        component: ArchitectureComponent,
+        componentIds: Set<String>,
+        relationshipById: Map<String, ComponentRelationship>,
+    ): ArchitectureComponent {
+        var componentChanged = false
+        val responsibilities = component.responsibilities.mapNotNull { responsibility ->
+            val validationNotes = mutableListOf<String>()
+            responsibility.validationNote?.let(validationNotes::add)
+            val collaborators = responsibility.collaboratorComponentIds
+                .filter { it in componentIds && it != component.id }
+                .distinct()
+            if (collaborators.size != responsibility.collaboratorComponentIds.size) {
+                componentChanged = true
+                validationNotes += "Removed responsibility collaborators that do not resolve to another component."
+            }
+            val relationshipIds = responsibility.relationshipIds.filter { id ->
+                val relationship = relationshipById[id] ?: return@filter false
+                val otherComponentId = when (component.id) {
+                    relationship.fromComponentId -> relationship.toComponentId
+                    relationship.toComponentId -> relationship.fromComponentId
+                    else -> return@filter false
+                }
+                collaborators.isEmpty() || otherComponentId in collaborators
+            }.distinct()
+            if (relationshipIds.size != responsibility.relationshipIds.size) {
+                componentChanged = true
+                validationNotes += "Removed responsibility relationships that do not touch its component collaborators."
+            }
+            if (responsibility.evidence.isEmpty() && collaborators.isEmpty()) {
+                componentChanged = true
+                return@mapNotNull null
+            }
+            responsibility.copy(
+                collaboratorComponentIds = collaborators,
+                relationshipIds = relationshipIds,
+                uncertain = responsibility.uncertain || validationNotes.isNotEmpty(),
+                validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+            )
+        }
+        return component.copy(
+            responsibilities = responsibilities,
+            uncertain = component.uncertain || componentChanged,
+            validationNote = listOfNotNull(
+                component.validationNote,
+                "Removed invalid responsibility mappings.".takeIf { componentChanged },
+            ).joinToString(" ").orNullIfBlank(),
         )
     }
 

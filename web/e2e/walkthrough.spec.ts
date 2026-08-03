@@ -22,7 +22,7 @@ const secondStep = {
   title: 'Run application logic',
   symbol: 'start',
   start_line: 5,
-  end_line: 5,
+  end_line: 7,
   explanation: 'The application performs its work.',
   why_included: 'This is the next validated hop.',
   step_type: 'method',
@@ -44,12 +44,69 @@ const edge = {
 
 const flow = {
   summary: 'A small executable flow.',
+  architecture: {
+    system_purpose: 'Run an application from a local entrypoint.',
+    components: [{
+      id: 'application',
+      name: 'Application',
+      kind: 'application',
+      responsibility: 'Coordinate the application run.',
+      responsibilities: [{
+        id: 'run-application',
+        title: 'Run the application',
+        description: 'Transfers control through the application lifecycle.',
+        evidence: [{
+          kind: 'class',
+          label: 'ApplicationRunner',
+          file_path: 'src/Main.kt',
+          start_line: 5,
+          end_line: 7,
+          text: 'Owns the application lifecycle.',
+        }, {
+          kind: 'method',
+          label: 'start',
+          file_path: 'src/Main.kt',
+          start_line: 6,
+          end_line: 6,
+          text: 'Executes the lifecycle.',
+        }],
+        collaborator_component_ids: ['entrypoint'],
+        relationship_ids: ['entrypoint-application'],
+        uncertain: false,
+      }],
+      key_paths: ['src/Main.kt'],
+      key_symbols: ['ApplicationRunner', 'start'],
+      evidence: [],
+      uncertain: false,
+    }, {
+      id: 'entrypoint',
+      name: 'Program entrypoint',
+      kind: 'entrypoint',
+      responsibility: 'Accept process startup and enter the application.',
+      responsibilities: [],
+      key_paths: ['src/Main.kt'],
+      key_symbols: ['main'],
+      evidence: [],
+      uncertain: false,
+    }],
+    relationships: [{
+      id: 'entrypoint-application',
+      from_component_id: 'entrypoint',
+      to_component_id: 'application',
+      kind: 'calls',
+      description: 'main constructs the runner and starts the application.',
+      evidence: [{ kind: 'reference', label: 'start call', file_path: 'src/Main.kt', start_line: 2, end_line: 2 }],
+      uncertain: false,
+    }],
+    cross_cutting_concerns: [],
+    coverage_notes: [],
+  },
   steps: [firstStep, secondStep],
   learning_path: [{
     id: 'start',
     title: 'Program flow',
     goal: 'Follow the entrypoint into application logic.',
-    component_ids: [],
+    component_ids: ['entrypoint', 'application'],
     step_ids: ['entry', 'logic'],
     checkpoint: 'You can explain how control reaches start.',
   }],
@@ -109,7 +166,7 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
       return;
     }
     if (path === '/api/source') {
-      await route.fulfill({ json: { path: 'src/Main.kt', content: 'fun main() {\n    start()\n}\n\nfun start() = Unit\n' } });
+      await route.fulfill({ json: { path: 'src/Main.kt', content: 'fun main() {\n    ApplicationRunner().start()\n}\n\nclass ApplicationRunner {\n    fun start() = Unit\n}\n' } });
       return;
     }
     if (path === '/api/mapping') {
@@ -144,8 +201,25 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Learn codebase' }).click();
   await expect(page.getByText('Walkthrough mapped')).toBeVisible();
+  const codePanel = page.locator('#code');
+  await expect(codePanel).toHaveCSS('width', '0px');
+  await expect(codePanel).toHaveCSS('overflow', 'hidden');
+  await page.getByRole('button', { name: 'class ApplicationRunner' }).click();
+  await expect(page.getByRole('heading', { name: 'ApplicationRunner' })).toBeVisible();
+  await expect(page.getByText('Methods and state')).toBeVisible();
+  await page.getByLabel('Code owner detail').locator('.code-owner-header').getByRole('button', { name: 'Show code' }).click();
+  await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);
+  await expect(page.getByText('L5–7')).toBeVisible();
+  await page.getByRole('button', { name: 'Hide code pane' }).click();
+  await expect(codePanel).toHaveCSS('width', '0px');
+  await page.getByRole('button', { name: 'Show code pane' }).click();
+  await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Hide code pane' }).click();
+  await expect(codePanel).toHaveCSS('width', '0px');
 
   await page.getByRole('button', { name: 'Preview selected' }).click();
+  await expect(page.getByRole('button', { name: 'Hide code pane' })).toBeVisible();
+  await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);
   await expect(page.locator('.walkthrough-zone-annotation')).toContainText('crosses into application logic');
   await expect(page.locator('.walkthrough-next-line').first()).toBeVisible();
 

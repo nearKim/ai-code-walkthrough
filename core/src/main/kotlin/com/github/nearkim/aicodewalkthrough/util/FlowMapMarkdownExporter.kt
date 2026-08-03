@@ -2,6 +2,7 @@ package com.github.nearkim.aicodewalkthrough.util
 
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
+import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import java.util.Locale
@@ -36,6 +37,7 @@ object FlowMapMarkdownExporter {
             builder.appendLine(architecture.systemPurpose)
 
             if (architecture.components.isNotEmpty()) {
+                val componentNames = architecture.components.associate { it.id to it.name }
                 builder.appendLine()
                 builder.appendLine("### Components")
                 architecture.components.forEach { component ->
@@ -47,6 +49,21 @@ object FlowMapMarkdownExporter {
                     builder.appendLine("- Anchors: ${component.keyPaths.joinToString(", ") { "`$it`" }}")
                     if (component.keySymbols.isNotEmpty()) {
                         builder.appendLine("- Key symbols: ${component.keySymbols.joinToString(", ") { "`$it`" }}")
+                    }
+                    if (component.responsibilities.isNotEmpty()) {
+                        builder.appendLine("- Responsibility map:")
+                        component.responsibilities.forEach { responsibility ->
+                            builder.appendLine("  - **${responsibility.title}:** ${responsibility.description}")
+                            if (responsibility.evidence.isNotEmpty()) {
+                                builder.appendLine(
+                                    "    - Code: ${responsibility.evidence.joinToString(", ", transform = ::formatEvidenceAnchor)}",
+                                )
+                            }
+                            val collaborators = responsibility.collaboratorComponentIds.mapNotNull(componentNames::get)
+                            if (collaborators.isNotEmpty()) {
+                                builder.appendLine("    - Collaborators: ${collaborators.joinToString(", ")}")
+                            }
+                        }
                     }
                     if (component.uncertain) builder.appendLine("- Grounding: uncertain")
                     component.validationNote?.takeIf { it.isNotBlank() }
@@ -322,6 +339,16 @@ object FlowMapMarkdownExporter {
             edge.validationNote?.takeIf { it.isNotBlank() }?.let { add(it) }
         }.joinToString("  ·  ")
         return if (details.isNotBlank()) "$peerTitle ($details)" else peerTitle
+    }
+
+    private fun formatEvidenceAnchor(evidence: EvidenceItem): String {
+        val location = evidence.filePath?.let { path ->
+            evidence.startLine?.let { line -> "$path:L$line" } ?: path
+        }
+        return buildString {
+            append('`').append(evidence.label).append('`')
+            if (!location.isNullOrBlank()) append(" ($location)")
+        }
     }
 
     private fun formatDuration(durationMs: Long): String =

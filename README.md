@@ -4,8 +4,8 @@ AI Code Walkthrough is an IntelliJ Platform plugin and local web application for
 
 ## Learning workflow
 
-1. **Map the architecture** — identify the system purpose, major components, ownership boundaries, representative paths, and cross-cutting concerns.
-2. **Understand the relationships** — show grounded calls, dependencies, data movement, configuration, and test boundaries between components.
+1. **Map the architecture** — identify the system purpose, major components, ownership boundaries, and representative paths.
+2. **Inspect responsibilities** — map each component outcome to its owning interface, class, or function, then drill into the important methods, state, and collaborators.
 3. **Follow a curriculum** — progress from system orientation through component responsibilities to representative end-to-end execution paths.
 4. **Read the real code** — open validated symbols and line ranges with editor explanations, important-line annotations, and next-hop previews.
 5. **Interrogate each step** — ask scoped follow-up questions without remapping the repository.
@@ -19,9 +19,9 @@ The model proposes the architecture and code path; the shared walkthrough engine
 - Grounded walkthroughs require Codex CLI or Claude CLI so the provider can inspect the local repository.
 - Codex CLI is fixed to `gpt-5.6-sol` with `ultra` or `max` reasoning.
 - Claude CLI offers only Claude Fable 5 (`fable`) and Claude Opus 5 (`opus`).
-- Component anchors must resolve inside the project.
+- Component anchors and responsibility code owners must resolve to real project files and lines.
 - Step files, symbols, line annotations, evidence, and next-hop call sites are checked or repaired.
-- Invalid component relationships and learning-stage references are removed.
+- Invalid responsibility collaborators, component relationships, and learning-stage references are removed.
 - Coverage notes identify areas that were intentionally excluded or not inspected deeply.
 
 Both clients are language-agnostic. The plugin targets IntelliJ Platform 2025.2 or newer.

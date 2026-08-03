@@ -1,13 +1,15 @@
-import { Alert, Center, Loader, MantineProvider, Text } from '@mantine/core';
+import { Alert, Button, Center, Loader, MantineProvider, Text } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Group as PanelGroup, Panel, Separator } from 'react-resizable-panels';
+import { Group as PanelGroup, Panel, Separator, usePanelCallbackRef } from 'react-resizable-panels';
 import { api, subscribeToEvents } from './api';
 import { CodePane } from './CodePane';
 import { RightPane, type RightPaneActions } from './RightPane';
 import { SettingsModal } from './SettingsModal';
 import type {
   AnalysisModeId,
+  EvidenceItem,
+  FlowStep,
   ProviderId,
   ProviderStatus,
   SessionSnapshot,
@@ -22,6 +24,23 @@ export function App() {
   const [settingsOpened, setSettingsOpened] = useState(false);
   const [actionError, setActionError] = useState<string>();
   const [focusNonce, setFocusNonce] = useState(0);
+  const [codeCollapsed, setCodeCollapsed] = useState(true);
+  const [evidencePreview, setEvidencePreview] = useState<FlowStep>();
+  const [codePanel, setCodePanel] = usePanelCallbackRef();
+  const displayedStep = evidencePreview ?? session?.displayed_step;
+  const shouldShowCode = session?.state === 'TOUR_ACTIVE' || displayedStep !== undefined;
+
+  useEffect(() => {
+    if (codePanel === null) return;
+    if (shouldShowCode) codePanel.expand();
+    else codePanel.collapse();
+  }, [codePanel, shouldShowCode]);
+
+  const toggleCodePane = useCallback(() => {
+    if (codePanel === null) return;
+    if (codePanel.isCollapsed()) codePanel.expand();
+    else codePanel.collapse();
+  }, [codePanel]);
 
   const refreshProviders = useCallback(async () => {
     try {
@@ -65,6 +84,7 @@ export function App() {
 
   const startMapping = useCallback(async (question: string, mode: AnalysisModeId, provider: ProviderId) => {
     setActionError(undefined);
+    setEvidencePreview(undefined);
     setSession((current) => current === undefined ? current : {
       ...current,
       state: 'LOADING',
@@ -98,7 +118,10 @@ export function App() {
   const actions: RightPaneActions = useMemo(() => ({
     startMapping,
     cancelMapping: async () => perform(api.cancelMapping),
-    tour: async (action, stepId) => perform(() => api.tour(action, stepId)),
+    tour: async (action, stepId) => {
+      setEvidencePreview(undefined);
+      await perform(() => api.tour(action, stepId));
+    },
     answer: async (question) => perform(() => api.answer(question)),
     copyMarkdown: async () => {
       setActionError(undefined);
@@ -109,8 +132,29 @@ export function App() {
       }
     },
     openSettings: () => setSettingsOpened(true),
-    focusCode: () => setFocusNonce((value) => value + 1),
-  }), [perform, startMapping]);
+    focusCode: () => {
+      codePanel?.expand();
+      setFocusNonce((value) => value + 1);
+    },
+    previewEvidence: (evidence: EvidenceItem, explanation: string) => {
+      if (evidence.file_path === undefined || evidence.start_line === undefined) return;
+      setEvidencePreview({
+        id: `evidence:${evidence.file_path}:${evidence.start_line}:${evidence.label}`,
+        title: evidence.label,
+        file_path: evidence.file_path,
+        symbol: evidence.label,
+        start_line: evidence.start_line,
+        end_line: evidence.end_line ?? evidence.start_line,
+        explanation,
+        why_included: 'This code grounds the selected responsibility.',
+        step_type: evidence.kind,
+        uncertain: false,
+        line_annotations: [],
+        evidence: [evidence],
+      });
+      codePanel?.expand();
+    },
+  }), [codePanel, perform, startMapping]);
 
   const saveSettings = async (value: WalkthroughSettings) => {
     setActionError(undefined);
@@ -128,25 +172,45 @@ export function App() {
     <main className="app-shell">
       <header className="app-header">
         <Text fw={700}>AI Code Walkthrough</Text>
-        <Text size="xs" c="dimmed">{session?.repository_path ?? 'Connecting to local server…'}</Text>
+        <div className="app-header-controls">
+          {session !== undefined && <Button
+            aria-controls="code"
+            aria-expanded={!codeCollapsed}
+            size="compact-xs"
+            variant="subtle"
+            onClick={toggleCodePane}
+          >{codeCollapsed ? 'Show code pane' : 'Hide code pane'}</Button>}
+          <Text size="xs" c="dimmed" truncate>{session?.repository_path ?? 'Connecting to local server…'}</Text>
+        </div>
       </header>
       {actionError !== undefined && <Alert className="global-error" color="red" withCloseButton onClose={() => setActionError(undefined)}>
         {actionError}
       </Alert>}
       {session === undefined
         ? <Center className="app-loading"><Loader size="sm" /></Center>
-        : <PanelGroup orientation="horizontal" className="workspace" defaultLayout={{ code: 70, walkthrough: 30 }}>
-            <Panel id="code" minSize={480}>
+        : <PanelGroup
+            orientation="horizontal"
+            className="workspace"
+            defaultLayout={shouldShowCode ? { code: 70, walkthrough: 30 } : { code: 0, walkthrough: 100 }}
+          >
+            <Panel
+              id="code"
+              panelRef={setCodePanel}
+              minSize={480}
+              collapsible
+              collapsedSize={0}
+              onResize={(size) => setCodeCollapsed(size.inPixels <= 1)}
+            >
               <CodePane
-                step={session.displayed_step}
-                nextStep={session.next_step}
-                nextEdge={session.next_edge}
+                step={displayedStep}
+                nextStep={evidencePreview === undefined ? session.next_step : undefined}
+                nextEdge={evidencePreview === undefined ? session.next_edge : undefined}
                 dark={dark}
                 focusNonce={focusNonce}
               />
             </Panel>
             <Separator className="pane-separator" />
-            <Panel id="walkthrough" defaultSize="30" minSize={360} maxSize="55">
+            <Panel id="walkthrough" defaultSize="30" minSize={360}>
               <RightPane
                 session={session}
                 settings={settings}

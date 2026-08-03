@@ -36,7 +36,10 @@ class WebSession(
     private val requestGeneration = AtomicLong()
     private val answerGeneration = AtomicLong()
     private val mutableEvents = MutableSharedFlow<OutboundEvent>(extraBufferCapacity = 256)
-    private val json = Json { encodeDefaults = true }
+    private val json = Json {
+        encodeDefaults = true
+        explicitNulls = false
+    }
 
     val events: SharedFlow<OutboundEvent> = mutableEvents
 

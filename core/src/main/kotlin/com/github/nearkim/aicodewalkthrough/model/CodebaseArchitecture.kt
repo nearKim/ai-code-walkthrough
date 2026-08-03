@@ -18,9 +18,22 @@ data class ArchitectureComponent(
     val name: String,
     val kind: String = "component",
     val responsibility: String,
+    val responsibilities: List<ArchitectureResponsibility> = emptyList(),
     @SerialName("key_paths") val keyPaths: List<String> = emptyList(),
     @SerialName("key_symbols") val keySymbols: List<String> = emptyList(),
     val evidence: List<EvidenceItem> = emptyList(),
+    val uncertain: Boolean = false,
+    @kotlinx.serialization.Transient val validationNote: String? = null,
+)
+
+@Serializable
+data class ArchitectureResponsibility(
+    val id: String,
+    val title: String,
+    val description: String,
+    val evidence: List<EvidenceItem> = emptyList(),
+    @SerialName("collaborator_component_ids") val collaboratorComponentIds: List<String> = emptyList(),
+    @SerialName("relationship_ids") val relationshipIds: List<String> = emptyList(),
     val uncertain: Boolean = false,
     @kotlinx.serialization.Transient val validationNote: String? = null,
 )

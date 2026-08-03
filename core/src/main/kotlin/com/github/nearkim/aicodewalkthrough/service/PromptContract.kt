@@ -16,7 +16,27 @@ object PromptContract {
                 "id": "component-application",
                 "name": "Application layer",
                 "kind": "entrypoint|presentation|application|domain|data|integration|infrastructure|shared|test",
-                "responsibility": "The cohesive responsibility owned by this component.",
+                "responsibility": "One sentence summarizing the component's cohesive aggregate purpose.",
+                "responsibilities": [
+                  {
+                    "id": "prepare-run",
+                    "title": "Prepare a reproducible run",
+                    "description": "The concrete outcome this component owns and its reason to change.",
+                    "evidence": [
+                      {
+                        "kind": "interface|class|function|module|method|state|field|property|config|schema",
+                        "label": "Exact code symbol or state name",
+                        "file_path": "relative/path/to/file.kt",
+                        "start_line": 12,
+                        "end_line": 18,
+                        "text": "How this code owner, method, or state implements the responsibility."
+                      }
+                    ],
+                    "collaborator_component_ids": ["component-domain"],
+                    "relationship_ids": ["relationship-1"],
+                    "uncertain": false
+                  }
+                ],
                 "key_paths": ["src/main/relative/path"],
                 "key_symbols": ["ImportantType", "importantFunction"],
                 "evidence": [
@@ -224,11 +244,14 @@ object PromptContract {
         34. Use coverage_notes to name generated/vendor/build output that was intentionally excluded, important areas not inspected deeply, and any material uncertainty. Never claim complete coverage when evidence is incomplete.
         35. Treat tests as executable documentation: use them to confirm component contracts, boundary behavior, and important variants, but do not replace production-code steps with test-only steps unless the test is the clearest contract.
         36. Respect max_steps from the user payload. Prefer fewer high-information steps with precise ranges over broad file-sized steps.
+        37. For each architecture component, keep responsibility as its one-sentence aggregate purpose and populate responsibilities with 1-5 distinct outcomes or reasons to change. Aggregate components may own several responsibilities; do not claim that a component or class conforms to SOLID.
+        38. Every responsibility must map to at least one exact code owner (interface, class, function, module, config, or schema) or a valid collaborator component. Include only the important methods and state that explain how the owner fulfills that responsibility, with exact file and line evidence; do not inventory every member.
+        39. responsibility collaborator_component_ids and relationship_ids must reference components and relationships returned in the same architecture. Use evidence text to explain the role of each owner, method, or state in that responsibility.
     """.trimIndent()
 
     private val mcpAddendum = """
 
-        37. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
+        40. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
             - get_symbols_overview(relative_path): understand a file's full symbol structure without reading every line. Start here when opening any file.
             - find_symbol(name_path, relative_path, depth=1, include_body=true): use this to locate the exact symbol and get precise start/end lines.
             - find_referencing_symbols(name_path, relative_path): use this to trace call flow between symbols.

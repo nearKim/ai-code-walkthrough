@@ -16,6 +16,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import type {
   AnalysisModeId,
+  EvidenceItem,
   ProviderId,
   ProviderStatus,
   SessionSnapshot,
@@ -32,6 +33,7 @@ export interface RightPaneActions {
   readonly copyMarkdown: () => Promise<void>;
   readonly openSettings: () => void;
   readonly focusCode: () => void;
+  readonly previewEvidence: (evidence: EvidenceItem, explanation: string) => void;
 }
 
 interface RightPaneProps {

@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureResponsibility
 import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
 import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
@@ -328,6 +329,37 @@ class StepValidatorTest {
                                 name = "Application",
                                 kind = "application",
                                 responsibility = "Owns the entrypoint.",
+                                responsibilities = listOf(
+                                    ArchitectureResponsibility(
+                                        id = "start-application",
+                                        title = "Start the application",
+                                        description = "Transfers control from the entrypoint to the service.",
+                                        evidence = listOf(
+                                            EvidenceItem(
+                                                kind = "function",
+                                                label = "start",
+                                                filePath = "src/App.kt",
+                                                startLine = 1,
+                                            ),
+                                        ),
+                                        collaboratorComponentIds = listOf("service", "invented"),
+                                        relationshipIds = listOf("application-service", "application-invented"),
+                                    ),
+                                    ArchitectureResponsibility(
+                                        id = "invented-responsibility",
+                                        title = "Invent behavior",
+                                        description = "This mapping is not grounded.",
+                                        evidence = listOf(
+                                            EvidenceItem(
+                                                kind = "class",
+                                                label = "Missing",
+                                                filePath = "src/Missing.kt",
+                                                startLine = 1,
+                                            ),
+                                        ),
+                                        collaboratorComponentIds = listOf("invented"),
+                                    ),
+                                ),
                                 keyPaths = listOf("src/App.kt", "../outside.kt"),
                                 evidence = listOf(
                                     EvidenceItem(
@@ -424,6 +456,11 @@ class StepValidatorTest {
             val application = architecture.components.first()
             assertEquals(listOf("src/App.kt"), application.keyPaths)
             assertTrue(application.uncertain)
+            val responsibility = application.responsibilities.single()
+            assertEquals(listOf("service"), responsibility.collaboratorComponentIds)
+            assertEquals(listOf("application-service"), responsibility.relationshipIds)
+            assertEquals("src/App.kt", responsibility.evidence.single().filePath)
+            assertTrue(responsibility.uncertain)
             assertEquals(1, architecture.relationships.size)
             assertEquals("application-service", architecture.relationships.single().id)
             assertEquals(

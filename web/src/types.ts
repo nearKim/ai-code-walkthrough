@@ -59,9 +59,20 @@ export interface ArchitectureComponent {
   readonly name: string;
   readonly kind: string;
   readonly responsibility: string;
+  readonly responsibilities: ReadonlyArray<ArchitectureResponsibility>;
   readonly key_paths: ReadonlyArray<string>;
   readonly key_symbols: ReadonlyArray<string>;
   readonly evidence: ReadonlyArray<EvidenceItem>;
+  readonly uncertain: boolean;
+}
+
+export interface ArchitectureResponsibility {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly evidence: ReadonlyArray<EvidenceItem>;
+  readonly collaborator_component_ids: ReadonlyArray<string>;
+  readonly relationship_ids: ReadonlyArray<string>;
   readonly uncertain: boolean;
 }
 

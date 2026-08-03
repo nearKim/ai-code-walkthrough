@@ -23,6 +23,26 @@ class FlowMapSerializationTest {
                     "name": "Tool window",
                     "kind": "presentation",
                     "responsibility": "Renders walkthrough state.",
+                    "responsibilities": [
+                      {
+                        "id": "render-session",
+                        "title": "Render walkthrough state",
+                        "description": "Turns session state into the visible tool window.",
+                        "evidence": [
+                          {
+                            "kind": "class",
+                            "label": "CodeTourPanel",
+                            "file_path": "src/CodeTourPanel.kt",
+                            "start_line": 1,
+                            "end_line": 10,
+                            "text": "Owns the rendered walkthrough view."
+                          }
+                        ],
+                        "collaborator_component_ids": [],
+                        "relationship_ids": [],
+                        "uncertain": false
+                      }
+                    ],
                     "key_paths": ["src/CodeTourPanel.kt"],
                     "key_symbols": ["CodeTourPanel"]
                   }
@@ -60,6 +80,7 @@ class FlowMapSerializationTest {
 
         assertEquals("Guide developers through grounded code paths.", flowMap.architecture?.systemPurpose)
         assertEquals(listOf("src/CodeTourPanel.kt"), flowMap.architecture?.components?.single()?.keyPaths)
+        assertEquals("CodeTourPanel", flowMap.architecture?.components?.single()?.responsibilities?.single()?.evidence?.single()?.label)
         assertEquals(listOf("step-1"), flowMap.learningPath.single().stepIds)
         assertFalse(flowMap.learningPath.single().checkpoint.isNullOrBlank())
     }

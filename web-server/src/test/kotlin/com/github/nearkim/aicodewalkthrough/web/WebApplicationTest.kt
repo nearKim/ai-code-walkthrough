@@ -20,11 +20,16 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -85,6 +90,15 @@ class WebApplicationTest {
                 headers.append(HttpHeaders.Host, "example.test")
             }
             assertEquals(HttpStatusCode.Forbidden, rebound.status)
+
+            val event = coroutineScope {
+                val pending = async(start = CoroutineStart.UNDISPATCHED) {
+                    session.events.first { it.name == "session" }
+                }
+                session.cancelMapping()
+                pending.await()
+            }
+            assertFalse(event.data.contains("\"displayed_step\":null"))
         } finally {
             session.close()
         }
