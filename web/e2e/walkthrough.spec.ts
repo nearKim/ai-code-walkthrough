@@ -204,6 +204,16 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   const codePanel = page.locator('#code');
   await expect(codePanel).toHaveCSS('width', '0px');
   await expect(codePanel).toHaveCSS('overflow', 'hidden');
+  const diagramWorkspace = page.getByLabel('Architecture diagram workspace');
+  const componentDetails = page.getByLabel('Component details');
+  const [diagramBox, detailsBox] = await Promise.all([
+    diagramWorkspace.boundingBox(),
+    componentDetails.boundingBox(),
+  ]);
+  expect(diagramBox).not.toBeNull();
+  expect(detailsBox).not.toBeNull();
+  expect(diagramBox!.x).toBeLessThan(detailsBox!.x);
+  await expect(page.getByText('Run an application from a local entrypoint.', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'class ApplicationRunner' }).click();
   await expect(page.getByRole('heading', { name: 'ApplicationRunner' })).toBeVisible();
   await expect(page.getByText('Methods and state')).toBeVisible();

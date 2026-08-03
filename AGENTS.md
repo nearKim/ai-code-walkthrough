@@ -55,6 +55,7 @@ User question (CodeTourPanel)
   → TourSessionService.startMapping()
     → FlowPlannerService.mapFlow()
       → LlmProviderService.requireRepoGroundedWalkthroughSupport()
+      → MechanicalSymbolAnalyzer.analyze()            # deterministic Python AST inventory before AI
       → currentProvider().query()                     # CLI providers only for grounded walkthroughs
       → parse JSON into LlmResponse / FlowMap
       → StepValidator.validate(flowMap)              # validates architecture, curriculum, steps, evidence, edges
@@ -87,6 +88,7 @@ Browser request (App)
 ### Grounding and provider rules
 
 - Grounded walkthroughs require a provider that can inspect the local repository. In practice, that means `Codex CLI` or `Claude CLI`.
+- Python repositories receive a bounded standard-library AST inventory before the provider runs. It lists production modules, imports, classes, bases, fields, functions, methods, and exact ranges; the provider then maps and source-verifies those owners.
 - Claude CLI can be augmented with MCP semantic navigation (`find_symbol`, `get_symbols_overview`, `find_referencing_symbols`) for tighter symbol and edge grounding.
 
 ### Response contract
@@ -121,6 +123,7 @@ Important edge fields:
 |---|---|
 | `TourSessionService` | Central session/state coordinator. Tracks walkthrough state, current step, step-answer state, and path-aware navigation history |
 | `WalkthroughEngine` | Shared prompt, provider capability, parsing, validation, and step-answer pipeline |
+| `MechanicalSymbolAnalyzer` | Runs the deterministic Python AST inventory before the provider and injects its compact result into the walkthrough request |
 | `FlowPlannerService` | Thin IntelliJ adapter over `WalkthroughEngine` |
 | `LlmProviderService` | Chooses provider implementations and blocks unsafe providers for grounded walkthroughs |
 | `ClaudeCliService` / `CodexCliService` | CLI-backed providers that can inspect the local repo |

@@ -116,6 +116,20 @@ test('explains component roles and links details to validated code', async () =>
               start_line: 9,
               end_line: 9,
               text: 'Retains the result boundary used by the run.',
+            }, {
+              kind: 'class',
+              label: 'PlanBuilder',
+              file_path: 'src/app.ts',
+              start_line: 20,
+              end_line: 30,
+              text: 'Builds the experiment plan.',
+            }, {
+              kind: 'method',
+              label: 'buildPlan',
+              file_path: 'src/app.ts',
+              start_line: 22,
+              end_line: 25,
+              text: 'Builds one plan.',
             }],
             collaborator_component_ids: ['interface'],
             relationship_ids: ['interface-calls-application'],
@@ -162,8 +176,13 @@ test('explains component roles and links details to validated code', async () =>
 
   expect(screen.getByLabelText('Architecture depth')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Zoom in' })).toBeVisible();
+  expect(screen.getByLabelText('Architecture diagram workspace')).toBeVisible();
+  expect(screen.getByLabelText('Component details')).toBeVisible();
+  expect(screen.queryByText('What this system does')).not.toBeInTheDocument();
+  expect(screen.queryByText('Handle a request.')).not.toBeInTheDocument();
   expect(screen.getAllByText('application workflow').length).toBeGreaterThan(0);
   expect(screen.getByLabelText('Responsibility map')).toBeVisible();
+  expect(screen.getByText('src/app.ts:5-9')).toBeVisible();
   expect(screen.queryByText('Experiment application · application')).not.toBeInTheDocument();
   const selectedComponent = screen.getByLabelText('Selected diagram component');
   expect(within(selectedComponent).getByRole('heading', { name: 'Experiment application' })).toBeVisible();
@@ -175,6 +194,7 @@ test('explains component roles and links details to validated code', async () =>
   expect(within(ownerDetail).getByText('src/app.ts:5-9')).toBeVisible();
   expect(within(ownerDetail).getByText('Methods and state')).toBeVisible();
   expect(within(ownerDetail).getByText('resultStore')).toBeVisible();
+  expect(within(ownerDetail).queryByText('buildPlan')).not.toBeInTheDocument();
   expect(within(ownerDetail).getByText('Operator interfaces calls Experiment application')).toBeVisible();
   fireEvent.click(within(ownerDetail).getAllByRole('button', { name: 'Show code' })[0]);
   expect(previewEvidence).toHaveBeenCalledWith(
@@ -183,6 +203,8 @@ test('explains component roles and links details to validated code', async () =>
   );
   fireEvent.click(screen.getByRole('button', { name: 'Interfaces, 1 component' }));
   await waitFor(() => expect(within(selectedComponent).getByRole('heading', { name: 'Operator interfaces' })).toBeVisible());
+  fireEvent.click(screen.getByRole('button', { name: 'Operator interfaces, Accept operator commands.' }));
+  expect(screen.getByRole('radio', { name: 'Component' })).toBeChecked();
 
   expect(screen.getByRole('tab', { name: 'System notes' })).toBeVisible();
   expect(screen.getByText('Rules affecting multiple components')).not.toBeVisible();

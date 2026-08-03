@@ -5,9 +5,11 @@ import com.github.nearkim.aicodewalkthrough.model.FeatureScopeContext
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.service.ProviderCapabilities
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -84,5 +86,29 @@ class PromptEnvelopeFactoryTest {
         assertEquals("purpose_to_system_map_to_relationships_to_representative_paths_to_code", strategy.getValue("progression").jsonPrimitive.content)
         assertEquals("progressive_disclosure", strategy.getValue("detail_policy").jsonPrimitive.content)
         assertTrue(AnalysisMode.REVIEW.resolveQuestion("  ") == null)
+    }
+
+    @Test
+    fun `walkthrough prompt includes the precomputed mechanical symbol inventory`() {
+        val inventory = buildJsonObject {
+            put("tool", "python_stdlib_ast")
+            put("symbol_count", 42)
+        }
+        val prompt = PromptEnvelopeFactory.buildWalkthroughPrompt(
+            question = "Map the repository",
+            mode = AnalysisMode.UNDERSTAND,
+            maxSteps = 12,
+            queryContext = null,
+            followUpContext = null,
+            featureScope = null,
+            providerCapabilities = ProviderCapabilities(supportsRepoGroundedWalkthrough = true),
+            json = json,
+            mechanicalSymbolInventory = inventory,
+        )
+
+        val embedded = json.parseToJsonElement(prompt).jsonObject
+            .getValue("mechanical_symbol_inventory").jsonObject
+        assertEquals("python_stdlib_ast", embedded.getValue("tool").jsonPrimitive.content)
+        assertEquals("42", embedded.getValue("symbol_count").jsonPrimitive.content)
     }
 }

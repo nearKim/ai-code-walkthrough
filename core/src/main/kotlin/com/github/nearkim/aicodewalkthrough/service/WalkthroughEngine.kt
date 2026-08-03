@@ -2,6 +2,7 @@ package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.application.prompt.PromptEnvelopeFactory
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
+import com.github.nearkim.aicodewalkthrough.model.AnalysisTrace
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
 import com.github.nearkim.aicodewalkthrough.model.FeatureScopeContext
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
@@ -51,6 +52,13 @@ class WalkthroughEngine(
         return try {
             requireRepoGroundedWalkthroughSupport(provider)
             activeProvider.set(provider)
+            onProgress?.invoke("Checking for a mechanical symbol analyzer...")
+            val symbolInventory = MechanicalSymbolAnalyzer.analyze(projectRoot, json)
+            symbolInventory?.let {
+                onProgress?.invoke(
+                    "Indexed ${it.filesScanned} Python files and ${it.symbolCount} symbols with Python AST.",
+                )
+            }
             val prompt = PromptEnvelopeFactory.buildWalkthroughPrompt(
                 question = question,
                 mode = mode,
@@ -60,6 +68,7 @@ class WalkthroughEngine(
                 featureScope = featureScope,
                 providerCapabilities = provider.capabilities,
                 json = json,
+                mechanicalSymbolInventory = symbolInventory?.payload,
             )
             val providerResponse = provider.query(prompt, PromptKind.WALKTHROUGH, onProgress)
             val response = decodeResponse(providerResponse.content)
@@ -67,6 +76,11 @@ class WalkthroughEngine(
                 val flowMap = response.toFlowMap()
                     ?: return Result.failure(IllegalStateException("Unexpected flow map response from LLM"))
                 val validated = StepValidator(projectRoot.toString()).validate(flowMap)
+                val analysisTrace = symbolInventory?.let { inventory ->
+                    (validated.analysisTrace ?: AnalysisTrace()).copy(
+                        semanticToolsUsed = (validated.analysisTrace?.semanticToolsUsed.orEmpty() + inventory.tool).distinct(),
+                    )
+                } ?: validated.analysisTrace
                 response.copy(
                     steps = validated.steps,
                     architecture = validated.architecture,
@@ -74,7 +88,7 @@ class WalkthroughEngine(
                     entryStepId = validated.entryStepId,
                     terminalStepIds = validated.terminalStepIds,
                     edges = validated.edges,
-                    analysisTrace = validated.analysisTrace,
+                    analysisTrace = analysisTrace,
                 )
             } else {
                 response

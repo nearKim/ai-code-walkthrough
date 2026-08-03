@@ -305,10 +305,39 @@ body {
   height: 100%;
 }
 
+.architecture-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(480px, 0.85fr);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.architecture-workspace-diagram {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+}
+
+.architecture-inspector {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
 .component-summary,
 .component-code-detail {
   display: grid;
   gap: 5px;
+}
+
+.component-files {
+  display: grid;
+  gap: 5px;
+  margin-top: 5px;
 }
 
 .inspector-panel {
@@ -415,9 +444,9 @@ body {
 }
 
 .responsibility-owner {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
   min-width: 0;
   padding: 5px 6px;
@@ -434,7 +463,12 @@ body {
   outline: none;
 }
 
-.responsibility-owner code {
+.responsibility-owner-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.responsibility-owner-copy code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

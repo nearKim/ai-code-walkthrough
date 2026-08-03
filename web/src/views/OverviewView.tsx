@@ -168,6 +168,12 @@ function ArchitectureView({ architecture, steps, brokenStepIds, onPreviewStep, o
     () => component === undefined ? [] : componentResponsibilities(component),
     [component],
   );
+  const mappedFiles = useMemo(() => component === undefined ? [] : [...new Set([
+    ...component.key_paths,
+    ...responsibilities.flatMap(responsibilityOwners)
+      .map((evidence) => evidence.file_path)
+      .filter((path): path is string => path !== undefined),
+  ])], [component, responsibilities]);
   const selectedOwner = responsibilities
     .flatMap(responsibilityOwners)
     .find((evidence) => architectureEvidenceKey(evidence) === ownerKey);
@@ -184,9 +190,8 @@ function ArchitectureView({ architecture, steps, brokenStepIds, onPreviewStep, o
   useEffect(() => setOwnerKey(undefined), [componentId]);
 
   return (
-    <ScrollArea className="overview-scroll" offsetScrollbars>
-      <Stack gap="md" p="sm">
-        <Section title="What this system does"><Text size="sm">{architecture.system_purpose}</Text></Section>
+    <div className="architecture-workspace">
+      <div aria-label="Architecture diagram workspace" className="architecture-workspace-diagram">
         {architecture.components.length > 0 && <ArchitectureDiagram
           architecture={architecture}
           selectedComponentId={componentId}
@@ -194,45 +199,55 @@ function ArchitectureView({ architecture, steps, brokenStepIds, onPreviewStep, o
           onComponentSelect={setComponentId}
           onOwnerSelect={setOwnerKey}
         />}
-        {component !== undefined && <section
-          aria-label="Selected diagram component"
-          aria-live="polite"
-          className="component-summary"
-        >
-          <Group gap="xs" wrap="wrap">
-            <Title order={4}>{component.name}</Title>
-            <Badge size="sm" variant="light">{roleForKind(component.kind)}</Badge>
-          </Group>
-          <Text size="sm">{component.responsibility}</Text>
-        </section>}
-        {component !== undefined && <ResponsibilityMap
-          component={component}
-          responsibilities={responsibilities}
-          relationships={architecture.relationships}
-          names={names}
-          selectedOwnerKey={ownerKey}
-          onOwnerSelect={setOwnerKey}
-        />}
-        {component !== undefined && component.responsibilities.length === 0 && <section className="inspector-panel">
-          <Text fw={700}>Representative code</Text>
-          <Text size="xs" c="dimmed">Remap this repository to generate responsibility-to-owner detail.</Text>
-          <ComponentDetail
+      </div>
+      <ScrollArea aria-label="Component details" className="architecture-inspector" offsetScrollbars>
+        <Stack gap="md" p="sm">
+          {component !== undefined && <section
+            aria-label="Selected diagram component"
+            aria-live="polite"
+            className="component-summary"
+          >
+            <Group gap="xs" wrap="wrap">
+              <Title order={4}>{component.name}</Title>
+              <Badge size="sm" variant="light">{roleForKind(component.kind)}</Badge>
+            </Group>
+            <Text size="sm">{component.responsibility}</Text>
+            {mappedFiles.length > 0 && <div className="component-files">
+              <Text size="xs" c="dimmed" fw={700}>Representative files</Text>
+              <div className="code-anchor-list">
+                {mappedFiles.map((path) => <Code key={path}>{path}</Code>)}
+              </div>
+            </div>}
+          </section>}
+          {component !== undefined && <ResponsibilityMap
             component={component}
-            steps={componentSteps}
-            brokenStepIds={brokenStepIds}
-            onPreviewStep={onPreviewStep}
-          />
-        </section>}
-        {component !== undefined && selectedOwner !== undefined && <CodeOwnerDetail
-          component={component}
-          owner={selectedOwner}
-          responsibilities={responsibilities}
-          relationships={architecture.relationships}
-          names={names}
-          onPreviewEvidence={onPreviewEvidence}
-        />}
-      </Stack>
-    </ScrollArea>
+            responsibilities={responsibilities}
+            relationships={architecture.relationships}
+            names={names}
+            selectedOwnerKey={ownerKey}
+            onOwnerSelect={setOwnerKey}
+          />}
+          {component !== undefined && component.responsibilities.length === 0 && <section className="inspector-panel">
+            <Text fw={700}>Representative code</Text>
+            <Text size="xs" c="dimmed">Remap this repository to generate responsibility-to-owner detail.</Text>
+            <ComponentDetail
+              component={component}
+              steps={componentSteps}
+              brokenStepIds={brokenStepIds}
+              onPreviewStep={onPreviewStep}
+            />
+          </section>}
+          {component !== undefined && selectedOwner !== undefined && <CodeOwnerDetail
+            component={component}
+            owner={selectedOwner}
+            responsibilities={responsibilities}
+            relationships={architecture.relationships}
+            names={names}
+            onPreviewEvidence={onPreviewEvidence}
+          />}
+        </Stack>
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -318,7 +333,12 @@ function ResponsibilityMap({
                   key={key}
                   onClick={() => onOwnerSelect(key)}
                 >
-                  <Code>{owner.label}</Code>
+                  <div className="responsibility-owner-copy">
+                    <Code>{owner.label}</Code>
+                    {owner.file_path !== undefined && <Text size="xs" c="dimmed">
+                      {formatEvidenceLocation(owner)}
+                    </Text>}
+                  </div>
                   <span>{humanize(owner.kind)}</span>
                 </UnstyledButton>;
               })}
@@ -375,7 +395,7 @@ function CodeOwnerDetail({
       {ownedResponsibilities.map((responsibility) => {
         const responsibilityOwnerKeys = new Set(responsibilityOwners(responsibility).map(architectureEvidenceKey));
         const implementationEvidence = responsibility.evidence.filter((evidence) =>
-          !responsibilityOwnerKeys.has(architectureEvidenceKey(evidence)));
+          !responsibilityOwnerKeys.has(architectureEvidenceKey(evidence)) && evidenceBelongsToOwner(evidence, owner));
         const otherOwners = responsibilityOwners(responsibility).filter((evidence) =>
           architectureEvidenceKey(evidence) !== ownerKey);
         const connections = relationshipsForResponsibility(component.id, responsibility, relationships);
@@ -500,10 +520,6 @@ function ComponentDetail({ component, steps, brokenStepIds, onPreviewStep }: {
   </div>;
 }
 
-function Section({ title, children }: { readonly title: string; readonly children: React.ReactNode }) {
-  return <section><Text fw={700} mb={4}>{title}</Text>{children}</section>;
-}
-
 function deriveStages(stages: ReadonlyArray<LearningStage>, steps: ReadonlyArray<FlowStep>): ReadonlyArray<LearningStage> {
   if (stages.length > 0) return stages;
   if (steps.length === 0) return [];
@@ -565,6 +581,15 @@ function relationshipsForResponsibility(
 
 function hasCodeLocation(evidence: EvidenceItem): boolean {
   return evidence.file_path !== undefined && evidence.start_line !== undefined;
+}
+
+function evidenceBelongsToOwner(evidence: EvidenceItem, owner: EvidenceItem): boolean {
+  if (evidence.file_path !== owner.file_path || evidence.start_line === undefined || owner.start_line === undefined) {
+    return false;
+  }
+  const evidenceEnd = evidence.end_line ?? evidence.start_line;
+  const ownerEnd = owner.end_line ?? owner.start_line;
+  return evidence.start_line >= owner.start_line && evidenceEnd <= ownerEnd;
 }
 
 function formatStepLocation(step: FlowStep): string {

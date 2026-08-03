@@ -247,11 +247,14 @@ object PromptContract {
         37. For each architecture component, keep responsibility as its one-sentence aggregate purpose and populate responsibilities with 1-5 distinct outcomes or reasons to change. Aggregate components may own several responsibilities; do not claim that a component or class conforms to SOLID.
         38. Every responsibility must map to at least one exact code owner (interface, class, function, module, config, or schema) or a valid collaborator component. Include only the important methods and state that explain how the owner fulfills that responsibility, with exact file and line evidence; do not inventory every member.
         39. responsibility collaborator_component_ids and relationship_ids must reference components and relationships returned in the same architecture. Use evidence text to explain the role of each owner, method, or state in that responsibility.
+        40. When mechanical_symbol_inventory is present, read it before repository exploration. It is deterministic analyzer output produced before the AI request. Decode its compact keys using its schema field.
+        41. Use the inventory's paths, imports, classes, functions, methods, bases, state fields, and line ranges to choose code owners. A conceptual component may aggregate several owners, but its responsibilities.evidence must name the important inventoried owners separately so the UI can show which classes and functions belong to it.
+        42. Inspect the selected source symbols before describing their behavior, responsibility, or relationships; names alone are not evidence. The inventory is bounded rather than exhaustive. Report its truncated flag and material errors in coverage_notes, and use repository inspection to verify or supplement it.
     """.trimIndent()
 
     private val mcpAddendum = """
 
-        40. SEMANTIC NAVIGATION — you have access to MCP semantic tools. Use them as your PRIMARY exploration strategy:
+        43. SEMANTIC NAVIGATION — after reading any mechanical symbol inventory, use MCP semantic tools as your PRIMARY repository exploration strategy:
             - get_symbols_overview(relative_path): understand a file's full symbol structure without reading every line. Start here when opening any file.
             - find_symbol(name_path, relative_path, depth=1, include_body=true): use this to locate the exact symbol and get precise start/end lines.
             - find_referencing_symbols(name_path, relative_path): use this to trace call flow between symbols.

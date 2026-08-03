@@ -123,7 +123,6 @@ export function ArchitectureDiagram({
     }
     if (node.componentId !== undefined) {
       onComponentSelect(node.componentId);
-      if (depth === 'component') setDepth('responsibilities');
     }
   };
 

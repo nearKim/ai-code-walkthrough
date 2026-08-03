@@ -17,6 +17,7 @@ Choose **Learn** and leave the prompt blank to generate a whole-codebase lesson.
 The model proposes the architecture and code path; the shared walkthrough engine validates before either UI renders it:
 
 - Grounded walkthroughs require Codex CLI or Claude CLI so the provider can inspect the local repository.
+- Python repositories are indexed first with the standard-library AST. The provider receives exact production-file classes, functions, methods, bases, state fields, imports, and line ranges before it maps conceptual components.
 - Codex CLI is fixed to `gpt-5.6-sol` with `ultra` or `max` reasoning.
 - Claude CLI offers only Claude Fable 5 (`fable`) and Claude Opus 5 (`opus`).
 - Component anchors and responsibility code owners must resolve to real project files and lines.

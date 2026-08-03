@@ -8,6 +8,7 @@ import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.service.ProviderCapabilities
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -24,6 +25,7 @@ object PromptEnvelopeFactory {
         featureScope: FeatureScopeContext?,
         providerCapabilities: ProviderCapabilities,
         json: Json,
+        mechanicalSymbolInventory: JsonObject? = null,
     ): String {
         val stepLimit = if (
             mode == AnalysisMode.UNDERSTAND && question == AnalysisMode.DEFAULT_CODEBASE_QUESTION
@@ -37,6 +39,7 @@ object PromptEnvelopeFactory {
             put("max_steps", stepLimit)
             put("question", question)
             put("grounding_capabilities", groundingCapabilities(providerCapabilities))
+            mechanicalSymbolInventory?.let { put("mechanical_symbol_inventory", it) }
             if (mode == AnalysisMode.UNDERSTAND) {
                 put("learning_strategy", learningStrategy(question))
             }
