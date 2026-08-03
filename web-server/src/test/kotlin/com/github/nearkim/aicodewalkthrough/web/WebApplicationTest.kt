@@ -46,6 +46,8 @@ class WebApplicationTest {
         val root = temporary.newFolder("repository").toPath()
         Files.createDirectories(root.resolve("src"))
         Files.writeString(root.resolve("src/Main.kt"), "fun main() {\n    start()\n}\n")
+        Files.writeString(root.resolve("pyproject.toml"), "[project]\nname = \"sample\"\n")
+        Files.writeString(root.resolve("app.py"), "class Application:\n    def run(self):\n        return 1\n")
         val settings = WebSettingsStore(root.resolve("settings/settings.json"))
         val provider = FakeProvider()
         val engine = WalkthroughEngine(root, settings::get) { provider }
@@ -82,6 +84,10 @@ class WebApplicationTest {
             val source = client.get("/api/source?path=src%2FMain.kt")
             assertEquals(HttpStatusCode.OK, source.status)
             assertTrue(source.bodyAsText().contains("fun main()"))
+
+            val symbols = client.get("/api/symbols")
+            assertEquals(HttpStatusCode.OK, symbols.status)
+            assertTrue(symbols.bodyAsText().contains("\"n\":\"Application\""))
 
             val escaped = client.get("/api/source?path=..%2Foutside.txt")
             assertEquals(HttpStatusCode.NotFound, escaped.status)

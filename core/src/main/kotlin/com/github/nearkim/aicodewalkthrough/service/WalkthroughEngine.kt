@@ -16,6 +16,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import java.io.IOException
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
@@ -38,6 +39,7 @@ class WalkthroughEngine(
 
     private val json = Json { ignoreUnknownKeys = true }
     private val activeProvider = AtomicReference<LlmProvider?>()
+    private val latestSymbolInventory = AtomicReference<MechanicalSymbolInventory?>()
 
     suspend fun mapFlow(
         question: String,
@@ -54,6 +56,7 @@ class WalkthroughEngine(
             activeProvider.set(provider)
             onProgress?.invoke("Checking for a mechanical symbol analyzer...")
             val symbolInventory = MechanicalSymbolAnalyzer.analyze(projectRoot, json)
+            latestSymbolInventory.set(symbolInventory)
             symbolInventory?.let {
                 onProgress?.invoke(
                     "Indexed ${it.filesScanned} Python files and ${it.symbolCount} symbols with Python AST.",
@@ -162,6 +165,14 @@ class WalkthroughEngine(
     }
 
     suspend fun checkAvailability(provider: AiProvider): ProviderStatus = providerFor(provider).checkAvailability()
+
+    suspend fun mechanicalSymbolInventory(): JsonObject? {
+        val cached = latestSymbolInventory.get()
+        if (cached != null) return cached.payload
+        return MechanicalSymbolAnalyzer.analyze(projectRoot, json)
+            ?.also(latestSymbolInventory::set)
+            ?.payload
+    }
 
     fun cancel() {
         activeProvider.getAndSet(null)?.cancel()

@@ -113,20 +113,10 @@ export function CodePane({ step, nextStep, nextEdge, dark, focusNonce }: CodePan
       zoneIds.push(accessor.addZone(zone(
         startLine - 1,
         'walkthrough-zone walkthrough-zone-header',
-        `${step.title} · ${step.file_path}:${startLine}-${endLine}`,
+        step.title,
         34,
         1,
       )));
-      const summary = step.explanation.trim() || step.why_included.trim();
-      if (summary.length > 0) {
-        zoneIds.push(accessor.addZone(zone(
-          startLine - 1,
-          'walkthrough-zone walkthrough-zone-summary',
-          summary,
-          30 + Math.min(3, Math.floor(summary.length / 100)) * 20,
-          2,
-        )));
-      }
       step.line_annotations.forEach((annotation, index) => {
         if (annotation.text.trim().length === 0) return;
         const line = clamp(annotation.start_line, startLine, endLine);

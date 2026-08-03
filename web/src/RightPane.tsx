@@ -8,7 +8,6 @@ import {
   ScrollArea,
   SegmentedControl,
   Select,
-  Stack,
   Text,
   Textarea,
   Title,
@@ -17,6 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   AnalysisModeId,
   EvidenceItem,
+  MechanicalSymbolInventory,
   ProviderId,
   ProviderStatus,
   SessionSnapshot,
@@ -31,6 +31,7 @@ export interface RightPaneActions {
   readonly tour: (action: 'start' | 'preview' | 'next' | 'previous' | 'stop' | 'new', stepId?: string) => Promise<void>;
   readonly answer: (question: string) => Promise<void>;
   readonly copyMarkdown: () => Promise<void>;
+  readonly loadSymbolInventory: () => Promise<MechanicalSymbolInventory>;
   readonly openSettings: () => void;
   readonly focusCode: () => void;
   readonly previewEvidence: (evidence: EvidenceItem, explanation: string) => void;
@@ -84,65 +85,97 @@ function InputView({ session, settings, providers, actions, actionError }: Input
   };
 
   return (
-    <Stack className="pane-content" gap="md">
-      <div>
-        <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Local repository</Text>
-        <Title order={3}>{session.repository}</Title>
-        <Text size="xs" c="dimmed" truncate title={session.repository_path}>{session.repository_path}</Text>
-      </div>
-      {(session.error_message ?? actionError) !== undefined &&
-        <Alert color="red" title="Walkthrough failed">{session.error_message ?? actionError}</Alert>}
-      <SegmentedControl
-        fullWidth
-        value={mode}
-        onChange={(value) => setMode(value as AnalysisModeId)}
-        data={[
-          { value: 'understand', label: 'Learn' },
-          { value: 'review', label: 'Review' },
-          { value: 'trace', label: 'Trace' },
-        ]}
-      />
-      <div>
-        <Text fw={600}>{modeDetails.title}</Text>
-        <Text size="sm" c="dimmed">{modeDetails.description}</Text>
-      </div>
-      <Textarea
-        label="Question"
-        description={mode === 'understand' ? 'Optional—leave blank for a whole-codebase learning path.' : 'Required for this mode.'}
-        placeholder={modeDetails.placeholder}
-        minRows={5}
-        autosize
-        maxRows={12}
-        value={question}
-        onChange={(event) => setQuestion(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) void submit();
-        }}
-      />
-      <Select
-        label="Provider"
-        value={provider}
-        data={providers.length > 0
-          ? providers.map((status) => ({ value: status.id, label: status.name }))
-          : [{ value: 'claude_cli', label: 'Claude CLI' }, { value: 'codex_cli', label: 'Codex CLI' }]}
-        onChange={(value) => value !== null && setProvider(value as ProviderId)}
-      />
-      <Group justify="space-between" wrap="nowrap">
-        <Group gap="xs" wrap="nowrap" className="provider-status">
-          <span className={`status-dot ${selectedStatus?.available === true ? 'available' : selectedStatus === undefined ? 'checking' : 'unavailable'}`} />
-          <Text size="xs" c="dimmed" lineClamp={2}>{selectedStatus?.message ?? 'Checking provider…'}</Text>
-        </Group>
-        <Button variant="subtle" size="compact-sm" onClick={actions.openSettings}>Settings</Button>
-      </Group>
-      <Button
-        onClick={() => void submit()}
-        loading={submitting}
-        disabled={selectedStatus?.available === false || (mode !== 'understand' && question.trim().length === 0)}
-      >
-        {mode === 'understand' && question.trim().length === 0 ? 'Learn codebase' : 'Start walkthrough'}
-      </Button>
-      <Text size="xs" c="dimmed" ta="center">Ctrl/⌘ + Enter to start</Text>
-    </Stack>
+    <div className="pane-content input-workspace">
+      <section className="input-intro">
+        <div>
+          <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Repository field guide</Text>
+          <Title order={1}>Understand <span>{session.repository}</span></Title>
+          <Text className="input-intro-copy" c="dimmed">
+            Build a source-grounded route from the system map to the code that makes it work.
+          </Text>
+        </div>
+        <ol aria-label="Walkthrough workflow" className="workflow-diagram">
+          <li>
+            <span>01</span>
+            <div><strong>Map the system</strong><small>Components, boundaries, relationships</small></div>
+          </li>
+          <li>
+            <span>02</span>
+            <div><strong>Choose a route</strong><small>A staged path through validated stops</small></div>
+          </li>
+          <li>
+            <span>03</span>
+            <div><strong>Read the evidence</strong><small>Source, call sites, and line-level notes</small></div>
+          </li>
+        </ol>
+        <Text size="xs" c="dimmed">Local analysis · repository-contained source · validated locations</Text>
+      </section>
+
+      <section className="input-console">
+        <div className="input-console-heading">
+          <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>New walkthrough</Text>
+          <Title order={3}>What do you need to understand?</Title>
+        </div>
+        {(session.error_message ?? actionError) !== undefined &&
+          <Alert color="red" title="Walkthrough failed">{session.error_message ?? actionError}</Alert>}
+        <SegmentedControl
+          className="mode-switcher"
+          fullWidth
+          value={mode}
+          onChange={(value) => setMode(value as AnalysisModeId)}
+          data={[
+            { value: 'understand', label: 'Learn' },
+            { value: 'review', label: 'Review' },
+            { value: 'trace', label: 'Trace' },
+          ]}
+        />
+        <div className="mode-description">
+          <Text fw={700}>{modeDetails.title}</Text>
+          <Text size="sm" c="dimmed">{modeDetails.description}</Text>
+        </div>
+        <Textarea
+          className="walkthrough-prompt"
+          label="Focus"
+          description={mode === 'understand' ? 'Optional—leave blank to map the whole codebase.' : 'Required for this mode.'}
+          placeholder={modeDetails.placeholder}
+          minRows={5}
+          autosize
+          maxRows={12}
+          value={question}
+          onChange={(event) => setQuestion(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) void submit();
+          }}
+        />
+        <div className="provider-row">
+          <Select
+            label="Analysis engine"
+            value={provider}
+            data={providers.length > 0
+              ? providers.map((status) => ({ value: status.id, label: status.name }))
+              : [{ value: 'claude_cli', label: 'Claude CLI' }, { value: 'codex_cli', label: 'Codex CLI' }]}
+            onChange={(value) => value !== null && setProvider(value as ProviderId)}
+          />
+          <div className="provider-state">
+            <Group gap="xs" wrap="nowrap" className="provider-status">
+              <span className={`status-dot ${selectedStatus?.available === true ? 'available' : selectedStatus === undefined ? 'checking' : 'unavailable'}`} />
+              <Text size="xs" c="dimmed" lineClamp={2}>{selectedStatus?.message ?? 'Checking provider…'}</Text>
+            </Group>
+            <Button variant="subtle" size="compact-sm" onClick={actions.openSettings}>Settings</Button>
+          </div>
+        </div>
+        <Button
+          className="start-button"
+          size="md"
+          onClick={() => void submit()}
+          loading={submitting}
+          disabled={selectedStatus?.available === false || (mode !== 'understand' && question.trim().length === 0)}
+        >
+          {mode === 'understand' && question.trim().length === 0 ? 'Learn codebase' : 'Start walkthrough'}
+        </Button>
+        <Text size="xs" c="dimmed" ta="center">Ctrl/⌘ + Enter</Text>
+      </section>
+    </div>
   );
 }
 
@@ -156,17 +189,38 @@ function LoadingView({ session, onCancel }: { readonly session: SessionSnapshot;
   const lines = useMemo(() => session.progress_lines.slice(-200), [session.progress_lines]);
 
   return (
-    <Stack className="pane-content pane-fill" gap="md">
-      <Group justify="space-between">
-        <Group gap="sm"><Loader size="sm" /><Text fw={600}>Mapping walkthrough…</Text></Group>
-        <Badge variant="light">{elapsed.toFixed(1)}s</Badge>
-      </Group>
-      <Text size="sm" c="dimmed">{lines.at(-1) ?? 'Inspecting the repository…'}</Text>
-      <ScrollArea className="progress-log" type="auto" offsetScrollbars>
-        <Code block>{lines.join('\n') || 'Waiting for provider output…'}</Code>
-      </ScrollArea>
-      <Button color="red" variant="light" onClick={() => void onCancel()}>Stop</Button>
-    </Stack>
+    <div className="pane-content loading-workspace">
+      <section className="loading-summary">
+        <div className="loading-heading">
+          <Loader size="sm" />
+          <div>
+            <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Analysis in progress</Text>
+            <Title order={2}>Mapping the walkthrough</Title>
+          </div>
+        </div>
+        <div aria-label="Mapping pipeline" className="mapping-pipeline">
+          <div><span>1</span><strong>Inspect</strong><small>symbols &amp; modules</small></div>
+          <i aria-hidden="true" />
+          <div><span>2</span><strong>Connect</strong><small>components &amp; hops</small></div>
+          <i aria-hidden="true" />
+          <div><span>3</span><strong>Validate</strong><small>paths &amp; ranges</small></div>
+        </div>
+        <Group justify="space-between">
+          <Text size="sm" c="dimmed">The provider can run until the repository map is complete.</Text>
+          <Badge variant="light">{elapsed.toFixed(1)}s</Badge>
+        </Group>
+      </section>
+      <section className="activity-panel">
+        <div className="activity-panel-heading">
+          <Text fw={700}>Live analysis trace</Text>
+          <Text size="xs" c="dimmed">Newest provider output appears at the bottom.</Text>
+        </div>
+        <ScrollArea className="progress-log" type="auto" offsetScrollbars>
+          <Code block>{lines.join('\n') || 'Waiting for provider output…'}</Code>
+        </ScrollArea>
+        <Button color="red" variant="light" onClick={() => void onCancel()}>Stop analysis</Button>
+      </section>
+    </div>
   );
 }
 

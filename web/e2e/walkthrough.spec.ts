@@ -165,6 +165,28 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
       await route.fulfill({ json: [{ id: 'codex_cli', name: 'Codex CLI', available: true, message: 'Available' }] });
       return;
     }
+    if (path === '/api/symbols') {
+      await route.fulfill({ json: {
+        tool: 'python_stdlib_ast',
+        language: 'python',
+        files_scanned: 1,
+        symbol_count: 3,
+        truncated: false,
+        modules: [{
+          p: 'src/Main.kt',
+          i: [],
+          c: [{
+            n: 'ApplicationRunner',
+            r: [5, 7],
+            b: [],
+            s: [],
+            m: [{ n: 'start', r: [6, 6] }],
+          }],
+          f: [{ n: 'main', r: [1, 3] }],
+        }],
+      } });
+      return;
+    }
     if (path === '/api/source') {
       await route.fulfill({ json: { path: 'src/Main.kt', content: 'fun main() {\n    ApplicationRunner().start()\n}\n\nclass ApplicationRunner {\n    fun start() = Unit\n}\n' } });
       return;
@@ -199,6 +221,13 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   });
 
   await page.goto('/');
+  await page.getByLabel('Color theme').getByText('Dark', { exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'dark');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('ai-code-walkthrough-color-scheme'))).toBe('dark');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'dark');
+  await page.getByLabel('Color theme').getByText('Light', { exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'light');
   await page.getByRole('button', { name: 'Learn codebase' }).click();
   await expect(page.getByText('Walkthrough mapped')).toBeVisible();
   const codePanel = page.locator('#code');
@@ -214,12 +243,31 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   expect(detailsBox).not.toBeNull();
   expect(diagramBox!.x).toBeLessThan(detailsBox!.x);
   await expect(page.getByText('Run an application from a local entrypoint.', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /AST-grounded Explore implementation · 1 class · 1 function · 1 method/ })).toBeVisible();
+  await page.getByLabel('Architecture depth').getByText('Component', { exact: true }).click();
+  await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
+  await page.getByRole('button', { name: /Program entrypoint, Accept process startup/ }).click();
+  await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
+  await page.getByRole('button', { name: /Application, Coordinate the application run/ }).click();
+  const ownerButton = page.getByRole('button', { name: 'class ApplicationRunner' });
+  const [ownerNameBox, ownerKindBox] = await Promise.all([
+    ownerButton.locator('code').boundingBox(),
+    ownerButton.locator('.responsibility-owner-heading > span').boundingBox(),
+  ]);
+  expect(ownerNameBox).not.toBeNull();
+  expect(ownerKindBox).not.toBeNull();
+  expect(ownerNameBox!.x + ownerNameBox!.width).toBeLessThanOrEqual(ownerKindBox!.x);
+  await page.getByRole('tab', { name: 'Implementation (2)' }).click();
+  const structure = page.getByLabel('Mechanical code structure');
+  await expect(structure.getByText('ApplicationRunner', { exact: true })).toBeVisible();
+  await expect(structure.getByText('ApplicationRunner.start()')).toBeVisible();
+  await page.getByRole('tab', { name: 'Responsibilities (1)' }).click();
   await page.getByRole('button', { name: 'class ApplicationRunner' }).click();
-  await expect(page.getByRole('heading', { name: 'ApplicationRunner' })).toBeVisible();
-  await expect(page.getByText('Methods and state')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Application runner' })).toBeVisible();
+  await expect(page.getByText('Implementation details')).toBeVisible();
   await page.getByLabel('Code owner detail').locator('.code-owner-header').getByRole('button', { name: 'Show code' }).click();
   await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);
-  await expect(page.getByText('L5–7')).toBeVisible();
+  await expect(codePanel.getByText('L5–7')).toBeVisible();
   await page.getByRole('button', { name: 'Hide code pane' }).click();
   await expect(codePanel).toHaveCSS('width', '0px');
   await page.getByRole('button', { name: 'Show code pane' }).click();

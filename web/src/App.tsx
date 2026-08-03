@@ -1,5 +1,15 @@
-import { Alert, Button, Center, Loader, MantineProvider, Text } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
+import {
+  Alert,
+  Button,
+  Center,
+  Loader,
+  localStorageColorSchemeManager,
+  MantineProvider,
+  SegmentedControl,
+  Text,
+  useComputedColorScheme,
+  useMantineColorScheme,
+} from '@mantine/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Group as PanelGroup, Panel, Separator, usePanelCallbackRef } from 'react-resizable-panels';
 import { api, subscribeToEvents } from './api';
@@ -16,8 +26,20 @@ import type {
   WalkthroughSettings,
 } from './types';
 
+const colorSchemeManager = localStorageColorSchemeManager({
+  key: 'ai-code-walkthrough-color-scheme',
+});
+
 export function App() {
-  const dark = useMediaQuery('(prefers-color-scheme: dark)') ?? false;
+  return <MantineProvider colorSchemeManager={colorSchemeManager} defaultColorScheme="auto">
+    <WalkthroughApplication />
+  </MantineProvider>;
+}
+
+function WalkthroughApplication() {
+  const colorScheme = useComputedColorScheme('light');
+  const { setColorScheme } = useMantineColorScheme();
+  const dark = colorScheme === 'dark';
   const [session, setSession] = useState<SessionSnapshot>();
   const [settings, setSettings] = useState<WalkthroughSettings>();
   const [providers, setProviders] = useState<ReadonlyArray<ProviderStatus>>([]);
@@ -32,13 +54,16 @@ export function App() {
 
   useEffect(() => {
     if (codePanel === null) return;
-    if (shouldShowCode) codePanel.expand();
-    else codePanel.collapse();
+    if (shouldShowCode) {
+      if (codePanel.isCollapsed()) codePanel.resize('64%');
+    } else {
+      codePanel.collapse();
+    }
   }, [codePanel, shouldShowCode]);
 
   const toggleCodePane = useCallback(() => {
     if (codePanel === null) return;
-    if (codePanel.isCollapsed()) codePanel.expand();
+    if (codePanel.isCollapsed()) codePanel.resize('64%');
     else codePanel.collapse();
   }, [codePanel]);
 
@@ -123,6 +148,7 @@ export function App() {
       await perform(() => api.tour(action, stepId));
     },
     answer: async (question) => perform(() => api.answer(question)),
+    loadSymbolInventory: api.symbols,
     copyMarkdown: async () => {
       setActionError(undefined);
       try {
@@ -168,19 +194,36 @@ export function App() {
     }
   };
 
-  return <MantineProvider defaultColorScheme="auto">
-    <main className="app-shell">
+  return <main className="app-shell">
       <header className="app-header">
-        <Text fw={700}>AI Code Walkthrough</Text>
+        <div className="app-brand">
+          <span aria-hidden="true" className="app-brand-mark">↳</span>
+          <div>
+            <Text fw={800}>AI Code Walkthrough</Text>
+            <Text size="xs" c="dimmed">Architecture to implementation</Text>
+          </div>
+        </div>
         <div className="app-header-controls">
-          {session !== undefined && <Button
+          <div className="repository-context">
+            <span>Repository</span>
+            <Text size="xs" ff="monospace" truncate title={session?.repository_path}>
+              {session?.repository_path ?? 'Connecting to local server…'}
+            </Text>
+          </div>
+          {shouldShowCode && <Button
             aria-controls="code"
             aria-expanded={!codeCollapsed}
             size="compact-xs"
             variant="subtle"
             onClick={toggleCodePane}
           >{codeCollapsed ? 'Show code pane' : 'Hide code pane'}</Button>}
-          <Text size="xs" c="dimmed" truncate>{session?.repository_path ?? 'Connecting to local server…'}</Text>
+          <SegmentedControl
+            aria-label="Color theme"
+            data={['Light', 'Dark']}
+            size="xs"
+            value={dark ? 'Dark' : 'Light'}
+            onChange={(value) => setColorScheme(value === 'Dark' ? 'dark' : 'light')}
+          />
         </div>
       </header>
       {actionError !== undefined && <Alert className="global-error" color="red" withCloseButton onClose={() => setActionError(undefined)}>
@@ -226,8 +269,7 @@ export function App() {
         onClose={() => setSettingsOpened(false)}
         onSave={saveSettings}
       />
-    </main>
-  </MantineProvider>;
+    </main>;
 }
 
 function messageOf(value: unknown): string {

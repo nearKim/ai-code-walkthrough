@@ -179,3 +179,31 @@ export interface SourceFile {
   readonly path: string;
   readonly content: string;
 }
+
+export interface MechanicalCallable {
+  readonly name: string;
+  readonly start_line: number;
+  readonly end_line: number;
+}
+
+export interface MechanicalClass extends MechanicalCallable {
+  readonly bases: ReadonlyArray<string>;
+  readonly state_fields: ReadonlyArray<string>;
+  readonly methods: ReadonlyArray<MechanicalCallable>;
+}
+
+export interface MechanicalModule {
+  readonly path: string;
+  readonly imports: ReadonlyArray<string>;
+  readonly classes: ReadonlyArray<MechanicalClass>;
+  readonly functions: ReadonlyArray<MechanicalCallable>;
+}
+
+export interface MechanicalSymbolInventory {
+  readonly tool: string;
+  readonly language: string;
+  readonly files_scanned: number;
+  readonly symbol_count: number;
+  readonly truncated: boolean;
+  readonly modules: ReadonlyArray<MechanicalModule>;
+}

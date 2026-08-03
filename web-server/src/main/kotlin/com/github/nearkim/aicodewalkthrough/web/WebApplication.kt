@@ -104,6 +104,15 @@ fun Application.configureWebApplication(dependencies: WebDependencies) {
             call.respond(SettingsResponse(dependencies.settings.get()))
         }
 
+        get("/api/symbols") {
+            val inventory = dependencies.engine.mechanicalSymbolInventory()
+            if (inventory == null) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("No mechanical symbol analyzer supports this repository."))
+                return@get
+            }
+            call.respond(inventory)
+        }
+
         put("/api/settings") {
             if (!call.requireJson()) return@put
             val updated = try {

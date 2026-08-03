@@ -77,6 +77,7 @@ Browser request (App)
         → CLI provider → parse and validate shared FlowMap
     → session events over SSE
   → CodePane fetches repository-contained source and renders validated highlights/inlays
+  → GET /api/symbols returns the cached mechanical AST inventory for the architecture inspector
 ```
 
 ### State machine (`TourState`)
@@ -170,6 +171,7 @@ It does not do full language-aware call resolution. For now, symbol lookup is st
 
 - Learn mode can be started with a blank prompt to request a whole-codebase curriculum.
 - The overview opens on architecture first, then advances to the staged learning path.
+- Component depth keeps every component visible while emphasizing relationships touching the current selection. The inspector separates AI-mapped responsibilities from the mechanical class/function/member inventory.
 - The active tour shows the current learning-stage goal and checkpoint and prefers validated outgoing `StepEdge` hops when choosing the next step.
 - If no valid outgoing hop exists, it falls back to the next non-broken step in list order.
 - The editor preview highlights the next hop's validated `call_site_*` range when available.

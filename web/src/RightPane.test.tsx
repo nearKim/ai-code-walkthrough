@@ -12,6 +12,9 @@ test('starts the default whole-codebase walkthrough', async () => {
     cancelMapping: noop,
     tour: noop,
     answer: noop,
+    loadSymbolInventory: async () => ({
+      tool: 'python_stdlib_ast', language: 'python', files_scanned: 0, symbol_count: 0, truncated: false, modules: [],
+    }),
     copyMarkdown: noop,
     openSettings: vi.fn(),
     focusCode: vi.fn(),
@@ -53,6 +56,26 @@ test('explains component roles and links details to validated code', async () =>
     cancelMapping: noop,
     tour,
     answer: noop,
+    loadSymbolInventory: async () => ({
+      tool: 'python_stdlib_ast',
+      language: 'python',
+      files_scanned: 1,
+      symbol_count: 4,
+      truncated: false,
+      modules: [{
+        path: 'src/app.ts',
+        imports: [],
+        classes: [{
+          name: 'ExperimentRunner',
+          start_line: 5,
+          end_line: 19,
+          bases: [],
+          state_fields: ['resultStore'],
+          methods: [{ name: 'run', start_line: 6, end_line: 8 }],
+        }],
+        functions: [{ name: 'buildRunner', start_line: 21, end_line: 24 }],
+      }],
+    }),
     copyMarkdown: noop,
     openSettings: vi.fn(),
     focusCode: vi.fn(),
@@ -188,11 +211,18 @@ test('explains component roles and links details to validated code', async () =>
   expect(within(selectedComponent).getByRole('heading', { name: 'Experiment application' })).toBeVisible();
   expect(screen.queryByText('Selected component')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Choose component')).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText('Explore implementation · 1 class · 1 function · 1 method')).toBeVisible());
+  fireEvent.click(screen.getByRole('tab', { name: 'Implementation (2)' }));
+  const structure = screen.getByLabelText('Mechanical code structure');
+  expect(structure).toBeVisible();
+  expect(within(structure).getByText('ExperimentRunner')).toBeVisible();
+  expect(within(structure).getByText('ExperimentRunner.run()')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Responsibilities (1)' }));
   fireEvent.click(screen.getByRole('button', { name: 'class ExperimentRunner' }));
   const ownerDetail = screen.getByLabelText('Code owner detail');
-  expect(within(ownerDetail).getByRole('heading', { name: 'ExperimentRunner' })).toBeVisible();
+  expect(within(ownerDetail).getByRole('heading', { name: 'Experiment runner' })).toBeVisible();
   expect(within(ownerDetail).getByText('src/app.ts:5-9')).toBeVisible();
-  expect(within(ownerDetail).getByText('Methods and state')).toBeVisible();
+  expect(within(ownerDetail).getByText('Implementation details')).toBeVisible();
   expect(within(ownerDetail).getByText('resultStore')).toBeVisible();
   expect(within(ownerDetail).queryByText('buildPlan')).not.toBeInTheDocument();
   expect(within(ownerDetail).getByText('Operator interfaces calls Experiment application')).toBeVisible();

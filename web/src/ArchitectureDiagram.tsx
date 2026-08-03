@@ -33,6 +33,7 @@ interface DiagramEdge {
   readonly label: string;
   readonly tone: DiagramTone;
   readonly uncertain?: boolean;
+  readonly muted?: boolean;
 }
 
 export interface ArchitectureDiagramModel {
@@ -77,7 +78,6 @@ interface ArchitectureDiagramProps {
 
 const kindOrder = ['entrypoint', 'application', 'domain', 'infrastructure', 'data', 'shared'];
 const ownerKinds = new Set(['interface', 'class', 'function', 'module', 'config', 'schema']);
-const maxDirectRelationships = 6;
 
 export function ArchitectureDiagram({
   architecture,
@@ -98,14 +98,10 @@ export function ArchitectureDiagram({
     const animation = window.requestAnimationFrame(() => {
       const controls = transformRef.current;
       if (controls === null) return;
-      if (depth !== 'component') {
-        fitDiagram(controls, diagram);
-        return;
-      }
-      controls.zoomToElement(diagramNodeDomId(selectedComponentId), 1, 0);
+      fitDiagram(controls, diagram);
     });
     return () => window.cancelAnimationFrame(animation);
-  }, [depth, diagram, selectedComponentId]);
+  }, [architecture, depth]);
 
   const selectNode = (node: DiagramNode) => {
     if (node.ownerKey !== undefined) {
@@ -127,11 +123,8 @@ export function ArchitectureDiagram({
   };
 
   return <Stack gap="xs" className="architecture-diagram">
-    <Stack gap={6}>
-      <div>
-        <Text fw={700}>Architecture map</Text>
-        <Text size="xs" c="dimmed">Move from system context to one component, then its grounded responsibility owners.</Text>
-      </div>
+    <div className="diagram-toolbar">
+      <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Map depth</Text>
       <SegmentedControl
         aria-label="Architecture depth"
         size="xs"
@@ -143,7 +136,7 @@ export function ArchitectureDiagram({
           { value: 'responsibilities', label: 'Responsibilities' },
         ]}
       />
-    </Stack>
+    </div>
     <div className="architecture-diagram-frame">
       <TransformWrapper
         key={depth}
@@ -195,11 +188,14 @@ export function ArchitectureDiagram({
         </defs>
         {diagram.edges.map((edge) => <g key={edge.id}>
           <path
-            className={`diagram-edge ${edge.tone}${edge.uncertain === true ? ' uncertain' : ''}`}
+            className={`diagram-edge ${edge.tone}${edge.uncertain === true ? ' uncertain' : ''}${edge.muted === true ? ' muted' : ''}`}
             d={pathFrom(edge.points)}
             markerEnd={`url(#diagram-arrow-${edge.tone})`}
           />
-          {edge.label.length > 0 && edge.x !== undefined && edge.y !== undefined && <g transform={`translate(${edge.x}, ${edge.y})`}>
+          {edge.label.length > 0 && edge.x !== undefined && edge.y !== undefined && <g
+            className={edge.muted === true ? 'diagram-edge-label-group muted' : undefined}
+            transform={`translate(${edge.x}, ${edge.y})`}
+          >
             <rect
               className="diagram-edge-label-bg"
               x={-edge.width / 2}
@@ -259,14 +255,15 @@ export function ArchitectureDiagram({
         </>}
       </TransformWrapper>
     </div>
-    <Text size="xs" c="dimmed">Drag to move · scroll or pinch to zoom · double-click to reset</Text>
-    <Group gap="md" className="diagram-legend">
-      <Legend tone="primary" label="control / creation" />
-      <Legend tone="data" label="data access" />
-      <Legend tone="dependency" label="dependency" />
-      <Legend tone="neutral" label="other" />
-    </Group>
-    <Text size="xs" c="dimmed" ff="monospace">{model.caption}</Text>
+    <div className="diagram-footer">
+      <Group gap="md" className="diagram-legend">
+        <Legend tone="primary" label="control / creation" />
+        <Legend tone="data" label="data access" />
+        <Legend tone="dependency" label="dependency" />
+        <Legend tone="neutral" label="other" />
+      </Group>
+      <Text size="xs" c="dimmed">{model.caption}</Text>
+    </div>
   </Stack>;
 }
 
@@ -310,7 +307,7 @@ function createSystemModel(architecture: CodebaseArchitecture): ArchitectureDiag
   return {
     level: 'system',
     rankDirection: 'TB',
-    caption: `${architecture.components.length} major components collapsed into ${groups.size} responsibility bands. Select a band to inspect its components.`,
+    caption: 'Select a responsibility band to inspect its components.',
     nodes: kinds.map((kind) => {
       const components = groups.get(kind) ?? [];
       return {
@@ -342,21 +339,32 @@ function createComponentModel(
   if (component === undefined) {
     return { level: 'component', rankDirection: 'LR', caption: 'No grounded components.', nodes: [], edges: [] };
   }
-  const allRelationships = architecture.relationships.filter((relationship) =>
-    relationship.from_component_id === component.id || relationship.to_component_id === component.id);
-  const relationships = allRelationships.slice(0, maxDirectRelationships);
-  const visibleIds = new Set([component.id]);
-  relationships.forEach((relationship) => {
-    visibleIds.add(relationship.from_component_id);
-    visibleIds.add(relationship.to_component_id);
-  });
-  const hiddenCount = allRelationships.length - relationships.length;
+  const aggregated = new Map<string, {
+    from: string;
+    to: string;
+    kinds: Set<string>;
+    uncertain: boolean;
+  }>();
+  for (const relationship of architecture.relationships) {
+    const key = `${relationship.from_component_id}->${relationship.to_component_id}`;
+    const current = aggregated.get(key) ?? {
+      from: relationship.from_component_id,
+      to: relationship.to_component_id,
+      kinds: new Set<string>(),
+      uncertain: false,
+    };
+    current.kinds.add(relationship.kind);
+    current.uncertain ||= relationship.uncertain;
+    aggregated.set(key, current);
+  }
+  const directCount = architecture.relationships.filter((relationship) =>
+    relationship.from_component_id === component.id || relationship.to_component_id === component.id).length;
 
   return {
     level: 'component',
     rankDirection: 'LR',
-    caption: `${component.name} with ${relationships.length} direct ${relationships.length === 1 ? 'connection' : 'connections'}${hiddenCount > 0 ? `; ${hiddenCount} more listed below` : ''}. Select a component to inspect its responsibilities.`,
-    nodes: architecture.components.filter((candidate) => visibleIds.has(candidate.id)).map((candidate) => ({
+    caption: `All ${architecture.components.length} components stay visible. ${directCount} ${directCount === 1 ? 'connection touches' : 'connections touch'} ${component.name}; select any component to inspect it.`,
+    nodes: architecture.components.map((candidate) => ({
       id: candidate.id,
       label: candidate.name,
       detail: candidate.responsibility,
@@ -364,13 +372,14 @@ function createComponentModel(
       tone: toneForKind(candidate.kind),
       componentId: candidate.id,
     })),
-    edges: relationships.map((relationship) => ({
-      id: relationship.id,
-      from: relationship.from_component_id,
-      to: relationship.to_component_id,
-      label: humanize(relationship.kind),
-      tone: toneForRelationship(relationship.kind),
+    edges: [...aggregated.entries()].map(([id, relationship]) => ({
+      id: `component:${id}`,
+      from: relationship.from,
+      to: relationship.to,
+      label: [...relationship.kinds].map(humanize).join(' / '),
+      tone: toneForRelationships(relationship.kinds),
       uncertain: relationship.uncertain,
+      muted: relationship.from !== component.id && relationship.to !== component.id,
     })),
   };
 }
@@ -556,7 +565,7 @@ function fitDiagram(controls: ReactZoomPanPinchContentRef, diagram: PositionedDi
 function viewportHeight(depth: ArchitectureDepth, diagramHeight: number): number {
   if (depth === 'component') return Math.min(420, Math.max(280, diagramHeight));
   if (depth === 'responsibilities') return Math.min(460, Math.max(300, diagramHeight));
-  return Math.min(430, Math.max(240, diagramHeight));
+  return Math.min(430, Math.max(340, diagramHeight));
 }
 
 function diagramNodeDomId(componentId: string): string {

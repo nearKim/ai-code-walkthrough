@@ -96,15 +96,20 @@ const architecture: CodebaseArchitecture = {
   coverage_notes: [],
 };
 
-test('builds focused architecture and responsibility diagrams', () => {
+test('builds stable architecture and responsibility diagrams', () => {
   const system = createArchitectureDiagramModel(architecture, 'system', 'application');
   expect(system.nodes.map((node) => node.label)).toEqual(['Interfaces', 'Application', 'Data boundaries', 'Shared contracts']);
   expect(system.edges).toHaveLength(2);
 
   const component = createArchitectureDiagramModel(architecture, 'component', 'application');
-  expect(component.nodes.map((node) => node.label)).toEqual(['HTTP interface', 'Application service', 'Result store']);
+  expect(component.nodes.map((node) => node.label)).toEqual([
+    'HTTP interface',
+    'Application service',
+    'Result store',
+    'Shared contracts',
+  ]);
   expect(component.edges.map((edge) => edge.label)).toEqual(['calls', 'writes']);
-  expect(component.nodes.some((node) => node.label === 'Shared contracts')).toBe(false);
+  expect(component.caption).toContain('All 4 components stay visible');
 
   const responsibilities = createArchitectureDiagramModel(architecture, 'responsibilities', 'application');
   expect(responsibilities.nodes.map((node) => node.label)).toEqual([

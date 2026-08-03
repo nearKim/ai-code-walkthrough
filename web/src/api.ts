@@ -1,5 +1,6 @@
 import type {
   AnalysisModeId,
+  MechanicalSymbolInventory,
   ProviderId,
   ProviderStatus,
   SessionSnapshot,
@@ -13,6 +14,31 @@ interface ErrorResponse {
 
 interface SettingsResponse {
   readonly settings: WalkthroughSettings;
+}
+
+interface RawCallable {
+  readonly n: string;
+  readonly r: readonly [number, number];
+}
+
+interface RawClass extends RawCallable {
+  readonly b: ReadonlyArray<string>;
+  readonly s: ReadonlyArray<string>;
+  readonly m: ReadonlyArray<RawCallable>;
+}
+
+interface RawSymbolInventory {
+  readonly tool: string;
+  readonly language: string;
+  readonly files_scanned: number;
+  readonly symbol_count: number;
+  readonly truncated: boolean;
+  readonly modules: ReadonlyArray<{
+    readonly p: string;
+    readonly i: ReadonlyArray<string>;
+    readonly c: ReadonlyArray<RawClass>;
+    readonly f: ReadonlyArray<RawCallable>;
+  }>;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -43,6 +69,9 @@ export const api = {
   session: (): Promise<SessionSnapshot> => request('/api/session'),
   providers: (): Promise<ReadonlyArray<ProviderStatus>> => request('/api/providers'),
   settings: async (): Promise<WalkthroughSettings> => (await request<SettingsResponse>('/api/settings')).settings,
+  symbols: async (): Promise<MechanicalSymbolInventory> => normalizeSymbolInventory(
+    await request<RawSymbolInventory>('/api/symbols'),
+  ),
   saveSettings: async (settings: WalkthroughSettings): Promise<WalkthroughSettings> =>
     (await request<SettingsResponse>('/api/settings', jsonRequest('PUT', settings))).settings,
   startMapping: (question: string, mode: AnalysisModeId, provider: ProviderId): Promise<SessionSnapshot> =>
@@ -62,6 +91,32 @@ export const api = {
     return response.text();
   },
 };
+
+function normalizeSymbolInventory(raw: RawSymbolInventory): MechanicalSymbolInventory {
+  const callable = (item: RawCallable) => ({
+    name: item.n,
+    start_line: item.r[0],
+    end_line: item.r[1],
+  });
+  return {
+    tool: raw.tool,
+    language: raw.language,
+    files_scanned: raw.files_scanned,
+    symbol_count: raw.symbol_count,
+    truncated: raw.truncated,
+    modules: raw.modules.map((module) => ({
+      path: module.p,
+      imports: module.i,
+      classes: module.c.map((item) => ({
+        ...callable(item),
+        bases: item.b,
+        state_fields: item.s,
+        methods: item.m.map(callable),
+      })),
+      functions: module.f.map(callable),
+    })),
+  };
+}
 
 export function subscribeToEvents(
   onSession: (snapshot: SessionSnapshot) => void,

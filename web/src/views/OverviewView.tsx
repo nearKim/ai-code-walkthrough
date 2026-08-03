@@ -6,7 +6,6 @@ import {
   Divider,
   Group,
   ScrollArea,
-  Select,
   Stack,
   Tabs,
   Text,
@@ -30,6 +29,10 @@ import type {
   EvidenceItem,
   FlowStep,
   LearningStage,
+  MechanicalCallable,
+  MechanicalClass,
+  MechanicalModule,
+  MechanicalSymbolInventory,
   SessionSnapshot,
 } from '../types';
 
@@ -61,23 +64,20 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
   }
   const broken = new Set(session.broken_step_ids);
   const selectedStep = flow.steps.find((step) => step.id === selectedStepId);
-  const entry = flow.steps.find((step) => step.id === flow.entry_step_id) ?? flow.steps[0];
   const hasSystemNotes = (flow.architecture?.cross_cutting_concerns.length ?? 0) > 0 ||
     (flow.architecture?.coverage_notes.length ?? 0) > 0;
 
   return (
     <div className="pane-column">
-      <div className="pane-header">
-        <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Walkthrough mapped</Text>
-        <Title order={3} lineClamp={2}>{session.question ?? 'Walkthrough'}</Title>
-        <Text size="xs" c="dimmed">
-          {flow.architecture?.components.length ?? 0} components · {stages.length} stages · {flow.steps.length} steps
-          {entry !== undefined ? ` · entry: ${entry.title}` : ''}
-        </Text>
-        <Text size="sm" mt="xs">{flow.summary}</Text>
+      <div className="pane-header overview-header">
+        <div>
+          <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Walkthrough mapped</Text>
+          <Title order={2} lineClamp={1}>{session.question ?? 'Repository walkthrough'}</Title>
+        </div>
+        <Text size="sm" c="dimmed" lineClamp={2}>{flow.summary}</Text>
       </div>
       <Tabs defaultValue={flow.architecture === undefined ? 'path' : 'architecture'} className="overview-tabs">
-        <Tabs.List grow>
+        <Tabs.List className="overview-tab-list">
           {flow.architecture !== undefined && <Tabs.Tab value="architecture">Architecture</Tabs.Tab>}
           <Tabs.Tab value="path">Learning path</Tabs.Tab>
           {hasSystemNotes && <Tabs.Tab value="notes">System notes</Tabs.Tab>}
@@ -89,47 +89,66 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
             brokenStepIds={broken}
             onPreviewStep={(stepId) => void actions.tour('preview', stepId)}
             onPreviewEvidence={actions.previewEvidence}
+            loadSymbolInventory={actions.loadSymbolInventory}
           />
         </Tabs.Panel>}
         <Tabs.Panel value="path" className="overview-panel">
-          <ScrollArea className="overview-scroll" offsetScrollbars>
-            <Stack gap="sm" p="sm">
-              <Select
-                label="Learning stage"
-                data={stages.map((stage, index) => ({
-                  value: String(index),
-                  label: `${index + 1}. ${stage.title} · ${stage.step_ids.length} stops`,
-                }))}
-                value={String(stageIndex)}
-                onChange={(value) => value !== null && setStageIndex(Number(value))}
-              />
-              {activeStage !== undefined && <div>
-                <Text fw={600}>{activeStage.goal}</Text>
-                {activeStage.checkpoint !== undefined &&
-                  <Text size="sm" c="dimmed" mt={4}>Checkpoint: {activeStage.checkpoint}</Text>}
+          <div className="learning-path-workspace">
+            <nav aria-label="Learning stages" className="learning-stage-rail">
+              <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Route</Text>
+              {stages.map((stage, index) => <UnstyledButton
+                aria-current={index === stageIndex ? 'step' : undefined}
+                className={`learning-stage${index === stageIndex ? ' selected' : ''}`}
+                key={stage.id}
+                onClick={() => setStageIndex(index)}
+              >
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <div>
+                  <Text size="sm" fw={700}>{stage.title}</Text>
+                  <Text size="xs" c="dimmed">{stage.step_ids.length} code {stage.step_ids.length === 1 ? 'stop' : 'stops'}</Text>
+                </div>
+              </UnstyledButton>)}
+            </nav>
+            <ScrollArea className="learning-stage-detail" offsetScrollbars>
+              {activeStage !== undefined && <div className="learning-stage-content">
+                <header className="stage-goal">
+                  <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>
+                    Stage {stageIndex + 1} of {stages.length}
+                  </Text>
+                  <Title order={3}>{activeStage.goal}</Title>
+                </header>
+                <div aria-label="Validated code stops" className="code-stop-table" role="table">
+                  <div aria-hidden="true" className="code-stop-table-header" role="row">
+                    <span>Stop</span><span>Validated stop</span><span>Type</span>
+                  </div>
+                  {stageSteps.map((step, index) => {
+                    const disabled = broken.has(step.id);
+                    return <UnstyledButton
+                      aria-label={`${step.title}, ${shortPath(step.file_path)} line ${step.start_line}`}
+                      className={`code-stop-row${selectedStepId === step.id ? ' selected' : ''}`}
+                      disabled={disabled}
+                      key={step.id}
+                      onClick={() => setSelectedStepId(step.id)}
+                      role="row"
+                    >
+                      <span className="code-stop-index">{String(index + 1).padStart(2, '0')}</span>
+                      <span className="code-stop-title">
+                        <Text size="sm" fw={700}>{step.title}</Text>
+                        <Text size="xs" c="dimmed" ff="monospace">{shortPath(step.file_path)}:{step.start_line}</Text>
+                      </span>
+                      <Badge size="xs" variant="light" color={disabled ? 'red' : 'gray'}>
+                        {disabled ? 'broken' : step.step_type ?? step.importance ?? 'step'}
+                      </Badge>
+                    </UnstyledButton>;
+                  })}
+                </div>
+                {activeStage.checkpoint !== undefined && <div className="stage-checkpoint">
+                  <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Checkpoint</Text>
+                  <Text size="sm">{activeStage.checkpoint}</Text>
+                </div>}
               </div>}
-              <Divider label="Validated code stops" labelPosition="left" />
-              <Stack gap={4}>
-                {stageSteps.map((step) => {
-                  const disabled = broken.has(step.id);
-                  return <UnstyledButton
-                    key={step.id}
-                    className={`step-row ${selectedStepId === step.id ? 'selected' : ''}`}
-                    disabled={disabled}
-                    onClick={() => setSelectedStepId(step.id)}
-                  >
-                    <div className="step-row-main">
-                      <Text size="sm" fw={600} lineClamp={1}>{step.title}</Text>
-                      <Text size="xs" c="dimmed" lineClamp={1}>{shortPath(step.file_path)}:{step.start_line}</Text>
-                    </div>
-                    <Badge size="xs" variant="light" color={disabled ? 'red' : 'gray'}>
-                      {disabled ? 'broken' : step.step_type ?? step.importance ?? 'step'}
-                    </Badge>
-                  </UnstyledButton>;
-                })}
-              </Stack>
-            </Stack>
-          </ScrollArea>
+            </ScrollArea>
+          </div>
         </Tabs.Panel>
         {flow.architecture !== undefined && hasSystemNotes && <Tabs.Panel value="notes" className="overview-panel">
           <SystemNotesView architecture={flow.architecture} />
@@ -150,15 +169,26 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
   );
 }
 
-function ArchitectureView({ architecture, steps, brokenStepIds, onPreviewStep, onPreviewEvidence }: {
+function ArchitectureView({
+  architecture,
+  steps,
+  brokenStepIds,
+  onPreviewStep,
+  onPreviewEvidence,
+  loadSymbolInventory,
+}: {
   readonly architecture: CodebaseArchitecture;
   readonly steps: ReadonlyArray<FlowStep>;
   readonly brokenStepIds: ReadonlySet<string>;
   readonly onPreviewStep: (stepId: string) => void;
   readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
+  readonly loadSymbolInventory: () => Promise<MechanicalSymbolInventory>;
 }) {
   const [componentId, setComponentId] = useState(architecture.components[0]?.id ?? '');
   const [ownerKey, setOwnerKey] = useState<string>();
+  const [detailTab, setDetailTab] = useState<string>('responsibilities');
+  const [symbolInventory, setSymbolInventory] = useState<MechanicalSymbolInventory>();
+  const [symbolError, setSymbolError] = useState<string>();
   const names = useMemo(
     () => new Map(architecture.components.map((component) => [component.id, component.name])),
     [architecture.components],
@@ -170,10 +200,20 @@ function ArchitectureView({ architecture, steps, brokenStepIds, onPreviewStep, o
   );
   const mappedFiles = useMemo(() => component === undefined ? [] : [...new Set([
     ...component.key_paths,
-    ...responsibilities.flatMap(responsibilityOwners)
+    ...component.evidence
+      .map((evidence) => evidence.file_path)
+      .filter((path): path is string => path !== undefined),
+    ...responsibilities.flatMap((responsibility) => responsibility.evidence)
       .map((evidence) => evidence.file_path)
       .filter((path): path is string => path !== undefined),
   ])], [component, responsibilities]);
+  const mechanicalModules = useMemo(
+    () => component === undefined || symbolInventory === undefined
+      ? []
+      : modulesForComponent(symbolInventory, mappedFiles),
+    [component, mappedFiles, symbolInventory],
+  );
+  const mechanicalCounts = useMemo(() => countMechanicalSymbols(mechanicalModules), [mechanicalModules]);
   const selectedOwner = responsibilities
     .flatMap(responsibilityOwners)
     .find((evidence) => architectureEvidenceKey(evidence) === ownerKey);
@@ -188,6 +228,13 @@ function ArchitectureView({ architecture, steps, brokenStepIds, onPreviewStep, o
     }
   }, [architecture.components, componentId]);
   useEffect(() => setOwnerKey(undefined), [componentId]);
+  useEffect(() => {
+    let active = true;
+    loadSymbolInventory()
+      .then((inventory) => active && setSymbolInventory(inventory))
+      .catch((reason: unknown) => active && setSymbolError(messageOf(reason)));
+    return () => { active = false; };
+  }, [loadSymbolInventory]);
 
   return (
     <div className="architecture-workspace">
@@ -212,39 +259,68 @@ function ArchitectureView({ architecture, steps, brokenStepIds, onPreviewStep, o
               <Badge size="sm" variant="light">{roleForKind(component.kind)}</Badge>
             </Group>
             <Text size="sm">{component.responsibility}</Text>
-            {mappedFiles.length > 0 && <div className="component-files">
-              <Text size="xs" c="dimmed" fw={700}>Representative files</Text>
-              <div className="code-anchor-list">
+            {mappedFiles.length > 0 && <details className="component-files">
+              <summary>Mapped code <span>{formatCount(mappedFiles.length, 'path')}</span></summary>
+              <div className="component-file-list">
                 {mappedFiles.map((path) => <Code key={path}>{path}</Code>)}
               </div>
-            </div>}
+            </details>}
+            {symbolInventory !== undefined && <UnstyledButton
+              className="component-structure-summary"
+              onClick={() => setDetailTab('structure')}
+            >
+              <span>AST-grounded</span>
+              <Text size="xs">Explore implementation · {formatMechanicalCounts(mechanicalCounts)}</Text>
+            </UnstyledButton>}
           </section>}
-          {component !== undefined && <ResponsibilityMap
-            component={component}
-            responsibilities={responsibilities}
-            relationships={architecture.relationships}
-            names={names}
-            selectedOwnerKey={ownerKey}
-            onOwnerSelect={setOwnerKey}
-          />}
-          {component !== undefined && component.responsibilities.length === 0 && <section className="inspector-panel">
-            <Text fw={700}>Representative code</Text>
-            <Text size="xs" c="dimmed">Remap this repository to generate responsibility-to-owner detail.</Text>
-            <ComponentDetail
-              component={component}
-              steps={componentSteps}
-              brokenStepIds={brokenStepIds}
-              onPreviewStep={onPreviewStep}
-            />
-          </section>}
-          {component !== undefined && selectedOwner !== undefined && <CodeOwnerDetail
-            component={component}
-            owner={selectedOwner}
-            responsibilities={responsibilities}
-            relationships={architecture.relationships}
-            names={names}
-            onPreviewEvidence={onPreviewEvidence}
-          />}
+          {component !== undefined && <Tabs value={detailTab} onChange={(value) => setDetailTab(value ?? 'responsibilities')}>
+            <Tabs.List grow>
+              <Tabs.Tab value="responsibilities">Responsibilities ({responsibilities.length})</Tabs.Tab>
+              <Tabs.Tab value="structure">Implementation ({mechanicalCounts.classes + mechanicalCounts.functions})</Tabs.Tab>
+            </Tabs.List>
+            <Tabs.Panel value="responsibilities" pt="md">
+              <Stack gap="md">
+                <ResponsibilityMap
+                  component={component}
+                  responsibilities={responsibilities}
+                  relationships={architecture.relationships}
+                  names={names}
+                  selectedOwnerKey={ownerKey}
+                  onOwnerSelect={setOwnerKey}
+                />
+                {component.responsibilities.length === 0 && <section className="inspector-panel">
+                  <Text fw={700}>Representative code</Text>
+                  <Text size="xs" c="dimmed">No AI responsibility mapping was returned for this component.</Text>
+                  <ComponentDetail
+                    component={component}
+                    steps={componentSteps}
+                    brokenStepIds={brokenStepIds}
+                    onPreviewStep={onPreviewStep}
+                  />
+                </section>}
+                {selectedOwner !== undefined && <CodeOwnerDetail
+                  component={component}
+                  owner={selectedOwner}
+                  responsibilities={responsibilities}
+                  relationships={architecture.relationships}
+                  names={names}
+                  onPreviewEvidence={onPreviewEvidence}
+                />}
+              </Stack>
+            </Tabs.Panel>
+            <Tabs.Panel value="structure" pt="md">
+              {symbolError !== undefined
+                ? <Alert color="yellow">{symbolError}</Alert>
+                : symbolInventory === undefined
+                  ? <Text size="sm" c="dimmed">Loading mechanical code structure…</Text>
+                  : <MechanicalStructure
+                      modules={mechanicalModules}
+                      responsibilities={responsibilities}
+                      inventory={symbolInventory}
+                      onPreviewEvidence={onPreviewEvidence}
+                    />}
+            </Tabs.Panel>
+          </Tabs>}
         </Stack>
       </ScrollArea>
     </div>
@@ -289,6 +365,170 @@ function SystemNotesView({ architecture }: { readonly architecture: CodebaseArch
   </ScrollArea>;
 }
 
+function MechanicalStructure({
+  modules,
+  responsibilities,
+  inventory,
+  onPreviewEvidence,
+}: {
+  readonly modules: ReadonlyArray<MechanicalModule>;
+  readonly responsibilities: ReadonlyArray<ArchitectureResponsibility>;
+  readonly inventory: MechanicalSymbolInventory;
+  readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
+}) {
+  const counts = countMechanicalSymbols(modules);
+  return <section aria-label="Mechanical code structure" className="mechanical-structure">
+    <div className="mechanical-structure-heading">
+      <div>
+        <Text fw={700}>How this component is implemented</Text>
+        <Text size="xs" c="dimmed">
+          Headings make exact AST names easier to read. Responsibility notes appear only when the provider mapped them to a symbol.
+        </Text>
+      </div>
+      <Text size="xs" c="dimmed" className="mechanical-counts">
+        {formatMechanicalCounts(counts)}
+      </Text>
+    </div>
+    {inventory.truncated && <Alert color="yellow">The mechanical inventory reached its configured limit.</Alert>}
+    {modules.length === 0
+      ? <Text size="sm" c="dimmed">No Python classes or functions were detected in this component’s mapped files.</Text>
+      : <div className="symbol-module-list">
+          {modules.map((module, index) => <details className="symbol-module" key={module.path} open={index === 0}>
+            <summary>
+              <Code>{module.path}</Code>
+              <span>{formatModuleCounts(module)}</span>
+            </summary>
+            <div className="symbol-module-body">
+              {module.classes.length > 0 && <div className="symbol-group">
+                <Text size="xs" fw={700} c="dimmed" tt="uppercase">Types defined here</Text>
+                {module.classes.map((item) => <MechanicalClassCard
+                  classSymbol={item}
+                  modulePath={module.path}
+                  responsibilities={responsibilities}
+                  key={`${module.path}:${item.name}:${item.start_line}`}
+                  onPreviewEvidence={onPreviewEvidence}
+                />)}
+              </div>}
+              {module.functions.length > 0 && <details className="symbol-callable-group" open={module.functions.length <= 6}>
+                <summary>Module operations <span>{formatCount(module.functions.length, 'function')}</span></summary>
+                <div className="symbol-callable-list">
+                  {module.functions.map((item) => <MechanicalCallableRow
+                    symbol={item}
+                    kind="function"
+                    modulePath={module.path}
+                    responsibilities={responsibilities}
+                    key={`${module.path}:${item.name}:${item.start_line}`}
+                    onPreviewEvidence={onPreviewEvidence}
+                  />)}
+                </div>
+              </details>}
+            </div>
+          </details>)}
+        </div>}
+  </section>;
+}
+
+function MechanicalClassCard({
+  classSymbol,
+  modulePath,
+  responsibilities,
+  onPreviewEvidence,
+}: {
+  readonly classSymbol: MechanicalClass;
+  readonly modulePath: string;
+  readonly responsibilities: ReadonlyArray<ArchitectureResponsibility>;
+  readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
+}) {
+  const mappings = mappingsForSymbol(responsibilities, modulePath, [classSymbol.name]);
+  const plainName = humanizeSymbol(classSymbol.name);
+  const explanation = mappings[0]?.description ?? `Defines ${plainName.toLowerCase()} in ${modulePath}.`;
+  const evidence = mechanicalEvidence('class', classSymbol.name, modulePath, classSymbol);
+  const declaration = classSymbol.bases.length === 0
+    ? classSymbol.name
+    : `${classSymbol.name}(${classSymbol.bases.join(', ')})`;
+  return <article className="mechanical-class">
+    <div className="mechanical-symbol-heading">
+      <div>
+        <Text size="sm" fw={700}>{plainName}</Text>
+        <div className="symbol-signature">
+          <span>Class</span>
+          <Code>{declaration}</Code>
+          <span>L{classSymbol.start_line}–{classSymbol.end_line}</span>
+        </div>
+      </div>
+      <Button size="compact-xs" variant="subtle" onClick={() => onPreviewEvidence(evidence, explanation)}>
+        View source
+      </Button>
+    </div>
+    <SymbolMappings mappings={mappings} />
+    {classSymbol.state_fields.length > 0 && <div className="mechanical-state">
+      <Text size="xs" fw={700} c="dimmed">Keeps track of</Text>
+      <Text size="sm">{naturalList(classSymbol.state_fields.map(humanizeSymbol))}</Text>
+    </div>}
+    {classSymbol.methods.length > 0 && <details className="symbol-callable-group" open={classSymbol.methods.length <= 5}>
+      <summary>What it can do <span>{formatCount(classSymbol.methods.length, 'method')}</span></summary>
+      <div className="symbol-callable-list">
+        {classSymbol.methods.map((method) => <MechanicalCallableRow
+          symbol={method}
+          kind="method"
+          modulePath={modulePath}
+          responsibilities={responsibilities}
+          ownerName={classSymbol.name}
+          key={`${modulePath}:${classSymbol.name}:${method.name}:${method.start_line}`}
+          onPreviewEvidence={onPreviewEvidence}
+        />)}
+      </div>
+    </details>}
+  </article>;
+}
+
+function MechanicalCallableRow({
+  symbol,
+  kind,
+  modulePath,
+  responsibilities,
+  ownerName,
+  onPreviewEvidence,
+}: {
+  readonly symbol: MechanicalCallable;
+  readonly kind: 'function' | 'method';
+  readonly modulePath: string;
+  readonly responsibilities: ReadonlyArray<ArchitectureResponsibility>;
+  readonly ownerName?: string;
+  readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
+}) {
+  const qualifiedName = ownerName === undefined ? symbol.name : `${ownerName}.${symbol.name}`;
+  const mappings = mappingsForSymbol(responsibilities, modulePath, [qualifiedName, symbol.name]);
+  const evidence = mechanicalEvidence(kind, qualifiedName, modulePath, symbol);
+  const plainName = humanizeSymbol(symbol.name);
+  const explanation = mappings[0]?.description ?? `${plainName} in ${modulePath}.`;
+  return <div className="mechanical-callable-row">
+    <div>
+      <Text size="sm" fw={600}>{plainName}</Text>
+      <div className="symbol-signature">
+        <Code>{qualifiedName}()</Code>
+        <span>L{symbol.start_line}–{symbol.end_line}</span>
+      </div>
+      <SymbolMappings mappings={mappings} />
+    </div>
+    <Button size="compact-xs" variant="subtle" onClick={() => onPreviewEvidence(evidence, explanation)}>
+      View source
+    </Button>
+  </div>;
+}
+
+function SymbolMappings({ mappings }: {
+  readonly mappings: ReadonlyArray<{ readonly title: string; readonly description: string }>;
+}) {
+  if (mappings.length === 0) return null;
+  return <div className="symbol-mapping-list">
+    {mappings.map((mapping) => <div className="symbol-mapping" key={`${mapping.title}:${mapping.description}`}>
+      <Text size="xs" fw={700} c="dimmed">Supports “{mapping.title}”</Text>
+      <Text size="sm">{mapping.description}</Text>
+    </div>)}
+  </div>;
+}
+
 function ResponsibilityMap({
   component,
   responsibilities,
@@ -306,57 +546,61 @@ function ResponsibilityMap({
 }) {
   return <section aria-label="Responsibility map" className="responsibility-section">
     <div>
-      <Text fw={700}>Responsibility map</Text>
-      <Text size="xs" c="dimmed">Each outcome is mapped to its code owner and collaborating boundary.</Text>
+      <Text fw={700}>What this component owns</Text>
+      <Text size="xs" c="dimmed">Outcome, grounded owner, and collaborating boundary.</Text>
     </div>
-    <div className="responsibility-map">
-      <div aria-hidden="true" className="responsibility-map-header">
-        <span>Responsibility</span><span>Code owner</span><span>Collaborator</span>
-      </div>
-      {responsibilities.map((responsibility) => {
-        const owners = responsibilityOwners(responsibility);
-        const connections = relationshipsForResponsibility(component.id, responsibility, relationships);
-        return <div className="responsibility-map-row" key={responsibility.id}>
-          <div className="responsibility-copy">
-            <Text size="sm" fw={700}>{responsibility.title}</Text>
-            <Text size="xs" c="dimmed">{responsibility.description}</Text>
-          </div>
-          <div className="responsibility-owner-list">
-            {owners.length === 0
-              ? <Text size="xs" c="dimmed">No grounded code owner</Text>
-              : owners.map((owner) => {
-                const key = architectureEvidenceKey(owner);
-                return <UnstyledButton
-                  aria-label={`${humanize(owner.kind)} ${owner.label}`}
-                  aria-pressed={key === selectedOwnerKey}
-                  className={`responsibility-owner${key === selectedOwnerKey ? ' selected' : ''}`}
-                  key={key}
-                  onClick={() => onOwnerSelect(key)}
-                >
-                  <div className="responsibility-owner-copy">
-                    <Code>{owner.label}</Code>
+    <div className="responsibility-table-wrap">
+      <table className="responsibility-table">
+        <thead><tr><th>Responsibility</th><th>Code owner</th><th>Collaborates with</th></tr></thead>
+        <tbody>{responsibilities.map((responsibility, index) => {
+          const owners = responsibilityOwners(responsibility);
+          const connections = relationshipsForResponsibility(component.id, responsibility, relationships);
+          return <tr key={responsibility.id}>
+            <td className="responsibility-copy">
+              <Text className="responsibility-index" size="xs" c="dimmed" fw={700}>
+                {String(index + 1).padStart(2, '0')}
+              </Text>
+              <Text size="sm" fw={700}>{responsibility.title}</Text>
+              <Text size="xs" c="dimmed">{responsibility.description}</Text>
+            </td>
+            <td><div className="responsibility-owner-list">
+              {owners.length === 0
+                ? <Text size="xs" c="dimmed">No grounded owner</Text>
+                : owners.map((owner) => {
+                  const key = architectureEvidenceKey(owner);
+                  return <UnstyledButton
+                    aria-label={`${humanize(owner.kind)} ${owner.label}`}
+                    aria-pressed={key === selectedOwnerKey}
+                    className={`responsibility-owner${key === selectedOwnerKey ? ' selected' : ''}`}
+                    key={key}
+                    onClick={() => onOwnerSelect(key)}
+                  >
+                    <Text size="sm" fw={600}>{humanizeSymbol(owner.label)}</Text>
+                    <div className="responsibility-owner-heading">
+                      <Code>{owner.label}</Code>
+                      <span>{humanize(owner.kind)}</span>
+                    </div>
                     {owner.file_path !== undefined && <Text size="xs" c="dimmed">
                       {formatEvidenceLocation(owner)}
                     </Text>}
-                  </div>
-                  <span>{humanize(owner.kind)}</span>
-                </UnstyledButton>;
-              })}
-          </div>
-          <div className="responsibility-collaborator-list">
-            {responsibility.collaborator_component_ids.length === 0
-              ? <Text size="xs" c="dimmed">Internal to this component</Text>
-              : responsibility.collaborator_component_ids.map((id) => {
-                const relationship = connections.find((candidate) =>
-                  candidate.from_component_id === id || candidate.to_component_id === id);
-                return <div className="responsibility-collaborator" key={id}>
-                  <Text size="xs" fw={600}>{names.get(id) ?? id}</Text>
-                  {relationship !== undefined && <Text size="xs" c="dimmed">{relationshipSentence(relationship, names)}</Text>}
-                </div>;
-              })}
-          </div>
-        </div>;
-      })}
+                  </UnstyledButton>;
+                })}
+            </div></td>
+            <td><div className="responsibility-collaborator-list">
+              {responsibility.collaborator_component_ids.length === 0
+                ? <Text size="xs" c="dimmed">Internal</Text>
+                : responsibility.collaborator_component_ids.map((id) => {
+                  const relationship = connections.find((candidate) =>
+                    candidate.from_component_id === id || candidate.to_component_id === id);
+                    return <div className="responsibility-collaborator" key={id}>
+                      <Text size="xs" fw={600}>{names.get(id) ?? id}</Text>
+                      {relationship !== undefined && <Text size="xs" c="dimmed">{relationship.description}</Text>}
+                    </div>;
+                })}
+            </div></td>
+          </tr>;
+        })}</tbody>
+      </table>
     </div>
   </section>;
 }
@@ -383,10 +627,11 @@ function CodeOwnerDetail({
   return <section aria-label="Code owner detail" className="code-owner-detail">
     <div className="code-owner-header">
       <div>
-        <Group gap="xs" wrap="wrap">
-          <Title order={4}>{owner.label}</Title>
-          <Badge size="sm" variant="light">{humanize(owner.kind)}</Badge>
-        </Group>
+        <Title order={4}>{humanizeSymbol(owner.label)}</Title>
+        <div className="symbol-signature">
+          <span>{humanize(owner.kind)}</span>
+          <Code>{owner.label}</Code>
+        </div>
         {owner.text !== undefined && <Text size="sm" c="dimmed">{owner.text}</Text>}
       </div>
       <EvidenceAction evidence={owner} explanation={component.responsibility} onPreview={onPreviewEvidence} />
@@ -405,7 +650,7 @@ function CodeOwnerDetail({
             <Text size="sm">{responsibility.description}</Text>
           </div>
           {implementationEvidence.length > 0 && <div>
-            <Text size="xs" fw={700} mb={5}>Methods and state</Text>
+            <Text size="xs" fw={700} c="dimmed" mb={5}>Implementation details</Text>
             <div className="owner-evidence-list">
               {implementationEvidence.map((evidence) => <EvidenceRow
                 evidence={evidence}
@@ -455,9 +700,10 @@ function EvidenceRow({ evidence, explanation, onPreview }: {
 }) {
   return <div className="owner-evidence-row">
     <div>
-      <Group gap={5} wrap="wrap">
+      <Text size="sm" fw={600}>{humanizeSymbol(evidence.label)}</Text>
+      <Group className="evidence-signature" gap={5} wrap="wrap">
         <Code>{evidence.label}</Code>
-        <Badge size="xs" variant="outline">{humanize(evidence.kind)}</Badge>
+        <Text size="xs" c="dimmed">{humanize(evidence.kind)}</Text>
       </Group>
       {evidence.text !== undefined && <Text size="xs" c="dimmed">{evidence.text}</Text>}
     </div>
@@ -536,6 +782,26 @@ function humanize(value: string): string {
   return value.replaceAll('_', ' ');
 }
 
+function humanizeSymbol(value: string): string {
+  const specialNames: Readonly<Record<string, string>> = {
+    __call__: 'Run when called',
+    __enter__: 'Enter the context',
+    __exit__: 'Exit the context',
+    __init__: 'Initialize',
+  };
+  const special = specialNames[value];
+  if (special !== undefined) return special;
+  const words = value
+    .replace(/\(\)$/, '')
+    .replace(/^_+|_+$/g, '')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[._]+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return words.length === 0 ? value : `${words[0].toUpperCase()}${words.slice(1)}`;
+}
+
 function stepsForComponent(component: ArchitectureComponent, steps: ReadonlyArray<FlowStep>): ReadonlyArray<FlowStep> {
   const paths = new Set(component.key_paths);
   const symbols = new Set(component.key_symbols);
@@ -590,6 +856,92 @@ function evidenceBelongsToOwner(evidence: EvidenceItem, owner: EvidenceItem): bo
   const evidenceEnd = evidence.end_line ?? evidence.start_line;
   const ownerEnd = owner.end_line ?? owner.start_line;
   return evidence.start_line >= owner.start_line && evidenceEnd <= ownerEnd;
+}
+
+function modulesForComponent(
+  inventory: MechanicalSymbolInventory,
+  mappedPaths: ReadonlyArray<string>,
+): ReadonlyArray<MechanicalModule> {
+  const paths = mappedPaths.map((path) => path.replace(/\/$/, ''));
+  return [...inventory.modules
+    .filter((module) => paths.some((path) => module.path === path || module.path.startsWith(`${path}/`)))]
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+interface MechanicalCounts {
+  readonly classes: number;
+  readonly functions: number;
+  readonly methods: number;
+}
+
+function countMechanicalSymbols(modules: ReadonlyArray<MechanicalModule>): MechanicalCounts {
+  return modules.reduce((counts, module) => ({
+    classes: counts.classes + module.classes.length,
+    functions: counts.functions + module.functions.length,
+    methods: counts.methods + module.classes.reduce((total, item) => total + item.methods.length, 0),
+  }), { classes: 0, functions: 0, methods: 0 });
+}
+
+function formatMechanicalCounts(counts: MechanicalCounts): string {
+  return [
+    formatCount(counts.classes, 'class', 'classes'),
+    formatCount(counts.functions, 'function'),
+    formatCount(counts.methods, 'method'),
+  ].join(' · ');
+}
+
+function formatModuleCounts(module: MechanicalModule): string {
+  return [
+    formatCount(module.classes.length, 'type'),
+    formatCount(module.functions.length, 'module operation'),
+  ].join(' · ');
+}
+
+function formatCount(value: number, singular: string, plural = `${singular}s`): string {
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function naturalList(values: ReadonlyArray<string>): string {
+  if (values.length < 2) return values[0] ?? '';
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+}
+
+function mappingsForSymbol(
+  responsibilities: ReadonlyArray<ArchitectureResponsibility>,
+  modulePath: string,
+  names: ReadonlyArray<string>,
+): ReadonlyArray<{ readonly title: string; readonly description: string }> {
+  const mappings = responsibilities.flatMap((responsibility) => responsibility.evidence
+    .filter((evidence) => evidence.file_path === modulePath && names.some((name) => {
+      const label = evidence.label.replaceAll('`', '').replace(/\(\)$/, '');
+      return label === name || label.startsWith(`${name} `);
+    }))
+    .map((evidence) => ({
+      title: responsibility.title,
+      description: evidence.text ?? responsibility.description,
+    })));
+  return mappings.filter((mapping, index) => mappings.findIndex((candidate) =>
+    candidate.title === mapping.title && candidate.description === mapping.description) === index);
+}
+
+function mechanicalEvidence(
+  kind: string,
+  label: string,
+  filePath: string,
+  symbol: MechanicalCallable,
+): EvidenceItem {
+  return {
+    kind,
+    label,
+    file_path: filePath,
+    start_line: symbol.start_line,
+    end_line: symbol.end_line,
+  };
+}
+
+function messageOf(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason);
 }
 
 function formatStepLocation(step: FlowStep): string {
