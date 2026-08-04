@@ -85,6 +85,8 @@ class PromptEnvelopeFactoryTest {
         assertEquals("whole_codebase", strategy.getValue("breadth").jsonPrimitive.content)
         assertEquals("purpose_to_system_map_to_relationships_to_representative_paths_to_code", strategy.getValue("progression").jsonPrimitive.content)
         assertEquals("progressive_disclosure", strategy.getValue("detail_policy").jsonPrimitive.content)
+        assertEquals("true", strategy.getValue("verified_facts_only").jsonPrimitive.content)
+        assertEquals("true", strategy.getValue("persisted_mechanical_facts").jsonPrimitive.content)
         assertEquals("true", strategy.getValue("behavior_search").jsonPrimitive.content)
         assertEquals("bounded_parallel_when_available", strategy.getValue("delegation_policy").jsonPrimitive.content)
         assertEquals("consume_verified_tool_results_when_available", strategy.getValue("symbolic_execution_policy").jsonPrimitive.content)

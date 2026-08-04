@@ -6,6 +6,13 @@ import com.github.nearkim.aicodewalkthrough.model.ResponseMetadata
 data class ProviderResponse(
     val content: String,
     val metadata: ResponseMetadata? = null,
+    val toolResults: List<ProviderToolResult> = emptyList(),
+)
+
+data class ProviderToolResult(
+    val name: String,
+    val input: String,
+    val output: String? = null,
 )
 
 data class ProviderCapabilities(

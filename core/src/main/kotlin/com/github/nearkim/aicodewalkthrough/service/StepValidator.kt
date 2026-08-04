@@ -13,19 +13,29 @@ import com.github.nearkim.aicodewalkthrough.model.StepEdge
 import java.nio.file.Files
 import java.nio.file.Path
 
-class StepValidator(private val projectBasePath: String) {
+class StepValidator(
+    private val projectBasePath: String,
+    private val mechanicalArchitecture: CodebaseArchitecture? = null,
+) {
 
     private val symbolPatterns = listOf("def ", "class ", "fun ", "function ")
     private val projectRoot = Path.of(projectBasePath).toAbsolutePath().normalize()
     private val projectFiles = ProjectFiles(projectRoot)
+    private val mechanicalEvidence = mechanicalArchitecture?.components.orEmpty().flatMap { component ->
+        component.evidence + component.responsibilities.flatMap(ArchitectureResponsibility::evidence)
+    }.filter { it.filePath != null && it.startLine != null }
 
     fun validate(flowMap: FlowMap): FlowMap {
         val validatedSteps = validate(flowMap.steps)
         val stepById = validatedSteps.associateBy { it.id }
-        val validatedEdges = validateEdges(flowMap.edges, validatedSteps, stepById)
+        val validatedEdges = validateEdges(
+            if (mechanicalArchitecture == null) flowMap.edges else emptyList(),
+            validatedSteps,
+            stepById,
+        )
         val entryStepId = resolveEntryStepId(flowMap.entryStepId, validatedSteps, validatedEdges)
         val terminalStepIds = resolveTerminalStepIds(flowMap.terminalStepIds, validatedSteps, validatedEdges)
-        val architecture = validateArchitecture(flowMap.architecture)
+        val architecture = validateArchitecture(mechanicalArchitecture ?: flowMap.architecture)
         val learningPath = validateLearningPath(flowMap.learningPath, architecture, validatedSteps)
 
         return flowMap.copy(
@@ -225,15 +235,27 @@ class StepValidator(private val projectBasePath: String) {
 
         val validatedStages = learningPath.distinctBy { it.id }.mapNotNull { stage ->
             if (stage.id.isBlank() || stage.title.isBlank() || stage.goal.isBlank()) return@mapNotNull null
-            val validStageComponents = stage.componentIds.filter { it in componentIds }.distinct()
             val validStageSteps = navigableSteps
                 .filter { it.id in stage.stepIds && assignedStepIds.add(it.id) }
+            val stepPaths = validStageSteps.mapTo(mutableSetOf()) { it.filePath }
+            val derivedComponents = architecture?.components.orEmpty()
+                .filter { component -> component.keyPaths.any(stepPaths::contains) }
                 .map { it.id }
-            if (validStageComponents.isEmpty() && validStageSteps.isEmpty()) return@mapNotNull null
+            val validStageComponents = (stage.componentIds.filter { it in componentIds } + derivedComponents).distinct()
+            val validStageStepIds = validStageSteps.map { it.id }
+            if (validStageComponents.isEmpty() && validStageStepIds.isEmpty()) return@mapNotNull null
             stage.copy(
+                title = if (mechanicalArchitecture == null) stage.title else validStageSteps.firstOrNull()?.title ?: stage.title,
+                goal = when {
+                    mechanicalArchitecture == null -> stage.goal
+                    validStageSteps.isEmpty() -> "Inspect verified Python structure."
+                    else -> validStageSteps.joinToString(prefix = "Inspect ", separator = ", ", postfix = ".") {
+                        it.symbol ?: it.title
+                    }
+                },
                 componentIds = validStageComponents,
-                stepIds = validStageSteps,
-                checkpoint = stage.checkpoint?.trim()?.takeIf { it.isNotEmpty() },
+                stepIds = validStageStepIds,
+                checkpoint = stage.checkpoint?.trim()?.takeIf { it.isNotEmpty() && mechanicalArchitecture == null },
             )
         }.toMutableList()
 
@@ -260,6 +282,8 @@ class StepValidator(private val projectBasePath: String) {
     }
 
     private fun validateStep(step: FlowStep): FlowStep {
+        if (mechanicalArchitecture != null) return validateMechanicalStep(step)
+
         val lines = readFileLines(step.filePath)
             ?: return step.copy(broken = true, breakReason = "File not found: ${step.filePath}")
 
@@ -323,6 +347,58 @@ class StepValidator(private val projectBasePath: String) {
             uncertain = step.uncertain || downgradeConfidence,
             confidence = if (downgradeConfidence) "uncertain" else step.confidence,
             validationNote = validationNotes.joinToString(" ").orNullIfBlank(),
+        )
+    }
+
+    private fun validateMechanicalStep(step: FlowStep): FlowStep {
+        val normalizedPath = normalizeExistingProjectPath(step.filePath, requireRegularFile = true)
+            ?: return step.copy(broken = true, breakReason = "File not found: ${step.filePath}")
+        val candidates = mechanicalEvidence.filter { it.filePath == normalizedPath }
+        val requestedSymbol = step.symbol?.removeSuffix("()")
+        val matched = when {
+            requestedSymbol != null -> candidates.firstOrNull {
+                val candidate = it.label.removeSuffix("()")
+                candidate == requestedSymbol || requestedSymbol.endsWith(".$candidate")
+            } ?: candidates.firstOrNull {
+                !requestedSymbol.contains('.') &&
+                    it.label.substringAfterLast('.').removeSuffix("()") == requestedSymbol.substringAfterLast('.')
+                }
+            else -> candidates
+                .filter { evidence ->
+                    val start = evidence.startLine ?: return@filter false
+                    val end = evidence.endLine ?: start
+                    step.startLine in start..end
+                }
+                .minByOrNull { evidence -> (evidence.endLine ?: evidence.startLine!!) - evidence.startLine!! }
+        } ?: return step.copy(
+            broken = true,
+            breakReason = "No current Python AST fact matches ${step.symbol ?: step.filePath}.",
+        )
+
+        val start = matched.startLine!!
+        val end = matched.endLine ?: start
+        val explanation = matched.text?.takeIf(String::isNotBlank)
+            ?: "Verified ${matched.kind} ${matched.label}."
+        return step.copy(
+            title = matched.label,
+            filePath = matched.filePath!!,
+            symbol = matched.label,
+            startLine = start,
+            endLine = end,
+            explanation = explanation,
+            detailedExplanation = null,
+            whyIncluded = "Verified Python ${matched.kind} selected for this learning route.",
+            stepType = matched.kind,
+            uncertain = false,
+            lineAnnotations = emptyList(),
+            severity = null,
+            confidence = "verified",
+            riskType = null,
+            evidence = listOf(matched),
+            suggestedAction = null,
+            testGap = null,
+            commentDrafts = emptyList(),
+            validationNote = "Replaced model-authored code claims with the persisted Python AST fact.",
         )
     }
 

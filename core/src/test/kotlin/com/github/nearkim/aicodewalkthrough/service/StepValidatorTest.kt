@@ -504,4 +504,83 @@ class StepValidatorTest {
         }
     }
 
+    @Test
+    fun `mechanical architecture replaces fabricated architecture and code claims`() {
+        val root = Files.createTempDirectory("step-validator-mechanical")
+        Files.writeString(
+            root.resolve("app.py"),
+            "class Runner:\n    def run(self):\n        return 1\n",
+        )
+        val classEvidence = EvidenceItem("class", "Runner", "app.py", 1, 3, "Owns run().")
+        val methodEvidence = EvidenceItem("method", "Runner.run", "app.py", 2, 3, "Contains 1 return statement.")
+        val mechanical = CodebaseArchitecture(
+            systemPurpose = "Verified Python structure.",
+            components = listOf(
+                ArchitectureComponent(
+                    id = "python-root",
+                    name = "Root modules",
+                    responsibility = "Contains one class.",
+                    responsibilities = listOf(
+                        ArchitectureResponsibility(
+                            id = "runner",
+                            title = "Owns run().",
+                            description = "Owns run().",
+                            evidence = listOf(classEvidence, methodEvidence),
+                        ),
+                    ),
+                    keyPaths = listOf("app.py"),
+                    keySymbols = listOf("Runner"),
+                    evidence = listOf(classEvidence),
+                ),
+            ),
+        )
+        val fabricated = CodebaseArchitecture(
+            systemPurpose = "Invented purpose.",
+            components = listOf(
+                ArchitectureComponent(
+                    id = "ghost",
+                    name = "Ghost service",
+                    responsibility = "Does something unsupported.",
+                    keyPaths = listOf("app.py"),
+                ),
+            ),
+        )
+
+        val validated = StepValidator(root.toString(), mechanical).validate(
+            FlowMap(
+                summary = "Invented summary.",
+                architecture = fabricated,
+                steps = listOf(
+                    FlowStep(
+                        id = "real",
+                        title = "Invented behavior",
+                        filePath = "app.py",
+                        symbol = "Runner.run",
+                        startLine = 1,
+                        endLine = 1,
+                        explanation = "Invented explanation.",
+                        whyIncluded = "Teach the verified method.",
+                    ),
+                    FlowStep(
+                        id = "ghost",
+                        title = "Ghost behavior",
+                        filePath = "app.py",
+                        symbol = "Ghost.run",
+                        startLine = 1,
+                        endLine = 1,
+                        explanation = "Invented explanation.",
+                        whyIncluded = "The model invented it.",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("Root modules"), validated.architecture!!.components.map { it.name })
+        val real = validated.steps.first { it.id == "real" }
+        assertEquals("Runner.run", real.title)
+        assertEquals("Contains 1 return statement.", real.explanation)
+        assertEquals("verified", real.confidence)
+        assertTrue(validated.steps.first { it.id == "ghost" }.broken)
+    }
+
 }

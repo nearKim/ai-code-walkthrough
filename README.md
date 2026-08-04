@@ -14,11 +14,12 @@ Choose **Learn** and leave the prompt blank to generate a whole-codebase lesson.
 
 ## Grounding model
 
-The model proposes the architecture and code path; the shared walkthrough engine validates before either UI renders it:
+The persisted Python analysis is authoritative; the model selects a teaching route through those facts and the shared engine validates it before either UI renders it:
 
 - Grounded walkthroughs require Codex CLI or Claude CLI so the provider can inspect the local repository.
-- Python repositories are indexed first with the standard-library AST. The provider receives exact production-file classes, functions, methods, bases, state fields, imports, and line ranges before it maps conceptual components.
-- In the architecture inspector, **Responsibilities** are AI-selected explanations grounded to code, while **Code structure** lists only mechanically parsed symbols from the files mapped to that component.
+- Python repositories are indexed with the standard-library AST. The versioned result is stored under `~/.ai-code-walkthrough/analysis`, keyed by target path and source fingerprint, and reused across server restarts only while every analyzed source file still matches.
+- Packages, classes, methods, source-declared responsibilities, import relationships, branches, state writes, and code ranges come from that persisted inventory. Model-authored alternatives are discarded.
+- Configured Serena calls and results are captured from the Claude stream and persisted. CrossHair from the target virtual environment or system Python is run only for selected, fully typed, side-effect-safe top-level functions; unavailable, partial, unsupported, and timed-out analysis stays explicit.
 - Codex CLI is fixed to `gpt-5.6-sol` with `ultra` or `max` reasoning.
 - Claude CLI offers only Claude Fable 5 (`fable`) and Claude Opus 5 (`opus`).
 - Component anchors and responsibility code owners must resolve to real project files and lines.
@@ -26,7 +27,7 @@ The model proposes the architecture and code path; the shared walkthrough engine
 - Invalid responsibility collaborators, component relationships, and learning-stage references are removed.
 - Coverage notes identify areas that were intentionally excluded or not inspected deeply.
 
-Both clients are language-agnostic. The plugin targets IntelliJ Platform 2025.2 or newer.
+Grounded mapping currently accepts Python targets only. The plugin targets IntelliJ Platform 2025.2 or newer.
 
 ## Local web application
 

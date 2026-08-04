@@ -10,6 +10,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
@@ -24,11 +26,12 @@ class ClaudeCliProvider(
 
     private val json = Json { ignoreUnknownKeys = true }
     override val provider = AiProvider.CLAUDE_CLI
-    override val capabilities = ProviderCapabilities(
-        supportsRepoGroundedWalkthrough = true,
-        supportsSemanticNavigationHints = true,
-        supportsDelegatedAnalysisHints = true,
-    )
+    override val capabilities: ProviderCapabilities
+        get() = ProviderCapabilities(
+            supportsRepoGroundedWalkthrough = true,
+            supportsSemanticNavigationHints = settings().normalized().enableMcp,
+            supportsDelegatedAnalysisHints = true,
+        )
 
     @Volatile
     private var activeProcess: Process? = null
@@ -52,6 +55,7 @@ class ClaudeCliProvider(
             val stderrLines = ArrayDeque<String>()
             val stdoutLines = ArrayDeque<String>()
             val resultJson = AtomicReference<String?>()
+            val semanticTools = SemanticToolCapture()
             CliProcessRunner.runUntilExit(
                 process = process,
                 onStderrLine = { stderrLines.appendBounded(it, MAX_CAPTURE_LINES) },
@@ -59,6 +63,7 @@ class ClaudeCliProvider(
                     if (line.isBlank()) return@stdout
                     stdoutLines.appendBounded(line, MAX_CAPTURE_LINES)
                     val event = runCatching { json.parseToJsonElement(line).jsonObject }.getOrNull() ?: return@stdout
+                    semanticTools.consume(event)
                     when (event["type"]?.jsonPrimitive?.content) {
                         "assistant" -> progressMessages(event).forEach { onProgress?.invoke(it) }
                         "result" -> resultJson.set(line)
@@ -91,6 +96,7 @@ class ClaudeCliProvider(
                     stepCount = 0,
                     fileCount = 0,
                 ),
+                toolResults = semanticTools.results(),
             )
         } finally {
             activeProcess = null
@@ -143,7 +149,8 @@ class ClaudeCliProvider(
     }
 
     private fun formatToolUse(toolUse: JsonObject): String? {
-        val name = toolUse["name"]?.jsonPrimitive?.content ?: return null
+        val rawName = toolUse["name"]?.jsonPrimitive?.content ?: return null
+        val name = semanticToolName(rawName) ?: rawName
         val input = toolUse["input"]?.jsonObject ?: return name
         return when (name) {
             "Read" -> input["file_path"]?.jsonPrimitive?.content?.let { "Reading $it" } ?: "Reading file..."
@@ -207,6 +214,53 @@ class ClaudeCliProvider(
         }
     }
 }
+
+internal class SemanticToolCapture {
+    private val pending = linkedMapOf<String, ProviderToolResult>()
+
+    fun consume(event: JsonObject) {
+        val content = event["message"]?.jsonObject?.get("content") as? JsonArray ?: return
+        when (event["type"]?.jsonPrimitive?.contentOrNull) {
+            "assistant" -> content.forEach { item ->
+                val block = item as? JsonObject ?: return@forEach
+                if (block["type"]?.jsonPrimitive?.contentOrNull != "tool_use") return@forEach
+                val id = block["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                val name = block["name"]?.jsonPrimitive?.contentOrNull?.let(::semanticToolName) ?: return@forEach
+                pending[id] = ProviderToolResult(name, block["input"]?.toString() ?: "{}")
+            }
+            "user" -> content.forEach { item ->
+                val block = item as? JsonObject ?: return@forEach
+                if (block["type"]?.jsonPrimitive?.contentOrNull != "tool_result") return@forEach
+                val id = block["tool_use_id"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                val existing = pending[id] ?: return@forEach
+                pending[id] = existing.copy(output = toolResultText(block["content"]))
+            }
+        }
+    }
+
+    fun results(): List<ProviderToolResult> = pending.values.toList()
+
+    private fun toolResultText(content: kotlinx.serialization.json.JsonElement?): String? = when (content) {
+        is JsonPrimitive -> content.contentOrNull
+        is JsonArray -> content.joinToString("\n") { item ->
+            (item as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull ?: item.toString()
+        }
+        null -> null
+        else -> content.toString()
+    }
+}
+
+private val semanticToolNames = setOf(
+    "find_symbol",
+    "get_symbols_overview",
+    "find_referencing_symbols",
+    "find_declaration",
+    "find_implementations",
+    "get_diagnostics_for_file",
+    "get_diagnostics_for_symbol",
+)
+
+private fun semanticToolName(name: String): String? = name.substringAfterLast("__").takeIf { it in semanticToolNames }
 
 internal object ClaudeCliCommand {
     fun build(

@@ -136,3 +136,14 @@ test('builds stable architecture and responsibility diagrams', () => {
     detail: 'Executes the use case.',
   });
 });
+
+test('shows mechanically classified Python packages directly at system depth', () => {
+  const python = createArchitectureDiagramModel({
+    ...architecture,
+    components: architecture.components.slice(0, 2).map((component) => ({ ...component, kind: 'python_package' })),
+    relationships: [architecture.relationships[0]],
+  }, 'system', 'interface');
+
+  expect(python.nodes.map((node) => node.label)).toEqual(['HTTP interface', 'Application service']);
+  expect(python.edges.map((edge) => edge.label)).toEqual(['calls']);
+});

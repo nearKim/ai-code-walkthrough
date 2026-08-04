@@ -50,7 +50,7 @@ class WebApplicationTest {
         Files.writeString(root.resolve("app.py"), "class Application:\n    def run(self):\n        return 1\n")
         val settings = WebSettingsStore(root.resolve("settings/settings.json"))
         val provider = FakeProvider()
-        val engine = WalkthroughEngine(root, settings::get) { provider }
+        val engine = WalkthroughEngine(root, settings::get, temporary.newFolder("analysis").toPath()) { provider }
         val session = WebSession(root, settings, engine)
         application {
             configureWebApplication(WebDependencies(session, settings, engine, ProjectFiles(root)))
@@ -146,13 +146,14 @@ class WebApplicationTest {
                         steps = listOf(
                             FlowStep(
                                 id = "entry",
-                                title = "Start the program",
-                                filePath = "src/Main.kt",
-                                startLine = 1,
+                                title = "Run the application",
+                                filePath = "app.py",
+                                symbol = "Application.run",
+                                startLine = 2,
                                 endLine = 3,
-                                explanation = "The process starts here.",
+                                explanation = "Runs the application.",
                                 whyIncluded = "This is the executable entrypoint.",
-                                lineAnnotations = listOf(LineAnnotation(2, 2, "The first application call.")),
+                                lineAnnotations = listOf(LineAnnotation(3, 3, "Returns a value.")),
                             ),
                         ),
                     ),

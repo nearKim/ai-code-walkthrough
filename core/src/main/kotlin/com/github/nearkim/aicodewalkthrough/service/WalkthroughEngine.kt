@@ -4,7 +4,10 @@ import com.github.nearkim.aicodewalkthrough.application.prompt.PromptEnvelopeFac
 import com.github.nearkim.aicodewalkthrough.model.AiProvider
 import com.github.nearkim.aicodewalkthrough.model.AnalysisTrace
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
+import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
+import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FeatureScopeContext
+import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.FollowUpContext
 import com.github.nearkim.aicodewalkthrough.model.LlmResponse
@@ -17,6 +20,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
@@ -34,6 +42,7 @@ data class StepAnswerResult(
 class WalkthroughEngine(
     private val projectRoot: Path,
     private val settings: () -> WalkthroughSettings,
+    private val analysisRoot: Path = MechanicalSymbolAnalyzer.defaultAnalysisRoot(),
     private val providerFor: (AiProvider) -> LlmProvider,
 ) {
 
@@ -55,13 +64,16 @@ class WalkthroughEngine(
             requireRepoGroundedWalkthroughSupport(provider)
             activeProvider.set(provider)
             onProgress?.invoke("Checking for a mechanical symbol analyzer...")
-            val symbolInventory = MechanicalSymbolAnalyzer.analyze(projectRoot, json)
+            val symbolInventory = MechanicalSymbolAnalyzer.analyze(projectRoot, json, analysisRoot)
+                ?: throw IllegalStateException("Only Python target repositories are currently supported.")
             latestSymbolInventory.set(symbolInventory)
-            symbolInventory?.let {
-                onProgress?.invoke(
-                    "Indexed ${it.filesScanned} Python files and ${it.symbolCount} symbols with Python AST.",
-                )
-            }
+            onProgress?.invoke(
+                if (symbolInventory.cacheHit) {
+                    "Reused persisted Python analysis for ${symbolInventory.filesScanned} files and ${symbolInventory.symbolCount} symbols."
+                } else {
+                    "Indexed ${symbolInventory.filesScanned} Python files and ${symbolInventory.symbolCount} symbols with Python AST."
+                },
+            )
             val prompt = PromptEnvelopeFactory.buildWalkthroughPrompt(
                 question = question,
                 mode = mode,
@@ -71,27 +83,35 @@ class WalkthroughEngine(
                 featureScope = featureScope,
                 providerCapabilities = provider.capabilities,
                 json = json,
-                mechanicalSymbolInventory = symbolInventory?.payload,
+                mechanicalSymbolInventory = symbolInventory.payload,
             )
             val providerResponse = provider.query(prompt, PromptKind.WALKTHROUGH, onProgress)
             val response = decodeResponse(providerResponse.content)
             val validatedResponse = if (response.type == "flow_map" && response.steps != null) {
                 val flowMap = response.toFlowMap()
                     ?: return Result.failure(IllegalStateException("Unexpected flow map response from LLM"))
-                val validated = StepValidator(projectRoot.toString()).validate(flowMap)
-                val analysisTrace = symbolInventory?.let { inventory ->
-                    (validated.analysisTrace ?: AnalysisTrace()).copy(
-                        semanticToolsUsed = (validated.analysisTrace?.semanticToolsUsed.orEmpty() + inventory.tool).distinct(),
-                    )
-                } ?: validated.analysisTrace
+                val mechanicalArchitecture = decodeMechanicalArchitecture(symbolInventory.payload)
+                    ?: return Result.failure(IllegalStateException("Python analyzer omitted verified architecture"))
+                val validated = StepValidator(projectRoot.toString(), mechanicalArchitecture).validate(flowMap)
+                val enrichedInventory = MechanicalSymbolAnalyzer.enrich(
+                    inventory = symbolInventory,
+                    projectRoot = projectRoot,
+                    steps = validated.steps.filterNot(FlowStep::broken),
+                    semanticToolResults = providerResponse.toolResults,
+                    json = json,
+                    analysisRoot = analysisRoot,
+                )
+                latestSymbolInventory.set(enrichedInventory)
+                val verified = addToolEvidence(validated, enrichedInventory, providerResponse.toolResults)
                 response.copy(
-                    steps = validated.steps,
-                    architecture = validated.architecture,
-                    learningPath = validated.learningPath,
-                    entryStepId = validated.entryStepId,
-                    terminalStepIds = validated.terminalStepIds,
-                    edges = validated.edges,
-                    analysisTrace = analysisTrace,
+                    summary = verified.architecture?.systemPurpose ?: response.summary,
+                    steps = verified.steps,
+                    architecture = verified.architecture,
+                    learningPath = verified.learningPath,
+                    entryStepId = verified.entryStepId,
+                    terminalStepIds = verified.terminalStepIds,
+                    edges = verified.edges,
+                    analysisTrace = verified.analysisTrace,
                 )
             } else {
                 response
@@ -169,7 +189,7 @@ class WalkthroughEngine(
     suspend fun mechanicalSymbolInventory(): JsonObject? {
         val cached = latestSymbolInventory.get()
         if (cached != null) return cached.payload
-        return MechanicalSymbolAnalyzer.analyze(projectRoot, json)
+        return MechanicalSymbolAnalyzer.analyze(projectRoot, json, analysisRoot)
             ?.also(latestSymbolInventory::set)
             ?.payload
     }
@@ -181,6 +201,85 @@ class WalkthroughEngine(
     private fun decodeResponse(content: String): LlmResponse {
         val cleaned = JsonResponseSanitizer.extractTopLevelObject(content)
         return json.decodeFromString(cleaned)
+    }
+
+    private fun decodeMechanicalArchitecture(payload: JsonObject): CodebaseArchitecture? {
+        val element = payload["architecture"] ?: return null
+        return runCatching { json.decodeFromJsonElement<CodebaseArchitecture>(element) }.getOrNull()
+    }
+
+    private fun addToolEvidence(
+        flowMap: FlowMap,
+        inventory: MechanicalSymbolInventory,
+        semanticToolResults: List<ProviderToolResult>,
+    ): FlowMap {
+        val pathAnalysis = inventory.payload["path_analysis"]?.jsonObject
+        val pathResults = pathAnalysis?.get("results")?.jsonArray.orEmpty().map { it.jsonObject }
+        val steps = flowMap.steps.map { step ->
+            val result = pathResults.firstOrNull { item ->
+                item["file_path"]?.jsonPrimitive?.contentOrNull == step.filePath &&
+                    item["symbol"]?.jsonPrimitive?.contentOrNull?.substringAfterLast('.') ==
+                    step.symbol?.substringAfterLast('.')
+            } ?: return@map step
+            val status = result["status"]?.jsonPrimitive?.contentOrNull ?: "unknown"
+            val text = result["output"]?.jsonPrimitive?.contentOrNull
+                ?: result["detail"]?.jsonPrimitive?.contentOrNull
+                ?: "CrossHair result: $status."
+            step.copy(
+                evidence = step.evidence + EvidenceItem(
+                    kind = "path_analysis",
+                    label = "CrossHair $status",
+                    filePath = step.filePath,
+                    startLine = step.startLine,
+                    endLine = step.endLine,
+                    text = text,
+                ),
+            )
+        }
+        val completedPathAnalysis = pathResults.any {
+            it["status"]?.jsonPrimitive?.contentOrNull in setOf("partial_coverage", "unknown", "timeout", "unsupported")
+        }
+        val actualTools = buildList {
+            add(inventory.tool)
+            addAll(semanticToolResults.map(ProviderToolResult::name))
+            if (completedPathAnalysis) add("crosshair")
+        }.distinct()
+        val toolNotes = buildList {
+            add(
+                if (inventory.cacheHit) {
+                    "Reused persisted analysis after verifying the current Python source fingerprint."
+                } else {
+                    "Persisted this analysis using the current Python source fingerprint."
+                },
+            )
+            if (semanticToolResults.isNotEmpty()) {
+                add("Captured ${semanticToolResults.size} Serena semantic tool result(s) from the provider stream.")
+            }
+            val pathStatus = pathAnalysis?.get("status")?.jsonPrimitive?.contentOrNull
+            if (pathStatus != null) {
+                val resultStatuses = pathResults.groupingBy {
+                    it["status"]?.jsonPrimitive?.contentOrNull ?: "unknown"
+                }.eachCount()
+                add(
+                    if (resultStatuses.isEmpty()) {
+                        "CrossHair path analysis status: $pathStatus."
+                    } else {
+                        "CrossHair path results: " + resultStatuses.entries.joinToString { "${it.key} (${it.value})" } + "."
+                    },
+                )
+            }
+        }
+        val architecture = flowMap.architecture?.copy(
+            coverageNotes = (flowMap.architecture.coverageNotes + toolNotes).distinct(),
+        )
+        return flowMap.copy(
+            steps = steps,
+            architecture = architecture,
+            analysisTrace = (flowMap.analysisTrace ?: AnalysisTrace()).copy(
+                semanticToolsUsed = actualTools,
+                delegatedAgents = emptyList(),
+            ),
+        )
     }
 
     private fun buildMetadata(metadata: ResponseMetadata?, response: LlmResponse): ResponseMetadata? {

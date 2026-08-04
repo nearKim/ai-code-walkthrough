@@ -17,6 +17,25 @@ import java.nio.file.Files
 class WalkthroughEngineTest {
 
     @Test
+    fun `mapping rejects non Python targets before calling the provider`() = runBlocking {
+        val root = Files.createTempDirectory("walkthrough-engine-non-python")
+        Files.writeString(root.resolve("Main.kt"), "fun main() = Unit\n")
+        val provider = CapturingProvider()
+        val engine = WalkthroughEngine(
+            projectRoot = root,
+            settings = { WalkthroughSettings(providerId = AiProvider.CODEX_CLI.id) },
+            providerFor = { provider },
+            analysisRoot = Files.createTempDirectory("walkthrough-engine-non-python-analysis"),
+        )
+
+        val result = engine.mapFlow("Map this repository")
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("Only Python target repositories"))
+        assertTrue(!provider.called)
+    }
+
+    @Test
     fun `mechanical symbols are collected before the provider maps them`() = runBlocking {
         val root = Files.createTempDirectory("walkthrough-engine-symbols")
         Files.writeString(root.resolve("pyproject.toml"), "[project]\nname = \"sample\"\n")
@@ -27,6 +46,7 @@ class WalkthroughEngineTest {
             projectRoot = root,
             settings = { WalkthroughSettings(providerId = AiProvider.CODEX_CLI.id) },
             providerFor = { provider },
+            analysisRoot = Files.createTempDirectory("walkthrough-engine-analysis"),
         )
 
         val result = engine.mapFlow(
@@ -45,12 +65,14 @@ class WalkthroughEngineTest {
         override val provider = AiProvider.CODEX_CLI
         override val capabilities = ProviderCapabilities(supportsRepoGroundedWalkthrough = true)
         lateinit var prompt: String
+        var called = false
 
         override suspend fun query(
             prompt: String,
             promptKind: PromptKind,
             onProgress: ((String) -> Unit)?,
         ): ProviderResponse {
+            called = true
             this.prompt = prompt
             onProgress?.invoke("provider-called")
             return ProviderResponse(

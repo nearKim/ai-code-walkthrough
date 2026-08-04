@@ -87,6 +87,8 @@ object PromptEnvelopeFactory {
         put("progression", "purpose_to_system_map_to_relationships_to_representative_paths_to_code")
         put("detail_policy", "progressive_disclosure")
         put("report_coverage_gaps", true)
+        put("verified_facts_only", true)
+        put("persisted_mechanical_facts", true)
         if (wholeCodebase) {
             put("behavior_search", true)
             put("delegation_policy", "bounded_parallel_when_available")

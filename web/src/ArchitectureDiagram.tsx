@@ -281,6 +281,29 @@ function createSystemModel(architecture: CodebaseArchitecture): ArchitectureDiag
   for (const component of architecture.components) {
     groups.set(component.kind, [...(groups.get(component.kind) ?? []), component]);
   }
+  if (groups.size === 1) {
+    return {
+      level: 'system',
+      rankDirection: architecture.components.length >= 6 ? 'TB' : 'LR',
+      caption: 'Verified Python packages and their import edges.',
+      nodes: architecture.components.map((component) => ({
+        id: component.id,
+        label: component.name,
+        detail: component.responsibility,
+        description: component.responsibility,
+        tone: 'neutral',
+        componentId: component.id,
+      })),
+      edges: architecture.relationships.map((relationship) => ({
+        id: `system:${relationship.id}`,
+        from: relationship.from_component_id,
+        to: relationship.to_component_id,
+        label: humanize(relationship.kind),
+        tone: toneForRelationship(relationship.kind),
+        uncertain: relationship.uncertain,
+      })),
+    };
+  }
   const kinds = [...groups.keys()].sort((left, right) => {
     const leftIndex = kindOrder.indexOf(left);
     const rightIndex = kindOrder.indexOf(right);

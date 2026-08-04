@@ -89,8 +89,9 @@ Browser request (App)
 ### Grounding and provider rules
 
 - Grounded walkthroughs require a provider that can inspect the local repository. In practice, that means `Codex CLI` or `Claude CLI`.
-- Python repositories receive a bounded standard-library AST inventory before the provider runs. It lists production modules, imports, classes, bases, fields, functions, methods, and exact ranges; the provider then maps and source-verifies those owners.
-- Claude CLI can be augmented with MCP semantic navigation (`find_symbol`, `get_symbols_overview`, `find_referencing_symbols`) for tighter symbol and edge grounding.
+- Grounded mapping currently accepts Python repositories only. A bounded standard-library AST inventory provides the authoritative architecture, imports, classes, methods, state writes, branch facts, and exact ranges.
+- The versioned inventory is persisted outside the target under `~/.ai-code-walkthrough/analysis` and reused only when its target source fingerprint and analyzer version match.
+- Claude MCP semantic results are captured from the provider stream and persisted. CrossHair path coverage is attempted only for selected fully typed, mechanically side-effect-safe top-level functions and never treated as complete proof.
 
 ### Response contract
 
@@ -155,6 +156,7 @@ Important edge fields:
 It currently:
 
 - rejects architecture anchors and evidence paths that escape the project
+- replaces model-authored Python architecture, responsibilities, steps, and edges with current persisted AST facts
 - removes nonexistent component anchors and relationships to invalid components
 - filters learning-stage component/step references and assigns otherwise-unassigned validated steps
 - re-anchors step ranges to real symbol locations when possible
@@ -165,13 +167,13 @@ It currently:
 - synthesizes `implied_order` edges when the model omitted edges entirely
 - resolves `entry_step_id` and `terminal_step_ids` from validated steps/edges
 
-It does not do full language-aware call resolution. For now, symbol lookup is still text-based plus brace scanning unless the provider used semantic tools before returning the JSON.
+Dynamic dispatch and unresolved imports are omitted instead of inferred. CrossHair unavailable, partial, unsupported, and timeout results remain explicit coverage limits.
 
 ### Tour navigation and UI behavior
 
 - Learn mode can be started with a blank prompt to request a whole-codebase curriculum.
 - The overview opens on architecture first, then advances to the staged learning path.
-- Component depth keeps every component visible while emphasizing relationships touching the current selection. The inspector separates AI-mapped responsibilities from the mechanical class/function/member inventory.
+- Component depth keeps every verified Python package visible while emphasizing mechanically resolved import relationships. The inspector shows source-derived class responsibilities and methods.
 - The active tour shows the current learning-stage goal and checkpoint and prefers validated outgoing `StepEdge` hops when choosing the next step.
 - If no valid outgoing hop exists, it falls back to the next non-broken step in list order.
 - The editor preview highlights the next hop's validated `call_site_*` range when available.

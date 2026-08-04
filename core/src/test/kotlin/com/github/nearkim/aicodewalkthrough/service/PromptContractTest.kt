@@ -13,5 +13,7 @@ class PromptContractTest {
         assertTrue(prompt.contains("at most three independent read-only workers"))
         assertTrue(prompt.contains("SYMBOLIC OR PATH-SENSITIVE TOOL RESULTS"))
         assertTrue(prompt.contains("Never invent tool output"))
+        assertTrue(prompt.contains("persisted deterministic analyzer output"))
+        assertTrue(prompt.contains("immutable facts"))
     }
 }
