@@ -189,7 +189,9 @@ class TourActiveCard(
             errorMessage != null -> {
                 loadingPanel.isVisible = false
                 answerPunch.text = " "
-                answerBody.text = renderHtml("<p style='color:#cc4444;'>Error: ${escapeHtml(errorMessage)}</p>")
+                answerBody.text = MarkdownHtml.document(
+                    "<p style='color:#cc4444;'>Error: ${MarkdownHtml.escape(errorMessage)}</p>",
+                )
                 whyItMattersLabel.text = " "
                 showAnswerView()
             }
@@ -198,7 +200,7 @@ class TourActiveCard(
                 currentAnswer = answer
                 val (punch, rest) = splitPunch(answer.answer)
                 answerPunch.text = punch
-                answerBody.text = renderHtml(markdownToHtml(rest))
+                answerBody.text = MarkdownHtml.document(MarkdownHtml.toHtml(rest))
                 answerBody.caretPosition = 0
                 whyItMattersLabel.text = answer.whyItMatters
                     ?.takeIf { it.isNotBlank() }
@@ -417,71 +419,4 @@ class TourActiveCard(
         editorKit = kit
     }
 
-    private fun renderHtml(bodyHtml: String): String =
-        "<html><body>$bodyHtml</body></html>"
-
-    private fun escapeHtml(text: String): String =
-        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    private fun markdownToHtml(markdown: String): String {
-        if (markdown.isBlank()) return ""
-        val lines = markdown.lines()
-        val sb = StringBuilder()
-        var inCodeBlock = false
-        var inList = false
-        var i = 0
-        while (i < lines.size) {
-            val line = lines[i]
-            if (line.trimStart().startsWith("```")) {
-                if (inCodeBlock) {
-                    sb.append("</pre>")
-                    inCodeBlock = false
-                } else {
-                    if (inList) { sb.append("</ul>"); inList = false }
-                    sb.append("<pre>")
-                    inCodeBlock = true
-                }
-                i++
-                continue
-            }
-            if (inCodeBlock) {
-                sb.append(escapeHtml(line)).append("\n")
-                i++
-                continue
-            }
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) {
-                if (inList) { sb.append("</ul>"); inList = false }
-                i++
-                continue
-            }
-            if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-                if (!inList) { sb.append("<ul>"); inList = true }
-                sb.append("<li>").append(inlineFormat(escapeHtml(trimmed.substring(2)))).append("</li>")
-                i++
-                continue
-            }
-            val numberedMatch = Regex("^(\\d+)\\.\\s+(.*)").find(trimmed)
-            if (numberedMatch != null) {
-                if (!inList) { sb.append("<ul>"); inList = true }
-                sb.append("<li>").append(inlineFormat(escapeHtml(numberedMatch.groupValues[2]))).append("</li>")
-                i++
-                continue
-            }
-            if (inList) { sb.append("</ul>"); inList = false }
-            sb.append("<p>").append(inlineFormat(escapeHtml(trimmed))).append("</p>")
-            i++
-        }
-        if (inCodeBlock) sb.append("</pre>")
-        if (inList) sb.append("</ul>")
-        return sb.toString()
-    }
-
-    private fun inlineFormat(escaped: String): String {
-        var result = escaped
-        result = Regex("`([^`]+)`").replace(result) { "<code>${it.groupValues[1]}</code>" }
-        result = Regex("\\*\\*([^*]+)\\*\\*").replace(result) { "<b>${it.groupValues[1]}</b>" }
-        result = Regex("\\*([^*]+)\\*").replace(result) { "<i>${it.groupValues[1]}</i>" }
-        return result
-    }
 }
