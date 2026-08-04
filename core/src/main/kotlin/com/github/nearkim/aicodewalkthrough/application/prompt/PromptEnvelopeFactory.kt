@@ -8,13 +8,20 @@ import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.service.ProviderCapabilities
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 object PromptEnvelopeFactory {
+
+    /** Codex hard-fails a turn over 1,048,576 characters; the rest is headroom for the system prompt. */
+    private const val MAX_PROMPT_CHARS = 950_000
 
     fun buildWalkthroughPrompt(
         question: String,
@@ -34,12 +41,12 @@ object PromptEnvelopeFactory {
         } else {
             maxSteps
         }
-        return buildJsonObject {
+        fun envelope(inventory: JsonObject?) = buildJsonObject {
             put("mode", mode.id)
             put("max_steps", stepLimit)
             put("question", question)
             put("grounding_capabilities", groundingCapabilities(providerCapabilities))
-            mechanicalSymbolInventory?.let { put("mechanical_symbol_inventory", it) }
+            inventory?.let { put("mechanical_symbol_inventory", it) }
             if (mode == AnalysisMode.UNDERSTAND) {
                 put("learning_strategy", learningStrategy(question))
             }
@@ -47,7 +54,51 @@ object PromptEnvelopeFactory {
             followUpContext?.let { put("follow_up_context", followUpContextPayload(it, json)) }
             featureScope?.let { put("feature_scope", featureScopePayload(it)) }
         }.toString()
+
+        return fitToBudget(mechanicalSymbolInventory, ::envelope)
     }
+
+    /**
+     * Codex rejects a turn longer than 1,048,576 characters. The architecture block restates in prose
+     * what the compact `modules` list already carries, so it is dropped first; modules are only
+     * truncated when that is not enough. Validation and the UI still use the untrimmed inventory.
+     */
+    private fun fitToBudget(inventory: JsonObject?, envelope: (JsonObject?) -> String): String {
+        val full = envelope(inventory)
+        if (inventory == null || full.length <= MAX_PROMPT_CHARS) return full
+
+        val slim = withoutArchitectureEvidence(inventory)
+        val slimmed = envelope(slim)
+        if (slimmed.length <= MAX_PROMPT_CHARS) return slimmed
+
+        var modules = slim["modules"]?.jsonArray.orEmpty().toList()
+        var candidate = slimmed
+        while (modules.isNotEmpty() && candidate.length > MAX_PROMPT_CHARS) {
+            modules = modules.subList(0, modules.size * 3 / 4)
+            candidate = envelope(withModules(slim, modules))
+        }
+        return candidate
+    }
+
+    private fun withoutArchitectureEvidence(inventory: JsonObject): JsonObject {
+        val architecture = inventory["architecture"]?.jsonObject ?: return inventory
+        val components = architecture["components"]?.jsonArray.orEmpty().map { component ->
+            val fields = component.jsonObject - "evidence"
+            val responsibilities = fields["responsibilities"]?.jsonArray.orEmpty()
+                .map { JsonObject(it.jsonObject - "evidence") }
+            JsonObject(fields + ("responsibilities" to JsonArray(responsibilities)))
+        }
+        return JsonObject(
+            inventory + ("architecture" to JsonObject(architecture + ("components" to JsonArray(components)))),
+        )
+    }
+
+    private fun withModules(inventory: JsonObject, modules: List<JsonElement>) = JsonObject(
+        inventory + mapOf(
+            "modules" to JsonArray(modules),
+            "truncated" to JsonPrimitive(true),
+        ),
+    )
 
     fun buildStepQuestionPrompt(
         question: String,

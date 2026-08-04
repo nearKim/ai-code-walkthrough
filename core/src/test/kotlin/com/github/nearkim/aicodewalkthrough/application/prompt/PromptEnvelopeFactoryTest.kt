@@ -5,6 +5,8 @@ import com.github.nearkim.aicodewalkthrough.model.FeatureScopeContext
 import com.github.nearkim.aicodewalkthrough.model.QueryContext
 import com.github.nearkim.aicodewalkthrough.service.ProviderCapabilities
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -115,5 +117,61 @@ class PromptEnvelopeFactoryTest {
             .getValue("mechanical_symbol_inventory").jsonObject
         assertEquals("python_stdlib_ast", embedded.getValue("tool").jsonPrimitive.content)
         assertEquals("42", embedded.getValue("symbol_count").jsonPrimitive.content)
+    }
+
+    /**
+     * A 1.2 MB inventory made Codex fail the turn with "Input exceeds the maximum length of
+     * 1048576 characters". Architecture evidence duplicates the compact module list, so it is the
+     * first thing dropped, and modules are truncated only if the envelope is still too large.
+     */
+    @Test
+    fun `oversized inventory is trimmed to fit the provider input limit`() {
+        val text = "x".repeat(2_000)
+        val inventory = buildJsonObject {
+            put("tool", "python_stdlib_ast")
+            put("truncated", false)
+            put("modules", buildJsonArray {
+                repeat(400) { index -> add(buildJsonObject { put("p", "module$index.py"); put("d", text) }) }
+            })
+            put("architecture", buildJsonObject {
+                put("components", buildJsonArray {
+                    add(buildJsonObject {
+                        put("id", "python-root")
+                        put("evidence", buildJsonArray { repeat(200) { add(buildJsonObject { put("text", text) }) } })
+                        put("responsibilities", buildJsonArray {
+                            repeat(200) { index ->
+                                add(buildJsonObject {
+                                    put("id", "class-$index")
+                                    put("title", "Owns something")
+                                    put("evidence", buildJsonArray { repeat(10) { add(buildJsonObject { put("text", text) }) } })
+                                })
+                            }
+                        })
+                    })
+                })
+            })
+        }
+
+        val prompt = PromptEnvelopeFactory.buildWalkthroughPrompt(
+            question = "Map the repository",
+            mode = AnalysisMode.UNDERSTAND,
+            maxSteps = 12,
+            queryContext = null,
+            followUpContext = null,
+            featureScope = null,
+            providerCapabilities = ProviderCapabilities(supportsRepoGroundedWalkthrough = true),
+            json = json,
+            mechanicalSymbolInventory = inventory,
+        )
+
+        assertTrue("Prompt was ${prompt.length} characters", prompt.length <= 1_000_000)
+        val embedded = json.parseToJsonElement(prompt).jsonObject
+            .getValue("mechanical_symbol_inventory").jsonObject
+        val component = embedded.getValue("architecture").jsonObject
+            .getValue("components").jsonArray.single().jsonObject
+        assertTrue(component["evidence"] == null)
+        assertTrue(component.getValue("responsibilities").jsonArray.all { it.jsonObject["evidence"] == null })
+        assertEquals("Owns something", component.getValue("responsibilities").jsonArray.first().jsonObject.getValue("title").jsonPrimitive.content)
+        assertTrue(embedded.getValue("modules").jsonArray.isNotEmpty())
     }
 }
