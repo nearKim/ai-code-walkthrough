@@ -9,12 +9,14 @@ internal object CliProcessRunner {
 
     fun runUntilExit(
         process: Process,
+        stdin: String? = null,
         onStdoutLine: (String) -> Unit = {},
         onStderrLine: (String) -> Unit = {},
     ) {
         runProcess(
             process = process,
             timeout = null,
+            stdin = stdin,
             onStdoutLine = onStdoutLine,
             onStderrLine = onStderrLine,
         )
@@ -28,6 +30,7 @@ internal object CliProcessRunner {
     ): Boolean = runProcess(
         process = process,
         timeout = timeout,
+        stdin = null,
         onStdoutLine = onStdoutLine,
         onStderrLine = onStderrLine,
     )
@@ -35,12 +38,14 @@ internal object CliProcessRunner {
     private fun runProcess(
         process: Process,
         timeout: Duration?,
+        stdin: String?,
         onStdoutLine: (String) -> Unit,
         onStderrLine: (String) -> Unit,
     ): Boolean {
         val readerFailure = AtomicReference<Throwable?>()
         val stdoutThread = pumpLines(process.inputStream, onStdoutLine, readerFailure)
         val stderrThread = pumpLines(process.errorStream, onStderrLine, readerFailure)
+        val stdinThread = stdin?.let { pumpStdin(process, it) }
 
         val finished = try {
             if (timeout == null) {
@@ -58,6 +63,7 @@ internal object CliProcessRunner {
             process.destroyForcibly()
         }
 
+        stdinThread?.join(READER_SHUTDOWN_TIMEOUT_MILLIS)
         if (finished) {
             stdoutThread.join()
             stderrThread.join()
@@ -68,6 +74,15 @@ internal object CliProcessRunner {
         }
 
         return finished
+    }
+
+    /**
+     * Prompts can exceed the OS argument limit, so they travel on stdin. Writing from its own
+     * thread keeps a full stdout pipe from deadlocking the write; a broken pipe only means the
+     * CLI exited early, and its exit code already carries that failure.
+     */
+    private fun pumpStdin(process: Process, text: String): Thread = Thread.ofVirtual().start {
+        runCatching { process.outputStream.bufferedWriter().use { it.write(text) } }
     }
 
     private fun pumpLines(

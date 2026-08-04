@@ -40,16 +40,15 @@ class CodexCliProvider(
                 state = state,
                 basePath = projectRoot.toString(),
                 outputPath = outputPath.toString(),
-                prompt = buildPrompt(prompt, promptKind),
             )
             val process = ProcessBuilder(command)
                 .directory(projectRoot.toFile())
                 .redirectErrorStream(false)
-                .redirectInput(ProcessBuilder.Redirect.from(CliEnvironment.nullInput()))
                 .start()
             activeProcess = process
             CliProcessRunner.runUntilExit(
                 process = process,
+                stdin = buildPrompt(prompt, promptKind),
                 onStdoutLine = { line -> parseProgress(line)?.let { onProgress?.invoke(it) } },
                 onStderrLine = { line -> line.trim().takeIf(String::isNotEmpty)?.let { onProgress?.invoke(it) } },
             )
@@ -128,7 +127,6 @@ internal object CodexCliCommand {
         state: WalkthroughSettings,
         basePath: String,
         outputPath: String,
-        prompt: String,
         resolveExecutable: (String) -> String = CliPathResolver::resolve,
     ): List<String> = buildList {
         add(resolveExecutable(state.codexCliPath))
@@ -141,6 +139,6 @@ internal object CodexCliCommand {
         val effort = ProviderModelCatalog.normalizeCodexReasoningEffort(state.codexReasoningEffort)
         add("-c"); add("model_reasoning_effort=\"$effort\"")
         add("-o"); add(outputPath)
-        add(prompt)
+        add("-")
     }
 }

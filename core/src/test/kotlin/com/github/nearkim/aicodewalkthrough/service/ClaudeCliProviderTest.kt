@@ -35,7 +35,6 @@ class ClaudeCliProviderTest {
     fun `command blocks repository mutation tools`() {
         val command = ClaudeCliCommand.build(
             state = WalkthroughSettings(),
-            prompt = "Explain the codebase",
             promptKind = PromptKind.WALKTHROUGH,
             resolveExecutable = { it },
         )

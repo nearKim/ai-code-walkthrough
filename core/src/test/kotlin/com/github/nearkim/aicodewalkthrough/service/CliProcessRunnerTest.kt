@@ -64,6 +64,25 @@ class CliProcessRunnerTest {
         assertTrue("Timeout took ${elapsedMillis}ms", elapsedMillis < 1_000)
     }
 
+    /**
+     * Prompts carrying a mechanical symbol inventory used to travel as a command argument and blew
+     * past ARG_MAX with "Argument list too long". This pushes more than 1 MB through stdin while the
+     * child echoes it back, which also deadlocks if stdin is written on the calling thread.
+     */
+    @Test
+    fun `stdin larger than the OS argument limit reaches the process`() {
+        val line = "x".repeat(1024)
+        val prompt = List(2048) { line }.joinToString("\n")
+        val received = mutableListOf<String>()
+
+        val process = ProcessBuilder(listOf("cat")).start()
+        CliProcessRunner.runUntilExit(process, stdin = prompt, onStdoutLine = { received.add(it) })
+
+        assertEquals(0, process.exitValue())
+        assertEquals(2048, received.size)
+        assertTrue(received.all { it == line })
+    }
+
     private class BlockingOutputProcess : Process() {
         private val destroyed = AtomicBoolean(false)
         private val stdout = PipedInputStream()

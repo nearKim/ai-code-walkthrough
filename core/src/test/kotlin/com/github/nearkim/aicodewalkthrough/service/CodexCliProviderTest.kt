@@ -14,7 +14,6 @@ class CodexCliProviderTest {
             state = WalkthroughSettings(codexCliPath = "codex"),
             basePath = "/repo",
             outputPath = "/tmp/result.json",
-            prompt = "Explain the codebase",
             resolveExecutable = { configured ->
                 requestedExecutable = configured
                 "/Users/test/.local/bin/codex"
@@ -31,10 +30,21 @@ class CodexCliProviderTest {
             state = WalkthroughSettings(),
             basePath = "/repo",
             outputPath = "/tmp/result.json",
-            prompt = "Explain the codebase",
             resolveExecutable = { it },
         )
 
         assertEquals("read-only", command[command.indexOf("--sandbox") + 1])
+    }
+
+    @Test
+    fun `command reads the prompt from stdin instead of an argument`() {
+        val command = CodexCliCommand.build(
+            state = WalkthroughSettings(),
+            basePath = "/repo",
+            outputPath = "/tmp/result.json",
+            resolveExecutable = { it },
+        )
+
+        assertEquals("-", command.last())
     }
 }

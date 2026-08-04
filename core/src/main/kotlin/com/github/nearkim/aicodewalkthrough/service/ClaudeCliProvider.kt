@@ -42,11 +42,10 @@ class ClaudeCliProvider(
         onProgress: ((String) -> Unit)?,
     ): ProviderResponse = withContext(Dispatchers.IO) {
         val state = settings().normalized()
-        val command = ClaudeCliCommand.build(state, prompt, promptKind)
+        val command = ClaudeCliCommand.build(state, promptKind)
         val processBuilder = ProcessBuilder(command)
             .directory(projectRoot.toFile())
             .redirectErrorStream(false)
-            .redirectInput(ProcessBuilder.Redirect.from(CliEnvironment.nullInput()))
         CliEnvironment.augmentPath(processBuilder)
         val process = processBuilder.start()
         activeProcess = process
@@ -58,6 +57,7 @@ class ClaudeCliProvider(
             val semanticTools = SemanticToolCapture()
             CliProcessRunner.runUntilExit(
                 process = process,
+                stdin = prompt,
                 onStderrLine = { stderrLines.appendBounded(it, MAX_CAPTURE_LINES) },
                 onStdoutLine = stdout@{ line ->
                     if (line.isBlank()) return@stdout
@@ -265,7 +265,6 @@ private fun semanticToolName(name: String): String? = name.substringAfterLast("_
 internal object ClaudeCliCommand {
     fun build(
         state: WalkthroughSettings,
-        prompt: String,
         promptKind: PromptKind,
         resolveExecutable: (String) -> String = CliPathResolver::resolve,
     ): List<String> = buildList {
@@ -279,7 +278,6 @@ internal object ClaudeCliCommand {
         add("--model"); add(ProviderModelCatalog.normalizeClaudeModel(state.claudeModel))
         state.claudeEffort.trim().takeIf(String::isNotEmpty)?.let { add("--effort"); add(it) }
         state.mcpConfigPath.trim().takeIf(String::isNotEmpty)?.let { add("--mcp-config"); add(it) }
-        add("-p"); add(prompt)
     }
 }
 
