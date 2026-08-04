@@ -2,7 +2,6 @@ import {
   Alert,
   Badge,
   Button,
-  Code,
   Divider,
   Group,
   ScrollArea,
@@ -26,6 +25,7 @@ import {
   hasCodeLocation,
   methodBehavior,
   methodLabel,
+  responsibilityGrounding,
 } from '../architecture/evidence';
 import { humanize, roleForKind } from '../architecture/taxonomy';
 import type { RightPaneActions } from '../RightPane';
@@ -255,12 +255,6 @@ function ArchitectureView({
               <Badge size="sm" variant="light">{roleForKind(component.kind)}</Badge>
             </Group>
             <Text size="sm">{component.responsibility}</Text>
-            {mappedFiles.length > 0 && <details className="component-files">
-              <summary>Mapped code <span>{formatCount(mappedFiles.length, 'path')}</span></summary>
-              <div className="component-file-list">
-                {mappedFiles.map((path) => <Code key={path}>{path}</Code>)}
-              </div>
-            </details>}
           </section>}
           {component !== undefined && <CodeOwnershipList
             responsibilities={responsibilities}
@@ -375,9 +369,6 @@ function CodeOwnerRow({ owner, selected, onPreview }: {
       <div>
         <Text className="code-owner-kind" size="xs">{humanize(evidence.kind)}</Text>
         <Text className="code-owner-name" fw={700}>{evidence.label}</Text>
-        {evidence.file_path !== undefined && <Text className="code-owner-location" size="xs" c="dimmed">
-          {formatShortEvidenceLocation(evidence)}
-        </Text>}
       </div>
       <Button
         aria-label={`Show ${evidence.label} source`}
@@ -390,10 +381,16 @@ function CodeOwnerRow({ owner, selected, onPreview }: {
     {owner.responsibilities.length > 0 && <div className="code-owner-responsibilities">
       <Text className="code-owner-label" size="xs">Responsibilities</Text>
       <ul className="code-owner-responsibility-list">
-        {owner.responsibilities.map((responsibility) => <li key={responsibility.id}>
-          <Text size="sm" fw={700}>{responsibility.title}</Text>
-          <Text size="xs" c="dimmed">{responsibility.description}</Text>
-        </li>)}
+        {owner.responsibilities.map((responsibility) => {
+          const grounding = responsibilityGrounding(responsibility);
+          return <li key={responsibility.id}>
+            <Text size="sm" fw={700}>{responsibility.title}</Text>
+            <Text size="xs" c="dimmed">{responsibility.description}</Text>
+            {grounding !== undefined && <Text className="code-owner-responsibility-evidence" size="xs" c="dimmed">
+              Evidence: {grounding}
+            </Text>}
+          </li>;
+        })}
       </ul>
     </div>}
     {owner.methods.length > 0 && <div className="code-owner-methods">
@@ -446,17 +443,6 @@ function deriveStages(stages: ReadonlyArray<LearningStage>, steps: ReadonlyArray
     component_ids: [],
     step_ids: steps.map((step) => step.id),
   }];
-}
-
-function formatCount(value: number, singular: string, plural = `${singular}s`): string {
-  return `${value} ${value === 1 ? singular : plural}`;
-}
-
-function formatShortEvidenceLocation(evidence: EvidenceItem): string {
-  if (evidence.file_path === undefined) return '';
-  const path = shortPath(evidence.file_path);
-  if (evidence.start_line === undefined) return path;
-  return `${path}:${formatLineRange(evidence.start_line, evidence.end_line ?? evidence.start_line)}`;
 }
 
 function formatLineRange(start: number, end: number): string {

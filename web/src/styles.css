@@ -834,39 +834,6 @@ body {
   letter-spacing: -0.025em;
 }
 
-.component-files {
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-
-.component-files > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  cursor: pointer;
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.component-files > summary span {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.component-file-list {
-  display: grid;
-  gap: 5px;
-  padding-top: 8px;
-}
-
-.component-file-list code {
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
 .code-ownership {
   display: grid;
   min-width: 0;
@@ -915,7 +882,7 @@ body {
   line-height: 1.35;
 }
 
-.code-owner-location {
+.code-owner-responsibility-evidence {
   font-family: var(--mono);
 }
 

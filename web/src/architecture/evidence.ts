@@ -28,6 +28,14 @@ export function responsibilityOwners(
   return owners.length > 0 ? owners : responsibility.evidence.slice(0, 1);
 }
 
+/** The symbols the model cited for a responsibility, so the claim is not asserted bare. */
+export function responsibilityGrounding(responsibility: ArchitectureResponsibility): string | undefined {
+  const labels = [...new Set(responsibility.evidence.map((item) => lastSymbolPart(item.label)))];
+  if (labels.length === 0) return undefined;
+  const shown = labels.slice(0, 3).join(', ');
+  return labels.length > 3 ? `${shown} +${labels.length - 3} more` : shown;
+}
+
 export function responsibilitySummary(
   responsibilities: ReadonlyArray<ArchitectureResponsibility>,
 ): string {

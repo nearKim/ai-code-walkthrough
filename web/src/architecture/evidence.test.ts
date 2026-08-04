@@ -3,6 +3,7 @@ import {
   evidenceBelongsToOwner,
   methodBehavior,
   methodLabel,
+  responsibilityGrounding,
   sameMethod,
   uniqueEvidence,
 } from './evidence';
@@ -53,4 +54,22 @@ test('uniqueEvidence dedupes by kind, label, path and start line', () => {
 test('methodLabel appends parentheses once', () => {
   expect(methodLabel('Store.save')).toBe('save()');
   expect(methodLabel('save()')).toBe('save()');
+});
+
+test('responsibilityGrounding lists cited symbols and caps the list at three', () => {
+  const responsibility: ArchitectureResponsibility = {
+    id: 'r1',
+    title: 'Persist',
+    description: 'Describes persistence.',
+    evidence: [owner, method, { ...method, label: 'Store.load' }],
+    collaborator_component_ids: [],
+    relationship_ids: [],
+    uncertain: false,
+  };
+  expect(responsibilityGrounding(responsibility)).toBe('Store, save, load');
+  expect(responsibilityGrounding({
+    ...responsibility,
+    evidence: [...responsibility.evidence, { ...method, label: 'Store.drop' }],
+  })).toBe('Store, save, load +1 more');
+  expect(responsibilityGrounding({ ...responsibility, evidence: [] })).toBeUndefined();
 });
