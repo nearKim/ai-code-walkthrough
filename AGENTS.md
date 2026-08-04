@@ -2,6 +2,10 @@
 
 This file provides guidance to coding agents when working with code in this repository.
 
+## Workflow rules
+
+Never use a git worktree for this repository, under any circumstances. Work directly in the main checkout so changes are immediately visible to the running app. `.claude/settings.json` disables background-session worktree isolation for the same reason.
+
 ## Build & Run Commands
 
 ```bash
