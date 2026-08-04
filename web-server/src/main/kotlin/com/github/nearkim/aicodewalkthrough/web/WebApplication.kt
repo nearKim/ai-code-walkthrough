@@ -124,6 +124,10 @@ fun Application.configureWebApplication(dependencies: WebDependencies) {
             call.respond(SettingsResponse(updated))
         }
 
+        post("/api/sample") {
+            call.respond(dependencies.session.showSample())
+        }
+
         post("/api/mapping") {
             if (!call.requireJson()) return@post
             val request = call.receive<MappingRequest>()
@@ -175,6 +179,10 @@ fun Application.configureWebApplication(dependencies: WebDependencies) {
             val requested = call.request.queryParameters["path"]
             if (requested.isNullOrBlank() || requested.isAbsolutePath()) {
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("A relative project path is required."))
+                return@get
+            }
+            if (dependencies.session.isSampleSourceAvailable(requested)) {
+                call.respond(SourceResponse(SampleWalkthrough.sourcePath, SampleWalkthrough.source))
                 return@get
             }
             readSource(dependencies.projectFiles, requested).fold(

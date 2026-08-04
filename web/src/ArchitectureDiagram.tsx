@@ -133,7 +133,7 @@ export function ArchitectureDiagram({
         data={[
           { value: 'system', label: 'System' },
           { value: 'component', label: 'Component' },
-          { value: 'responsibilities', label: 'Responsibilities' },
+          { value: 'responsibilities', label: 'Classes' },
         ]}
       />
     </div>
@@ -255,15 +255,14 @@ export function ArchitectureDiagram({
         </>}
       </TransformWrapper>
     </div>
-    <div className="diagram-footer">
+    {depth !== 'responsibilities' && <div className="diagram-footer">
       <Group gap="md" className="diagram-legend">
         <Legend tone="primary" label="control / creation" />
         <Legend tone="data" label="data access" />
         <Legend tone="dependency" label="dependency" />
         <Legend tone="neutral" label="other" />
       </Group>
-      <Text size="xs" c="dimmed">{model.caption}</Text>
-    </div>
+    </div>}
   </Stack>;
 }
 
@@ -403,79 +402,48 @@ function createResponsibilityModel(
     componentId: component.id,
   }];
   const edges: DiagramEdge[] = [];
-  const nodeIds = new Set([component.id]);
-  const relationshipById = new Map(architecture.relationships.map((relationship) => [relationship.id, relationship]));
+  const owners = uniqueEvidence(responsibilities.flatMap(responsibilityOwners));
 
-  responsibilities.forEach((responsibility) => {
-    const responsibilityNodeId = `responsibility:${responsibility.id}`;
+  owners.forEach((owner) => {
+    const ownedResponsibilities = responsibilities.filter((responsibility) =>
+      responsibilityBelongsToOwner(responsibility, owner));
+    const ownerNodeId = `owner:${architectureEvidenceKey(owner)}`;
     nodes.push({
-      id: responsibilityNodeId,
-      label: responsibility.title,
-      detail: responsibility.description,
-      description: responsibility.description,
-      tone: 'primary',
+      id: ownerNodeId,
+      label: owner.label,
+      detail: responsibilitySummary(ownedResponsibilities) || owner.text || humanize(owner.kind),
+      description: owner.text ?? responsibilitySummary(ownedResponsibilities) ?? owner.label,
+      tone: 'dependency',
+      ownerKey: architectureEvidenceKey(owner),
     });
     edges.push({
-      id: `${component.id}:${responsibility.id}`,
+      id: `${component.id}:${ownerNodeId}`,
       from: component.id,
-      to: responsibilityNodeId,
+      to: ownerNodeId,
       label: '',
-      tone: 'primary',
-      uncertain: responsibility.uncertain,
+      tone: 'dependency',
+      uncertain: ownedResponsibilities.some((responsibility) => responsibility.uncertain),
     });
 
-    responsibilityOwners(responsibility).slice(0, 2).forEach((owner) => {
-      const key = architectureEvidenceKey(owner);
-      const ownerNodeId = `owner:${key}`;
-      if (!nodeIds.has(ownerNodeId)) {
-        nodeIds.add(ownerNodeId);
-        nodes.push({
-          id: ownerNodeId,
-          label: owner.label,
-          detail: humanize(owner.kind),
-          description: owner.text ?? owner.label,
-          tone: 'dependency',
-          ownerKey: key,
-        });
-      }
-      edges.push({
-        id: `${responsibilityNodeId}:${ownerNodeId}`,
-        from: responsibilityNodeId,
-        to: ownerNodeId,
-        label: 'implemented by',
-        tone: 'dependency',
-        uncertain: responsibility.uncertain,
+    if (owner.kind !== 'class') return;
+    const methods = uniqueEvidence(ownedResponsibilities.flatMap((responsibility) =>
+      responsibility.evidence.filter((evidence) => evidence.kind === 'method' && evidenceBelongsToOwner(evidence, owner))));
+    methods.forEach((method) => {
+      const methodNodeId = `method:${architectureEvidenceKey(method)}`;
+      const behavior = methodBehavior(method, ownedResponsibilities);
+      nodes.push({
+        id: methodNodeId,
+        label: methodLabel(method.label),
+        detail: behavior,
+        description: behavior || method.label,
+        tone: 'neutral',
       });
-    });
-
-    responsibility.collaborator_component_ids.slice(0, 2).forEach((componentId) => {
-      const collaborator = architecture.components.find((candidate) => candidate.id === componentId);
-      if (collaborator === undefined) return;
-      const collaboratorNodeId = `collaborator:${componentId}`;
-      if (!nodeIds.has(collaboratorNodeId)) {
-        nodeIds.add(collaboratorNodeId);
-        nodes.push({
-          id: collaboratorNodeId,
-          label: collaborator.name,
-          detail: collaborator.responsibility,
-          description: collaborator.responsibility,
-          tone: toneForKind(collaborator.kind),
-          componentId: collaborator.id,
-        });
-      }
-      const relationship = responsibility.relationship_ids
-        .map((id) => relationshipById.get(id))
-        .find((candidate) => candidate !== undefined && (
-          candidate.from_component_id === componentId || candidate.to_component_id === componentId
-        ));
-      const relationshipStartsHere = relationship?.from_component_id === component.id;
       edges.push({
-        id: `${responsibilityNodeId}:${collaboratorNodeId}`,
-        from: relationship === undefined || relationshipStartsHere ? responsibilityNodeId : collaboratorNodeId,
-        to: relationship === undefined || relationshipStartsHere ? collaboratorNodeId : responsibilityNodeId,
-        label: relationship === undefined ? 'collaborates' : humanize(relationship.kind),
-        tone: relationship === undefined ? 'neutral' : toneForRelationship(relationship.kind),
-        uncertain: responsibility.uncertain || relationship?.uncertain,
+        id: `${ownerNodeId}:${methodNodeId}`,
+        from: ownerNodeId,
+        to: methodNodeId,
+        label: '',
+        tone: 'neutral',
       });
     });
   });
@@ -483,9 +451,7 @@ function createResponsibilityModel(
   return {
     level: 'responsibilities',
     rankDirection: nodes.length >= 7 ? 'TB' : 'LR',
-    caption: responsibilities.length === 0
-      ? `${component.name} has no structured responsibility mapping; remap the repository to generate one.`
-      : `${responsibilities.length} grounded ${responsibilities.length === 1 ? 'responsibility' : 'responsibilities'} for ${component.name}. Select a code owner for method and state detail.`,
+    caption: `${component.name} class ownership.`,
     nodes,
     edges,
   };
@@ -603,6 +569,63 @@ function responsibilitiesFor(component: ArchitectureComponent): ReadonlyArray<Ar
   }];
 }
 
+function responsibilitySummary(responsibilities: ReadonlyArray<ArchitectureResponsibility>): string {
+  return [...new Set(responsibilities.map((responsibility) => responsibility.title))].join(' · ');
+}
+
+function responsibilityBelongsToOwner(responsibility: ArchitectureResponsibility, owner: EvidenceItem): boolean {
+  return responsibility.evidence.some((evidence) => sameCodeOwner(evidence, owner) || evidenceBelongsToOwner(evidence, owner));
+}
+
+function evidenceBelongsToOwner(evidence: EvidenceItem, owner: EvidenceItem): boolean {
+  if (evidence.file_path !== owner.file_path || evidence.start_line === undefined || owner.start_line === undefined) {
+    return false;
+  }
+  const evidenceEnd = evidence.end_line ?? evidence.start_line;
+  const ownerEnd = owner.end_line ?? owner.start_line;
+  return evidence.start_line >= owner.start_line && evidenceEnd <= ownerEnd;
+}
+
+function sameCodeOwner(left: EvidenceItem, right: EvidenceItem): boolean {
+  return left.kind === right.kind && left.label === right.label && left.file_path === right.file_path;
+}
+
+function uniqueEvidence(evidence: ReadonlyArray<EvidenceItem>): ReadonlyArray<EvidenceItem> {
+  const seen = new Set<string>();
+  return evidence.filter((item) => {
+    const key = architectureEvidenceKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function methodBehavior(method: EvidenceItem, responsibilities: ReadonlyArray<ArchitectureResponsibility>): string {
+  for (const responsibility of responsibilities) {
+    const evidence = responsibility.evidence.find((candidate) => candidate.kind === 'method' && sameMethod(candidate, method));
+    if (evidence?.text !== undefined) return evidence.text;
+    if (evidence !== undefined) return responsibility.description;
+  }
+  return method.text ?? '';
+}
+
+function sameMethod(left: EvidenceItem, right: EvidenceItem): boolean {
+  if (left.file_path !== right.file_path || lastSymbolPart(left.label) !== lastSymbolPart(right.label)) return false;
+  if (left.start_line === undefined || right.start_line === undefined) return true;
+  const leftEnd = left.end_line ?? left.start_line;
+  const rightEnd = right.end_line ?? right.start_line;
+  return left.start_line <= rightEnd && right.start_line <= leftEnd;
+}
+
+function methodLabel(label: string): string {
+  const name = lastSymbolPart(label);
+  return name.endsWith('()') ? name : `${name}()`;
+}
+
+function lastSymbolPart(label: string): string {
+  return label.split('.').pop() ?? label;
+}
+
 export function responsibilityOwners(responsibility: ArchitectureResponsibility): ReadonlyArray<EvidenceItem> {
   const owners = responsibility.evidence.filter((evidence) => ownerKinds.has(evidence.kind));
   return owners.length > 0 ? owners : responsibility.evidence.slice(0, 1);
@@ -668,7 +691,7 @@ export function roleForKind(kind: string): string {
 function titleForDepth(depth: ArchitectureDepth): string {
   if (depth === 'system') return 'System context';
   if (depth === 'component') return 'Component relationship';
-  return 'Responsibility ownership';
+  return 'Class ownership';
 }
 
 function humanize(value: string): string {

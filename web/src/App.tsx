@@ -47,6 +47,7 @@ function WalkthroughApplication() {
   const [actionError, setActionError] = useState<string>();
   const [focusNonce, setFocusNonce] = useState(0);
   const [codeCollapsed, setCodeCollapsed] = useState(true);
+  const [walkthroughNarrow, setWalkthroughNarrow] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<FlowStep>();
   const [codePanel, setCodePanel] = usePanelCallbackRef();
   const displayedStep = evidencePreview ?? session?.displayed_step;
@@ -142,6 +143,10 @@ function WalkthroughApplication() {
 
   const actions: RightPaneActions = useMemo(() => ({
     startMapping,
+    showSample: async () => {
+      setEvidencePreview(undefined);
+      await perform(api.sample);
+    },
     cancelMapping: async () => perform(api.cancelMapping),
     tour: async (action, stepId) => {
       setEvidencePreview(undefined);
@@ -253,13 +258,22 @@ function WalkthroughApplication() {
               />
             </Panel>
             <Separator className="pane-separator" />
-            <Panel id="walkthrough" defaultSize="30" minSize={360}>
+            <Panel
+              id="walkthrough"
+              defaultSize="30"
+              minSize={360}
+              onResize={(size) => setWalkthroughNarrow((current) => {
+                const next = size.inPixels <= 720;
+                return current === next ? current : next;
+              })}
+            >
               <RightPane
                 session={session}
                 settings={settings}
                 providers={providers}
                 actions={actions}
                 actionError={actionError}
+                compact={walkthroughNarrow}
               />
             </Panel>
           </PanelGroup>}

@@ -57,6 +57,19 @@ class WebApplicationTest {
         }
 
         try {
+            val sample = client.post("/api/sample")
+            assertEquals(HttpStatusCode.OK, sample.status)
+            val samplePayload = sample.bodyAsText()
+            val sampleSnapshot = Json.decodeFromString<SessionSnapshot>(samplePayload)
+            assertEquals("OVERVIEW", sampleSnapshot.state)
+            assertEquals(SampleWalkthrough.question, sampleSnapshot.question)
+            assertEquals("sample-map", sampleSnapshot.flowMap?.entryStepId)
+            assertTrue(samplePayload.contains("WalkthroughSample.mapSystem"))
+            val sampleSource = client.get("/api/source?path=${SampleWalkthrough.sourcePath}")
+            assertEquals(HttpStatusCode.OK, sampleSource.status)
+            assertTrue(sampleSource.bodyAsText().contains("This source exists only to demonstrate"))
+            assertTrue(sampleSource.bodyAsText().contains("class WalkthroughSample"))
+
             val mapping = client.post("/api/mapping") {
                 contentType(ContentType.Application.Json)
                 setBody("""{"question":"How does it start?","mode":"understand","provider":"codex_cli"}""")
@@ -84,6 +97,9 @@ class WebApplicationTest {
             val source = client.get("/api/source?path=src%2FMain.kt")
             assertEquals(HttpStatusCode.OK, source.status)
             assertTrue(source.bodyAsText().contains("fun main()"))
+
+            val virtualSourceOutsideSample = client.get("/api/source?path=${SampleWalkthrough.sourcePath}")
+            assertEquals(HttpStatusCode.NotFound, virtualSourceOutsideSample.status)
 
             val symbols = client.get("/api/symbols")
             assertEquals(HttpStatusCode.OK, symbols.status)

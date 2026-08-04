@@ -74,6 +74,7 @@ export const api = {
   ),
   saveSettings: async (settings: WalkthroughSettings): Promise<WalkthroughSettings> =>
     (await request<SettingsResponse>('/api/settings', jsonRequest('PUT', settings))).settings,
+  sample: (): Promise<SessionSnapshot> => request('/api/sample', jsonRequest('POST', {})),
   startMapping: (question: string, mode: AnalysisModeId, provider: ProviderId): Promise<SessionSnapshot> =>
     request('/api/mapping', jsonRequest('POST', { question, mode, provider })),
   cancelMapping: (): Promise<SessionSnapshot> => request('/api/mapping', { method: 'DELETE' }),

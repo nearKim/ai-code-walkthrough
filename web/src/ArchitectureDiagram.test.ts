@@ -125,15 +125,14 @@ test('builds stable architecture and responsibility diagrams', () => {
   const responsibilities = createArchitectureDiagramModel(architecture, 'responsibilities', 'application');
   expect(responsibilities.nodes.map((node) => node.label)).toEqual([
     'Application service',
-    'Coordinate the request',
     'ApplicationService',
-    'HTTP interface',
-    'Result store',
+    'run()',
   ]);
-  expect(responsibilities.edges.map((edge) => edge.label)).toEqual(['', 'implemented by', 'calls', 'writes']);
-  expect(responsibilities.edges.find((edge) => edge.label === 'calls')).toMatchObject({
-    from: 'collaborator:interface',
-    to: 'responsibility:coordinate',
+  expect(responsibilities.edges.map((edge) => edge.label)).toEqual(['', '']);
+  expect(responsibilities.nodes.find((node) => node.label === 'ApplicationService')).toMatchObject({
+    detail: 'Coordinate the request',
   });
-  expect(responsibilities.nodes.some((node) => node.label === 'run')).toBe(false);
+  expect(responsibilities.nodes.find((node) => node.label === 'run()')).toMatchObject({
+    detail: 'Executes the use case.',
+  });
 });

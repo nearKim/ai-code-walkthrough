@@ -27,6 +27,7 @@ import { TourView } from './views/TourView';
 
 export interface RightPaneActions {
   readonly startMapping: (question: string, mode: AnalysisModeId, provider: ProviderId) => Promise<void>;
+  readonly showSample: () => Promise<void>;
   readonly cancelMapping: () => Promise<void>;
   readonly tour: (action: 'start' | 'preview' | 'next' | 'previous' | 'stop' | 'new', stepId?: string) => Promise<void>;
   readonly answer: (question: string) => Promise<void>;
@@ -43,11 +44,12 @@ interface RightPaneProps {
   readonly providers: ReadonlyArray<ProviderStatus>;
   readonly actions: RightPaneActions;
   readonly actionError?: string;
+  readonly compact?: boolean;
 }
 
-export function RightPane({ session, settings, providers, actions, actionError }: RightPaneProps) {
+export function RightPane({ session, settings, providers, actions, actionError, compact = false }: RightPaneProps) {
   return (
-    <aside className="right-pane" aria-label="Walkthrough controls">
+    <aside className={`right-pane${compact ? ' compact' : ''}`} aria-label="Walkthrough controls">
       {session.state === 'INPUT' && <InputView
         session={session}
         settings={settings}
@@ -174,6 +176,12 @@ function InputView({ session, settings, providers, actions, actionError }: Input
           {mode === 'understand' && question.trim().length === 0 ? 'Learn codebase' : 'Start walkthrough'}
         </Button>
         <Text size="xs" c="dimmed" ta="center">Ctrl/⌘ + Enter</Text>
+        <div className="sample-preview">
+          <Button size="compact-sm" variant="subtle" onClick={() => void actions.showSample()}>
+            Preview sample result
+          </Button>
+          <Text size="xs" c="dimmed">Instant illustrative result — no repository analysis.</Text>
+        </div>
       </section>
     </div>
   );

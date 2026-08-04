@@ -235,7 +235,15 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
     await route.fulfill({ status: 404, json: { message: 'Not mocked' } });
   });
 
+  await page.setViewportSize({ width: 2560, height: 1323 });
   await page.goto('/');
+  const inputWorkspace = page.locator('.input-workspace');
+  await expect.poll(async () => inputWorkspace.evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(1800);
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect.poll(async () => page.locator('.app-shell').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(800);
+  await expect.poll(() => page.getByLabel('Color theme').evaluate((element) =>
+    element.getBoundingClientRect().right <= window.innerWidth,
+  )).toBe(true);
   await page.getByLabel('Color theme').getByText('Dark', { exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'dark');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('ai-code-walkthrough-color-scheme'))).toBe('dark');
@@ -258,37 +266,42 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   expect(detailsBox).not.toBeNull();
   expect(diagramBox!.x).toBeLessThan(detailsBox!.x);
   await expect(page.getByText('Run an application from a local entrypoint.', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'Code files' })).toBeVisible();
+  await expect(page.getByLabel('Class ownership')).toBeVisible();
   await page.getByLabel('Architecture depth').getByText('Component', { exact: true }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Program entrypoint, Accept process startup/ }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Application, Coordinate the application run/ }).click();
-  const responsibilityRows = page.locator('.responsibility-table-row');
-  await expect(responsibilityRows).toHaveCount(2);
-  const responsibilityBoxes = await responsibilityRows.evaluateAll((rows) =>
-    rows.map((row) => row.getBoundingClientRect().height));
-  expect(Math.abs(responsibilityBoxes[0]! - responsibilityBoxes[1]!)).toBeLessThan(1);
-  const ownerButton = page.getByRole('button', { name: 'class ApplicationRunner' });
-  const [ownerNameBox, ownerKindBox] = await Promise.all([
-    ownerButton.locator('code').boundingBox(),
-    ownerButton.locator('.responsibility-owner-heading > span').boundingBox(),
-  ]);
-  expect(ownerNameBox).not.toBeNull();
-  expect(ownerKindBox).not.toBeNull();
-  expect(ownerNameBox!.x + ownerNameBox!.width).toBeLessThanOrEqual(ownerKindBox!.x);
-  await page.getByRole('tab', { name: 'Code files' }).click();
-  const structure = page.getByLabel('Mechanical code structure');
-  await expect(structure.getByText('src/Main.kt', { exact: true })).toBeVisible();
-  await expect(structure.getByText('1 class · 1 function · 1 method')).toBeVisible();
-  await expect(structure.getByText('ApplicationRunner.start()')).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Responsibilities (2)' }).click();
-  await page.getByRole('button', { name: 'class ApplicationRunner' }).click();
-  await expect(page.getByRole('heading', { name: 'Application runner' })).toBeVisible();
-  await expect(page.getByText('Implementation details')).toBeVisible();
-  await page.getByLabel('Code owner detail').locator('.code-owner-header').getByRole('button', { name: 'Show code' }).click();
+  const codeOwnership = page.getByLabel('Class ownership');
+  await expect(codeOwnership.locator('.code-owner-row')).toHaveCount(1);
+  await expect(codeOwnership.getByText('ApplicationRunner')).toBeVisible();
+  await expect(codeOwnership.getByText('start()')).toBeVisible();
+  await expect(codeOwnership.getByText('Run the application')).toBeVisible();
+  await expect(codeOwnership.getByText('Expose lifecycle state')).toBeVisible();
+  await expect(codeOwnership.getByText('Executes the lifecycle.')).toBeVisible();
+  await expect(codeOwnership.locator('.behavior-lane, .behavior-node')).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Code files' })).toHaveCount(0);
+  await expect(codeOwnership.getByRole('button', { name: 'Show ApplicationRunner.start source' })).toBeVisible();
+  await page.getByLabel('Architecture depth').getByText('Classes', { exact: true }).click();
+  await expect(page.getByLabel('Class ownership architecture diagram')).toBeVisible();
+  await expect(page.locator('.diagram-node').filter({ hasText: 'ApplicationRunner' })).toHaveCount(1);
+  await expect(page.locator('.diagram-node').filter({ hasText: 'start()' })).toHaveCount(1);
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await codeOwnership.getByRole('button', { name: 'Show ApplicationRunner.start source' }).click();
   await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);
-  await expect(codePanel.getByText('L5–7')).toBeVisible();
+  const walkthroughControls = page.getByLabel('Walkthrough controls');
+  await expect(walkthroughControls).toHaveClass(/compact/);
+  const [stackedDiagramBox, stackedDetailsBox] = await Promise.all([
+    diagramWorkspace.boundingBox(),
+    componentDetails.boundingBox(),
+  ]);
+  expect(stackedDiagramBox).not.toBeNull();
+  expect(stackedDetailsBox).not.toBeNull();
+  expect(stackedDetailsBox!.y).toBeGreaterThan(stackedDiagramBox!.y);
+  await expect.poll(() => walkthroughControls.evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
+  await expect(codePanel.getByText('L6–6')).toBeVisible();
   await page.getByRole('button', { name: 'Hide code pane' }).click();
   await expect(codePanel).toHaveCSS('width', '0px');
   await page.getByRole('button', { name: 'Show code pane' }).click();

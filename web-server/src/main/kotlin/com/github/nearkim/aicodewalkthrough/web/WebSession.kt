@@ -112,6 +112,36 @@ class WebSession(
         return loadingSnapshot
     }
 
+    fun showSample(): SessionSnapshot {
+        engine.cancel()
+        mappingJob?.cancel()
+        mappingJob = null
+        requestGeneration.incrementAndGet()
+        answerGeneration.incrementAndGet()
+        val sample = SampleWalkthrough.flowMap()
+        return mutate {
+            question = SampleWalkthrough.question
+            mode = AnalysisMode.UNDERSTAND
+            flowMap = sample
+            metadata = null
+            errorMessage = null
+            currentStepIndex = -1
+            previewStepIndex = -1
+            stepAnswer = null
+            stepAnswerLoading = false
+            stepAnswerError = null
+            followUpContext = FollowUpContext(SampleWalkthrough.question, sample)
+            history.clear()
+            progressLines.clear()
+            state = TourState.OVERVIEW
+        }
+    }
+
+    fun isSampleSourceAvailable(path: String): Boolean = synchronized(lock) {
+        state != TourState.INPUT && path == SampleWalkthrough.sourcePath && question == SampleWalkthrough.question &&
+            flowMap?.steps?.any { it.filePath == path } == true
+    }
+
     fun cancelMapping(): SessionSnapshot {
         requestGeneration.incrementAndGet()
         mappingJob?.cancel()

@@ -25,10 +25,11 @@ import type {
   ArchitectureComponent,
   ArchitectureResponsibility,
   CodebaseArchitecture,
-  ComponentRelationship,
   EvidenceItem,
   FlowStep,
   LearningStage,
+  MechanicalCallable,
+  MechanicalClass,
   MechanicalModule,
   MechanicalSymbolInventory,
   SessionSnapshot,
@@ -184,13 +185,8 @@ function ArchitectureView({
 }) {
   const [componentId, setComponentId] = useState(architecture.components[0]?.id ?? '');
   const [ownerKey, setOwnerKey] = useState<string>();
-  const [detailTab, setDetailTab] = useState<string>('responsibilities');
   const [symbolInventory, setSymbolInventory] = useState<MechanicalSymbolInventory>();
   const [symbolError, setSymbolError] = useState<string>();
-  const names = useMemo(
-    () => new Map(architecture.components.map((component) => [component.id, component.name])),
-    [architecture.components],
-  );
   const component = architecture.components.find((candidate) => candidate.id === componentId);
   const responsibilities = useMemo(
     () => component === undefined ? [] : componentResponsibilities(component),
@@ -206,14 +202,10 @@ function ArchitectureView({
       .filter((path): path is string => path !== undefined),
   ])], [component, responsibilities]);
   const mechanicalModules = useMemo(
-    () => component === undefined || symbolInventory === undefined
-      ? []
-      : modulesForComponent(symbolInventory, mappedFiles),
-    [component, mappedFiles, symbolInventory],
+    () => symbolInventory === undefined ? [] : modulesForComponent(symbolInventory, mappedFiles),
+    [mappedFiles, symbolInventory],
   );
-  const selectedOwner = responsibilities
-    .flatMap(responsibilityOwners)
-    .find((evidence) => architectureEvidenceKey(evidence) === ownerKey);
+  const isVirtualSample = mappedFiles.length === 1 && mappedFiles[0] === '.walkthrough-sample.ts';
   const componentSteps = useMemo(
     () => component === undefined ? [] : stepsForComponent(component, steps),
     [component, steps],
@@ -226,12 +218,14 @@ function ArchitectureView({
   }, [architecture.components, componentId]);
   useEffect(() => setOwnerKey(undefined), [componentId]);
   useEffect(() => {
+    if (isVirtualSample) return;
     let active = true;
+    setSymbolError(undefined);
     loadSymbolInventory()
       .then((inventory) => active && setSymbolInventory(inventory))
       .catch((reason: unknown) => active && setSymbolError(messageOf(reason)));
     return () => { active = false; };
-  }, [loadSymbolInventory]);
+  }, [isVirtualSample, loadSymbolInventory]);
 
   return (
     <div className="architecture-workspace">
@@ -263,53 +257,18 @@ function ArchitectureView({
               </div>
             </details>}
           </section>}
-          {component !== undefined && <Tabs value={detailTab} onChange={(value) => setDetailTab(value ?? 'responsibilities')}>
-            <Tabs.List grow>
-              <Tabs.Tab value="responsibilities">Responsibilities ({responsibilities.length})</Tabs.Tab>
-              <Tabs.Tab value="structure">Code files</Tabs.Tab>
-            </Tabs.List>
-            <Tabs.Panel value="responsibilities" pt="md">
-              <Stack gap="md">
-                <ResponsibilityMap
-                  component={component}
-                  responsibilities={responsibilities}
-                  relationships={architecture.relationships}
-                  names={names}
-                  selectedOwnerKey={ownerKey}
-                  onOwnerSelect={setOwnerKey}
-                />
-                {component.responsibilities.length === 0 && <section className="inspector-panel">
-                  <Text fw={700}>Representative code</Text>
-                  <Text size="xs" c="dimmed">No AI responsibility mapping was returned for this component.</Text>
-                  <ComponentDetail
-                    component={component}
-                    steps={componentSteps}
-                    brokenStepIds={brokenStepIds}
-                    onPreviewStep={onPreviewStep}
-                  />
-                </section>}
-                {selectedOwner !== undefined && <CodeOwnerDetail
-                  component={component}
-                  owner={selectedOwner}
-                  responsibilities={responsibilities}
-                  relationships={architecture.relationships}
-                  names={names}
-                  onPreviewEvidence={onPreviewEvidence}
-                />}
-              </Stack>
-            </Tabs.Panel>
-            <Tabs.Panel value="structure" pt="md">
-              {symbolError !== undefined
-                ? <Alert color="yellow">{symbolError}</Alert>
-                : symbolInventory === undefined
-                  ? <Text size="sm" c="dimmed">Loading mechanical code structure…</Text>
-                  : <MechanicalStructure
-                      modules={mechanicalModules}
-                      inventory={symbolInventory}
-                      onPreviewEvidence={onPreviewEvidence}
-                    />}
-            </Tabs.Panel>
-          </Tabs>}
+          {component !== undefined && <CodeOwnershipList
+            responsibilities={responsibilities}
+            modules={mechanicalModules}
+            keySymbols={component.key_symbols}
+            selectedOwnerKey={ownerKey}
+            fallbackSteps={componentSteps}
+            brokenStepIds={brokenStepIds}
+            symbolError={symbolError}
+            inventoryLoading={symbolInventory === undefined}
+            onPreviewEvidence={onPreviewEvidence}
+            onPreviewStep={onPreviewStep}
+          />}
         </Stack>
       </ScrollArea>
     </div>
@@ -354,280 +313,127 @@ function SystemNotesView({ architecture }: { readonly architecture: CodebaseArch
   </ScrollArea>;
 }
 
-function MechanicalStructure({
+function CodeOwnershipList({
+  responsibilities,
   modules,
-  inventory,
+  keySymbols,
+  selectedOwnerKey,
+  fallbackSteps,
+  brokenStepIds,
+  symbolError,
+  inventoryLoading,
   onPreviewEvidence,
+  onPreviewStep,
 }: {
+  readonly responsibilities: ReadonlyArray<ArchitectureResponsibility>;
   readonly modules: ReadonlyArray<MechanicalModule>;
-  readonly inventory: MechanicalSymbolInventory;
+  readonly keySymbols: ReadonlyArray<string>;
+  readonly selectedOwnerKey?: string;
+  readonly fallbackSteps: ReadonlyArray<FlowStep>;
+  readonly brokenStepIds: ReadonlySet<string>;
+  readonly symbolError?: string;
+  readonly inventoryLoading: boolean;
   readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
+  readonly onPreviewStep: (stepId: string) => void;
 }) {
-  return <section aria-label="Mechanical code structure" className="mechanical-structure">
-    {inventory.truncated && <Alert color="yellow">The mechanical inventory reached its configured limit.</Alert>}
-    {modules.length === 0
-      ? <Text size="sm" c="dimmed">No Python classes or functions were detected in this component’s mapped files.</Text>
-      : <div className="code-file-table" role="table">
-          <div aria-hidden="true" className="code-file-table-header" role="row">
-            <span>File</span><span>Detected structure</span><span>Source</span>
-          </div>
-          {modules.map((module) => {
-            const evidence = moduleEvidence(module);
-            const shape = formatModuleShape(module);
-            return <div className="code-file-row" key={module.path} role="row">
-              <div className="code-file-path" role="cell">
-                <Code>{module.path}</Code>
-              </div>
-              <Text size="xs" c="dimmed" role="cell">{shape}</Text>
-              <Button
-                size="compact-xs"
-                variant="subtle"
-                onClick={() => onPreviewEvidence(evidence, `AST-indexed file with ${shape}.`)}
-              >View file</Button>
-            </div>;
-          })}
-        </div>}
+  const owners = codeOwners(modules, responsibilities, keySymbols);
+  return <section aria-label="Class ownership" className="code-ownership">
+    {symbolError !== undefined && <Text size="xs" c="yellow">Mechanical structure unavailable: {symbolError}</Text>}
+    {owners.length > 0 && <div className="code-ownership-list">
+      {owners.map((owner) => <CodeOwnerRow
+        owner={owner}
+        selected={selectedOwnerKey === architectureEvidenceKey(owner.evidence)}
+        key={architectureEvidenceKey(owner.evidence)}
+        onPreview={onPreviewEvidence}
+      />)}
+    </div>}
+    {owners.length === 0 && inventoryLoading && <Text size="sm" c="dimmed">Loading source structure…</Text>}
+    {owners.length === 0 && !inventoryLoading && fallbackSteps.length === 0 && <Text size="sm" c="dimmed">
+      No class or function could be grounded for this component.
+    </Text>}
+    {owners.length === 0 && fallbackSteps.length > 0 && <ValidatedCodeStops
+      steps={fallbackSteps}
+      brokenStepIds={brokenStepIds}
+      onPreviewStep={onPreviewStep}
+    />}
   </section>;
 }
 
-function ResponsibilityMap({
-  component,
-  responsibilities,
-  relationships,
-  names,
-  selectedOwnerKey,
-  onOwnerSelect,
-}: {
-  readonly component: ArchitectureComponent;
+interface CodeOwner {
+  readonly evidence: EvidenceItem;
+  readonly methods: ReadonlyArray<EvidenceItem>;
   readonly responsibilities: ReadonlyArray<ArchitectureResponsibility>;
-  readonly relationships: ReadonlyArray<ComponentRelationship>;
-  readonly names: ReadonlyMap<string, string>;
-  readonly selectedOwnerKey?: string;
-  readonly onOwnerSelect: (ownerKey: string) => void;
+}
+
+function CodeOwnerRow({ owner, selected, onPreview }: {
+  readonly owner: CodeOwner;
+  readonly selected: boolean;
+  readonly onPreview: (evidence: EvidenceItem, explanation: string) => void;
 }) {
-  return <section aria-label="Responsibility map" className="responsibility-section">
-    <div>
-      <Text fw={700}>What this component owns</Text>
-      <Text size="xs" c="dimmed">Outcome, grounded owner, and collaborating boundary.</Text>
-    </div>
-    <div className="responsibility-table-wrap">
-      <div className="responsibility-table" role="table">
-        <div className="responsibility-table-header" role="row">
-          <div role="columnheader">Responsibility</div>
-          <div role="columnheader">Code owner</div>
-          <div role="columnheader">Collaborates with</div>
-        </div>
-        {responsibilities.map((responsibility, index) => {
-          const owners = responsibilityOwners(responsibility);
-          const connections = relationshipsForResponsibility(component.id, responsibility, relationships);
-          return <div className="responsibility-table-row" key={responsibility.id} role="row">
-            <div className="responsibility-copy" role="cell">
-              <Text className="responsibility-index" size="xs" c="dimmed" fw={700}>
-                {String(index + 1).padStart(2, '0')}
-              </Text>
-              <Text size="sm" fw={700}>{responsibility.title}</Text>
-              <Text size="xs" c="dimmed">{responsibility.description}</Text>
-            </div>
-            <div role="cell"><div className="responsibility-owner-list">
-              {owners.length === 0
-                ? <Text size="xs" c="dimmed">No grounded owner</Text>
-                : owners.map((owner) => {
-                  const key = architectureEvidenceKey(owner);
-                  return <UnstyledButton
-                    aria-label={`${humanize(owner.kind)} ${owner.label}`}
-                    aria-pressed={key === selectedOwnerKey}
-                    className={`responsibility-owner${key === selectedOwnerKey ? ' selected' : ''}`}
-                    key={key}
-                    onClick={() => onOwnerSelect(key)}
-                  >
-                    <Text size="sm" fw={600}>{humanizeSymbol(owner.label)}</Text>
-                    <div className="responsibility-owner-heading">
-                      <Code>{owner.label}</Code>
-                      <span>{humanize(owner.kind)}</span>
-                    </div>
-                    {owner.file_path !== undefined && <Text size="xs" c="dimmed">
-                      {formatEvidenceLocation(owner)}
-                    </Text>}
-                  </UnstyledButton>;
-                })}
-            </div></div>
-            <div role="cell"><div className="responsibility-collaborator-list">
-              {responsibility.collaborator_component_ids.length === 0
-                ? <Text size="xs" c="dimmed">Internal</Text>
-                : responsibility.collaborator_component_ids.map((id) => {
-                  const relationship = connections.find((candidate) =>
-                    candidate.from_component_id === id || candidate.to_component_id === id);
-                    return <div className="responsibility-collaborator" key={id}>
-                      <Text size="xs" fw={600}>{names.get(id) ?? id}</Text>
-                      {relationship !== undefined && <Text size="xs" c="dimmed">{relationship.description}</Text>}
-                    </div>;
-                })}
-            </div></div>
+  const { evidence } = owner;
+  return <article className={`code-owner-row${selected ? ' selected' : ''}`}>
+    <header className="code-owner-heading">
+      <div>
+        <Text className="code-owner-kind" size="xs">{humanize(evidence.kind)}</Text>
+        <Text className="code-owner-name" fw={700}>{evidence.label}</Text>
+        {evidence.file_path !== undefined && <Text className="code-owner-location" size="xs" c="dimmed">
+          {formatShortEvidenceLocation(evidence)}
+        </Text>}
+      </div>
+      <Button
+        aria-label={`Show ${evidence.label} source`}
+        size="compact-xs"
+        variant="subtle"
+        disabled={!hasCodeLocation(evidence)}
+        onClick={() => onPreview(evidence, evidence.text ?? 'Source anchor for this code owner.')}
+      >Show code</Button>
+    </header>
+    {owner.responsibilities.length > 0 && <div className="code-owner-responsibilities">
+      <Text className="code-owner-label" size="xs">Responsibilities</Text>
+      <ul className="code-owner-responsibility-list">
+        {owner.responsibilities.map((responsibility) => <li key={responsibility.id}>
+          <Text size="sm" fw={700}>{responsibility.title}</Text>
+          <Text size="xs" c="dimmed">{responsibility.description}</Text>
+        </li>)}
+      </ul>
+    </div>}
+    {owner.methods.length > 0 && <div className="code-owner-methods">
+      <Text className="code-owner-label" size="xs">Methods</Text>
+      <div className="code-owner-method-list">
+        {owner.methods.map((method) => {
+          const behavior = methodBehavior(method, owner.responsibilities);
+          return <div className="code-owner-method-row" key={architectureEvidenceKey(method)}>
+            <UnstyledButton
+              aria-label={`Show ${method.label} source`}
+              className="code-owner-method"
+              disabled={!hasCodeLocation(method)}
+              onClick={() => onPreview(method, behavior ?? `Method owned by ${evidence.label}.`)}
+            >{methodName(method.label)}</UnstyledButton>
+            {behavior !== undefined && <Text className="code-owner-method-behavior" size="xs" c="dimmed">{behavior}</Text>}
           </div>;
         })}
       </div>
-    </div>
-  </section>;
+    </div>}
+  </article>;
 }
 
-function CodeOwnerDetail({
-  component,
-  owner,
-  responsibilities,
-  relationships,
-  names,
-  onPreviewEvidence,
-}: {
-  readonly component: ArchitectureComponent;
-  readonly owner: EvidenceItem;
-  readonly responsibilities: ReadonlyArray<ArchitectureResponsibility>;
-  readonly relationships: ReadonlyArray<ComponentRelationship>;
-  readonly names: ReadonlyMap<string, string>;
-  readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
-}) {
-  const ownerKey = architectureEvidenceKey(owner);
-  const ownedResponsibilities = responsibilities.filter((responsibility) =>
-    responsibilityOwners(responsibility).some((candidate) => architectureEvidenceKey(candidate) === ownerKey));
-
-  return <section aria-label="Code owner detail" className="code-owner-detail">
-    <div className="code-owner-header">
-      <div>
-        <Title order={4}>{humanizeSymbol(owner.label)}</Title>
-        <div className="symbol-signature">
-          <span>{humanize(owner.kind)}</span>
-          <Code>{owner.label}</Code>
-        </div>
-        {owner.text !== undefined && <Text size="sm" c="dimmed">{owner.text}</Text>}
-      </div>
-      <EvidenceAction evidence={owner} explanation={component.responsibility} onPreview={onPreviewEvidence} />
-    </div>
-    <Stack gap="md">
-      {ownedResponsibilities.map((responsibility) => {
-        const responsibilityOwnerKeys = new Set(responsibilityOwners(responsibility).map(architectureEvidenceKey));
-        const implementationEvidence = responsibility.evidence.filter((evidence) =>
-          !responsibilityOwnerKeys.has(architectureEvidenceKey(evidence)) && evidenceBelongsToOwner(evidence, owner));
-        const otherOwners = responsibilityOwners(responsibility).filter((evidence) =>
-          architectureEvidenceKey(evidence) !== ownerKey);
-        const connections = relationshipsForResponsibility(component.id, responsibility, relationships);
-        return <section className="owner-responsibility" key={responsibility.id}>
-          <div>
-            <Text size="sm" fw={700}>{responsibility.title}</Text>
-            <Text size="sm">{responsibility.description}</Text>
-          </div>
-          {implementationEvidence.length > 0 && <div>
-            <Text size="xs" fw={700} c="dimmed" mb={5}>Implementation details</Text>
-            <div className="owner-evidence-list">
-              {implementationEvidence.map((evidence) => <EvidenceRow
-                evidence={evidence}
-                explanation={evidence.text ?? responsibility.description}
-                key={architectureEvidenceKey(evidence)}
-                onPreview={onPreviewEvidence}
-              />)}
-            </div>
-          </div>}
-          {otherOwners.length > 0 && <div>
-            <Text size="xs" fw={700} mb={5}>Related code owners</Text>
-            <div className="owner-evidence-list">
-              {otherOwners.map((evidence) => <EvidenceRow
-                evidence={evidence}
-                explanation={evidence.text ?? responsibility.description}
-                key={architectureEvidenceKey(evidence)}
-                onPreview={onPreviewEvidence}
-              />)}
-            </div>
-          </div>}
-          {connections.length > 0 && <div>
-            <Text size="xs" fw={700} mb={5}>Relationships</Text>
-            <Stack gap={5}>
-              {connections.map((relationship) => <div className="owner-relationship" key={relationship.id}>
-                <Text size="xs" fw={700}>{relationshipSentence(relationship, names)}</Text>
-                <Text size="xs" c="dimmed">{relationship.description}</Text>
-                {relationship.evidence.filter(hasCodeLocation).map((evidence) => <EvidenceAction
-                  evidence={evidence}
-                  explanation={relationship.description}
-                  key={`${relationship.id}:${architectureEvidenceKey(evidence)}`}
-                  onPreview={onPreviewEvidence}
-                />)}
-              </div>)}
-            </Stack>
-          </div>}
-          {responsibility.uncertain && <Text size="xs" c="yellow">This responsibility mapping is uncertain.</Text>}
-        </section>;
-      })}
-    </Stack>
-  </section>;
-}
-
-function EvidenceRow({ evidence, explanation, onPreview }: {
-  readonly evidence: EvidenceItem;
-  readonly explanation: string;
-  readonly onPreview: (evidence: EvidenceItem, explanation: string) => void;
-}) {
-  return <div className="owner-evidence-row">
-    <div>
-      <Text size="sm" fw={600}>{humanizeSymbol(evidence.label)}</Text>
-      <Group className="evidence-signature" gap={5} wrap="wrap">
-        <Code>{evidence.label}</Code>
-        <Text size="xs" c="dimmed">{humanize(evidence.kind)}</Text>
-      </Group>
-      {evidence.text !== undefined && <Text size="xs" c="dimmed">{evidence.text}</Text>}
-    </div>
-    <EvidenceAction evidence={evidence} explanation={explanation} onPreview={onPreview} />
-  </div>;
-}
-
-function EvidenceAction({ evidence, explanation, onPreview }: {
-  readonly evidence: EvidenceItem;
-  readonly explanation: string;
-  readonly onPreview: (evidence: EvidenceItem, explanation: string) => void;
-}) {
-  return <div className="evidence-action">
-    <Code>{formatEvidenceLocation(evidence)}</Code>
-    <Button
-      size="compact-xs"
-      variant="subtle"
-      disabled={!hasCodeLocation(evidence)}
-      onClick={() => onPreview(evidence, explanation)}
-    >Show code</Button>
-  </div>;
-}
-
-function ComponentDetail({ component, steps, brokenStepIds, onPreviewStep }: {
-  readonly component: ArchitectureComponent;
+function ValidatedCodeStops({ steps, brokenStepIds, onPreviewStep }: {
   readonly steps: ReadonlyArray<FlowStep>;
   readonly brokenStepIds: ReadonlySet<string>;
   readonly onPreviewStep: (stepId: string) => void;
 }) {
-  return <div className="component-code-detail">
-    {steps.length > 0 && <>
-      <div className="code-reference-list">
-        {steps.slice(0, 6).map((step) => <div className="code-reference-row" key={step.id}>
-          <div className="code-reference-copy">
-            <Text size="sm" fw={600}>{step.symbol ?? step.title}</Text>
-            <Code>{formatStepLocation(step)}</Code>
-          </div>
-          <Button
-            size="compact-xs"
-            variant="subtle"
-            disabled={brokenStepIds.has(step.id)}
-            onClick={() => onPreviewStep(step.id)}
-          >Show code</Button>
-        </div>)}
-      </div>
-    </>}
-    {component.key_paths.length > 0 && <>
-      <Text size="xs" fw={700} mt={4}>Key files</Text>
-      <div className="code-anchor-list">
-        {component.key_paths.map((path) => <Code key={path}>{path}</Code>)}
-      </div>
-    </>}
-    {component.key_symbols.length > 0 && <>
-      <Text size="xs" fw={700} mt={4}>Key symbols</Text>
-      <div className="code-anchor-list">
-        {component.key_symbols.map((symbol) => <Code key={symbol}>{symbol}</Code>)}
-      </div>
-    </>}
-    {component.uncertain && <Text size="xs" c="yellow">Grounding is uncertain.</Text>}
+  return <div className="validated-code-stops">
+    <Text className="code-owner-label" size="xs">Validated code stops</Text>
+    {steps.map((step) => <UnstyledButton
+      aria-label={`Show ${step.symbol ?? step.title} source`}
+      className="validated-code-stop"
+      disabled={brokenStepIds.has(step.id)}
+      key={step.id}
+      onClick={() => onPreviewStep(step.id)}
+    >
+      <Text size="sm" fw={700}>{step.symbol ?? step.title}</Text>
+      <Text size="xs" c="dimmed">{shortPath(step.file_path)}:{formatLineRange(step.start_line, step.end_line)}</Text>
+    </UnstyledButton>)}
   </div>;
 }
 
@@ -647,71 +453,104 @@ function humanize(value: string): string {
   return value.replaceAll('_', ' ');
 }
 
-function humanizeSymbol(value: string): string {
-  const specialNames: Readonly<Record<string, string>> = {
-    __call__: 'Run when called',
-    __enter__: 'Enter the context',
-    __exit__: 'Exit the context',
-    __init__: 'Initialize',
+function codeOwners(
+  modules: ReadonlyArray<MechanicalModule>,
+  responsibilities: ReadonlyArray<ArchitectureResponsibility>,
+  keySymbols: ReadonlyArray<string>,
+): ReadonlyArray<CodeOwner> {
+  const indexed = modules.flatMap((module) => [
+    ...module.classes.map((item) => codeOwnerForClass(module, item, responsibilities)),
+    ...module.functions.map((item) => codeOwnerForFunction(module, item, responsibilities)),
+  ]);
+  const relevantIndexed = indexed.filter((owner) =>
+    owner.responsibilities.length > 0 || ownerMatchesKeySymbols(owner, keySymbols));
+  const visibleIndexed = relevantIndexed.length > 0 ? relevantIndexed : indexed;
+  return uniqueCodeOwners([...visibleIndexed, ...fallbackCodeOwners(responsibilities)]);
+}
+
+function codeOwnerForClass(
+  module: MechanicalModule,
+  item: MechanicalClass,
+  responsibilities: ReadonlyArray<ArchitectureResponsibility>,
+): CodeOwner {
+  const evidence = callableEvidence('class', item.name, module.path, item);
+  return {
+    evidence,
+    methods: item.methods.map((method) => callableEvidence('method', `${item.name}.${method.name}`, module.path, method)),
+    responsibilities: responsibilities.filter((responsibility) => responsibilityBelongsToOwner(responsibility, evidence)),
   };
-  const special = specialNames[value];
-  if (special !== undefined) return special;
-  const words = value
-    .replace(/\(\)$/, '')
-    .replace(/^_+|_+$/g, '')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[._]+/g, ' ')
-    .trim()
-    .toLowerCase();
-  return words.length === 0 ? value : `${words[0].toUpperCase()}${words.slice(1)}`;
 }
 
-function stepsForComponent(component: ArchitectureComponent, steps: ReadonlyArray<FlowStep>): ReadonlyArray<FlowStep> {
-  const paths = new Set(component.key_paths);
-  const symbols = new Set(component.key_symbols);
-  return steps.filter((step) => paths.has(step.file_path) || (step.symbol !== undefined && symbols.has(step.symbol)));
-}
-
-function relationshipSentence(relationship: ComponentRelationship, names: ReadonlyMap<string, string>): string {
-  const from = names.get(relationship.from_component_id) ?? relationship.from_component_id;
-  const to = names.get(relationship.to_component_id) ?? relationship.to_component_id;
-  return `${from} ${relationshipVerb(relationship.kind)} ${to}`;
-}
-
-function relationshipVerb(kind: string): string {
-  const verbs: Record<string, string> = {
-    call: 'calls',
-    calls: 'calls',
-    creates: 'creates',
-    depends_on: 'depends on',
-    read: 'reads from',
-    reads: 'reads from',
-    write: 'writes to',
-    writes: 'writes to',
-    data_flow: 'sends data to',
+function codeOwnerForFunction(
+  module: MechanicalModule,
+  item: MechanicalCallable,
+  responsibilities: ReadonlyArray<ArchitectureResponsibility>,
+): CodeOwner {
+  const evidence = callableEvidence('function', item.name, module.path, item);
+  return {
+    evidence,
+    methods: [],
+    responsibilities: responsibilities.filter((responsibility) => responsibilityBelongsToOwner(responsibility, evidence)),
   };
-  return verbs[kind] ?? humanize(kind);
 }
 
-function relationshipsForResponsibility(
-  componentId: string,
-  responsibility: ArchitectureResponsibility,
-  relationships: ReadonlyArray<ComponentRelationship>,
-): ReadonlyArray<ComponentRelationship> {
-  const relationshipIds = new Set(responsibility.relationship_ids);
-  const explicit = relationships.filter((relationship) => relationshipIds.has(relationship.id));
-  if (explicit.length > 0) return explicit;
-  const collaborators = new Set(responsibility.collaborator_component_ids);
-  return relationships.filter((relationship) => {
-    if (relationship.from_component_id === componentId) return collaborators.has(relationship.to_component_id);
-    if (relationship.to_component_id === componentId) return collaborators.has(relationship.from_component_id);
-    return false;
+function fallbackCodeOwners(responsibilities: ReadonlyArray<ArchitectureResponsibility>): ReadonlyArray<CodeOwner> {
+  const candidates = uniqueEvidence(responsibilities.flatMap(responsibilityOwners));
+  const classes = candidates.filter((evidence) => evidence.kind === 'class');
+  const owners = candidates.filter((evidence) => evidence.kind !== 'method' ||
+    !classes.some((owner) => evidenceBelongsToOwner(evidence, owner)));
+  return owners.map((evidence) => ({
+    evidence,
+    methods: evidence.kind === 'class'
+      ? uniqueEvidence(responsibilities.flatMap((responsibility) => responsibility.evidence)
+        .filter((candidate) => candidate.kind === 'method' && evidenceBelongsToOwner(candidate, evidence)))
+      : [],
+    responsibilities: responsibilities.filter((responsibility) => responsibilityBelongsToOwner(responsibility, evidence)),
+  }));
+}
+
+function callableEvidence(kind: string, label: string, path: string, item: MechanicalCallable): EvidenceItem {
+  return {
+    kind,
+    label,
+    file_path: path,
+    start_line: item.start_line,
+    end_line: item.end_line,
+  };
+}
+
+function responsibilityBelongsToOwner(responsibility: ArchitectureResponsibility, owner: EvidenceItem): boolean {
+  return responsibility.evidence.some((evidence) => sameCodeOwner(evidence, owner) || evidenceBelongsToOwner(evidence, owner));
+}
+
+function ownerMatchesKeySymbols(owner: CodeOwner, keySymbols: ReadonlyArray<string>): boolean {
+  const symbols = new Set(keySymbols);
+  return symbols.has(owner.evidence.label) ||
+    owner.methods.some((method) => symbols.has(method.label) || symbols.has(lastSymbolPart(method.label)));
+}
+
+function uniqueCodeOwners(owners: ReadonlyArray<CodeOwner>): ReadonlyArray<CodeOwner> {
+  const seen = new Set<string>();
+  return owners.filter((owner) => {
+    const key = `${owner.evidence.kind}:${owner.evidence.label}:${owner.evidence.file_path ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 
-function hasCodeLocation(evidence: EvidenceItem): boolean {
-  return evidence.file_path !== undefined && evidence.start_line !== undefined;
+function uniqueEvidence(evidence: ReadonlyArray<EvidenceItem>): ReadonlyArray<EvidenceItem> {
+  const seen = new Set<string>();
+  return evidence.filter((item) => {
+    const key = architectureEvidenceKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function sameCodeOwner(left: EvidenceItem, right: EvidenceItem): boolean {
+  return left.kind === right.kind && left.label === right.label && left.file_path === right.file_path;
 }
 
 function evidenceBelongsToOwner(evidence: EvidenceItem, owner: EvidenceItem): boolean {
@@ -733,44 +572,54 @@ function modulesForComponent(
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function formatModuleShape(module: MechanicalModule): string {
-  const methodCount = module.classes.reduce((total, item) => total + item.methods.length, 0);
-  const parts = [
-    module.classes.length > 0 ? formatCount(module.classes.length, 'class', 'classes') : undefined,
-    module.functions.length > 0 ? formatCount(module.functions.length, 'function') : undefined,
-    methodCount > 0 ? formatCount(methodCount, 'method') : undefined,
-    module.imports.length > 0 ? formatCount(module.imports.length, 'import') : undefined,
-  ].filter((part): part is string => part !== undefined);
-  return parts.join(' · ') || 'No callable symbols';
+function methodName(label: string): string {
+  const name = lastSymbolPart(label);
+  return name.endsWith('()') ? name : `${name}()`;
 }
 
-function moduleEvidence(module: MechanicalModule): EvidenceItem {
-  const symbols = [...module.classes, ...module.functions];
-  return {
-    kind: 'module',
-    label: module.path,
-    file_path: module.path,
-    start_line: symbols.length === 0 ? 1 : Math.min(...symbols.map((symbol) => symbol.start_line)),
-    end_line: symbols.length === 0 ? 1 : Math.max(...symbols.map((symbol) => symbol.end_line)),
-  };
+function methodBehavior(
+  method: EvidenceItem,
+  responsibilities: ReadonlyArray<ArchitectureResponsibility>,
+): string | undefined {
+  for (const responsibility of responsibilities) {
+    const evidence = responsibility.evidence.find((candidate) => candidate.kind === 'method' && sameMethod(candidate, method));
+    if (evidence?.text !== undefined) return evidence.text;
+    if (evidence !== undefined) return responsibility.description;
+  }
+  return method.text;
+}
+
+function sameMethod(left: EvidenceItem, right: EvidenceItem): boolean {
+  if (left.file_path !== right.file_path || lastSymbolPart(left.label) !== lastSymbolPart(right.label)) return false;
+  if (left.start_line === undefined || right.start_line === undefined) return true;
+  const leftEnd = left.end_line ?? left.start_line;
+  const rightEnd = right.end_line ?? right.start_line;
+  return left.start_line <= rightEnd && right.start_line <= leftEnd;
+}
+
+function lastSymbolPart(label: string): string {
+  return label.split('.').pop() ?? label;
+}
+
+function stepsForComponent(component: ArchitectureComponent, steps: ReadonlyArray<FlowStep>): ReadonlyArray<FlowStep> {
+  const paths = new Set(component.key_paths);
+  const symbols = new Set(component.key_symbols);
+  return steps.filter((step) => paths.has(step.file_path) || (step.symbol !== undefined && symbols.has(step.symbol)));
+}
+
+function hasCodeLocation(evidence: EvidenceItem): boolean {
+  return evidence.file_path !== undefined && evidence.start_line !== undefined;
 }
 
 function formatCount(value: number, singular: string, plural = `${singular}s`): string {
   return `${value} ${value === 1 ? singular : plural}`;
 }
 
-function messageOf(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
-}
-
-function formatStepLocation(step: FlowStep): string {
-  return `${step.file_path}:${formatLineRange(step.start_line, step.end_line)}`;
-}
-
-function formatEvidenceLocation(evidence: EvidenceItem): string {
-  if (evidence.file_path === undefined) return evidence.label;
-  if (evidence.start_line === undefined) return evidence.file_path;
-  return `${evidence.file_path}:${formatLineRange(evidence.start_line, evidence.end_line ?? evidence.start_line)}`;
+function formatShortEvidenceLocation(evidence: EvidenceItem): string {
+  if (evidence.file_path === undefined) return '';
+  const path = shortPath(evidence.file_path);
+  if (evidence.start_line === undefined) return path;
+  return `${path}:${formatLineRange(evidence.start_line, evidence.end_line ?? evidence.start_line)}`;
 }
 
 function formatLineRange(start: number, end: number): string {
@@ -780,4 +629,8 @@ function formatLineRange(start: number, end: number): string {
 function shortPath(path: string): string {
   const parts = path.split('/');
   return parts.slice(-2).join('/');
+}
+
+function messageOf(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason);
 }

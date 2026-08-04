@@ -6,9 +6,11 @@ import type { SessionSnapshot } from './types';
 
 test('starts the default whole-codebase walkthrough', async () => {
   const startMapping = vi.fn(async () => undefined);
+  const showSample = vi.fn(async () => undefined);
   const noop = vi.fn(async () => undefined);
   const actions: RightPaneActions = {
     startMapping,
+    showSample,
     cancelMapping: noop,
     tour: noop,
     answer: noop,
@@ -45,6 +47,8 @@ test('starts the default whole-codebase walkthrough', async () => {
 
   fireEvent.click(screen.getByRole('button', { name: 'Learn codebase' }));
   await waitFor(() => expect(startMapping).toHaveBeenCalledWith('', 'understand', 'codex_cli'));
+  fireEvent.click(screen.getByRole('button', { name: 'Preview sample result' }));
+  await waitFor(() => expect(showSample).toHaveBeenCalledOnce());
 });
 
 test('explains component roles and links details to validated code', async () => {
@@ -53,6 +57,7 @@ test('explains component roles and links details to validated code', async () =>
   const noop = vi.fn(async () => undefined);
   const actions: RightPaneActions = {
     startMapping: noop,
+    showSample: noop,
     cancelMapping: noop,
     tour,
     answer: noop,
@@ -204,33 +209,26 @@ test('explains component roles and links details to validated code', async () =>
   expect(screen.queryByText('What this system does')).not.toBeInTheDocument();
   expect(screen.queryByText('Handle a request.')).not.toBeInTheDocument();
   expect(screen.getAllByText('application workflow').length).toBeGreaterThan(0);
-  expect(screen.getByLabelText('Responsibility map')).toBeVisible();
-  expect(screen.getByText('src/app.ts:5-9')).toBeVisible();
-  expect(screen.queryByText('Experiment application · application')).not.toBeInTheDocument();
+  const codeOwnership = screen.getByLabelText('Class ownership');
+  expect(codeOwnership).toBeVisible();
+  await waitFor(() => expect(within(codeOwnership).getByRole('button', { name: 'Show ExperimentRunner.run source' })).toBeVisible());
+  const experimentRunner = screen.getByText('ExperimentRunner').closest('.code-owner-row');
+  expect(experimentRunner).not.toBeNull();
+  expect(within(experimentRunner as HTMLElement).getByText('run()')).toBeVisible();
+  expect(within(experimentRunner as HTMLElement).getByText('Coordinate one experiment run')).toBeVisible();
+  expect(within(experimentRunner as HTMLElement).getByText('Sequences preparation, execution, and result recording.')).toBeVisible();
+  expect(within(experimentRunner as HTMLElement).getByText('Sequences the lifecycle operations.')).toBeVisible();
+  expect(codeOwnership.querySelectorAll('.code-owner-row')).toHaveLength(2);
+  expect(screen.queryByLabelText('Responsibility behavior map')).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'Code files' })).not.toBeInTheDocument();
   const selectedComponent = screen.getByLabelText('Selected diagram component');
   expect(within(selectedComponent).getByRole('heading', { name: 'Experiment application' })).toBeVisible();
   expect(screen.queryByText('Selected component')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Choose component')).not.toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole('tab', { name: 'Code files' })).toBeVisible());
-  fireEvent.click(screen.getByRole('tab', { name: 'Code files' }));
-  const structure = screen.getByLabelText('Mechanical code structure');
-  expect(structure).toBeVisible();
-  expect(within(structure).getByText('src/app.ts')).toBeVisible();
-  expect(within(structure).getByText('1 class · 1 function · 1 method')).toBeVisible();
-  expect(within(structure).queryByText('ExperimentRunner.run()')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: 'Responsibilities (1)' }));
-  fireEvent.click(screen.getByRole('button', { name: 'class ExperimentRunner' }));
-  const ownerDetail = screen.getByLabelText('Code owner detail');
-  expect(within(ownerDetail).getByRole('heading', { name: 'Experiment runner' })).toBeVisible();
-  expect(within(ownerDetail).getByText('src/app.ts:5-9')).toBeVisible();
-  expect(within(ownerDetail).getByText('Implementation details')).toBeVisible();
-  expect(within(ownerDetail).getByText('resultStore')).toBeVisible();
-  expect(within(ownerDetail).queryByText('buildPlan')).not.toBeInTheDocument();
-  expect(within(ownerDetail).getByText('Operator interfaces calls Experiment application')).toBeVisible();
-  fireEvent.click(within(ownerDetail).getAllByRole('button', { name: 'Show code' })[0]);
+  fireEvent.click(within(codeOwnership).getByRole('button', { name: 'Show ExperimentRunner.run source' }));
   expect(previewEvidence).toHaveBeenCalledWith(
-    expect.objectContaining({ label: 'ExperimentRunner', start_line: 5 }),
-    'Coordinate the experiment workflow.',
+    expect.objectContaining({ label: 'ExperimentRunner.run', start_line: 6 }),
+    'Sequences the lifecycle operations.',
   );
   fireEvent.click(screen.getByRole('button', { name: 'Interfaces, 1 component' }));
   await waitFor(() => expect(within(selectedComponent).getByRole('heading', { name: 'Operator interfaces' })).toBeVisible());

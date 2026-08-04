@@ -87,6 +87,11 @@ object PromptEnvelopeFactory {
         put("progression", "purpose_to_system_map_to_relationships_to_representative_paths_to_code")
         put("detail_policy", "progressive_disclosure")
         put("report_coverage_gaps", true)
+        if (wholeCodebase) {
+            put("behavior_search", true)
+            put("delegation_policy", "bounded_parallel_when_available")
+            put("symbolic_execution_policy", "consume_verified_tool_results_when_available")
+        }
     }
 
     private fun queryContextPayload(context: QueryContext) = buildJsonObject {
