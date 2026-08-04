@@ -58,80 +58,65 @@ class WalkthroughEngine(
         featureScope: FeatureScopeContext? = null,
         providerOverride: AiProvider? = null,
         onProgress: ((String) -> Unit)? = null,
-    ): Result<MappingResult> {
-        val provider = providerFor(providerOverride ?: settings().provider)
-        return try {
-            requireRepoGroundedWalkthroughSupport(provider)
-            activeProvider.set(provider)
-            onProgress?.invoke("Checking for a mechanical symbol analyzer...")
-            val symbolInventory = MechanicalSymbolAnalyzer.analyze(projectRoot, json, analysisRoot)
-                ?: throw IllegalStateException("Only Python target repositories are currently supported.")
-            latestSymbolInventory.set(symbolInventory)
-            onProgress?.invoke(
-                if (symbolInventory.cacheHit) {
-                    "Reused persisted Python analysis for ${symbolInventory.filesScanned} files and ${symbolInventory.symbolCount} symbols."
-                } else {
-                    "Indexed ${symbolInventory.filesScanned} Python files and ${symbolInventory.symbolCount} symbols with Python AST."
-                },
-            )
-            val prompt = PromptEnvelopeFactory.buildWalkthroughPrompt(
-                question = question,
-                mode = mode,
-                maxSteps = settings().maxSteps,
-                queryContext = queryContext,
-                followUpContext = followUpContext,
-                featureScope = featureScope,
-                providerCapabilities = provider.capabilities,
-                json = json,
-                mechanicalSymbolInventory = symbolInventory.payload,
-            )
-            val providerResponse = provider.query(prompt, PromptKind.WALKTHROUGH, onProgress)
-            val response = decodeResponse(providerResponse.content)
-            val validatedResponse = if (response.type == "flow_map" && response.steps != null) {
-                val flowMap = response.toFlowMap()
-                    ?: return Result.failure(IllegalStateException("Unexpected flow map response from LLM"))
-                val mechanicalArchitecture = decodeMechanicalArchitecture(symbolInventory.payload)
-                    ?: return Result.failure(IllegalStateException("Python analyzer omitted verified architecture"))
-                val validated = StepValidator(projectRoot.toString(), mechanicalArchitecture).validate(flowMap)
-                val enrichedInventory = MechanicalSymbolAnalyzer.enrich(
-                    inventory = symbolInventory,
-                    projectRoot = projectRoot,
-                    steps = validated.steps.filterNot(FlowStep::broken),
-                    semanticToolResults = providerResponse.toolResults,
-                    json = json,
-                    analysisRoot = analysisRoot,
-                )
-                latestSymbolInventory.set(enrichedInventory)
-                val verified = addToolEvidence(validated, enrichedInventory, providerResponse.toolResults)
-                response.copy(
-                    summary = verified.architecture?.systemPurpose ?: response.summary,
-                    steps = verified.steps,
-                    architecture = verified.architecture,
-                    learningPath = verified.learningPath,
-                    entryStepId = verified.entryStepId,
-                    terminalStepIds = verified.terminalStepIds,
-                    edges = verified.edges,
-                    analysisTrace = verified.analysisTrace,
-                )
+    ): Result<MappingResult> = withProvider(providerOverride) { provider ->
+        onProgress?.invoke("Checking for a mechanical symbol analyzer...")
+        val symbolInventory = MechanicalSymbolAnalyzer.analyze(projectRoot, json, analysisRoot)
+            ?: throw IllegalStateException("Only Python target repositories are currently supported.")
+        latestSymbolInventory.set(symbolInventory)
+        onProgress?.invoke(
+            if (symbolInventory.cacheHit) {
+                "Reused persisted Python analysis for ${symbolInventory.filesScanned} files and ${symbolInventory.symbolCount} symbols."
             } else {
-                response
-            }
-            Result.success(MappingResult(validatedResponse, buildMetadata(providerResponse.metadata, validatedResponse)))
-        } catch (error: SerializationException) {
-            currentCoroutineContext().ensureActive()
-            Result.failure(IllegalStateException("Failed to parse response: ${error.message}", error))
-        } catch (error: IOException) {
-            currentCoroutineContext().ensureActive()
-            Result.failure(IllegalStateException("Provider I/O error: ${error.message}", error))
-        } catch (error: IllegalStateException) {
-            currentCoroutineContext().ensureActive()
-            Result.failure(error)
-        } catch (error: Exception) {
-            currentCoroutineContext().ensureActive()
-            Result.failure(IllegalStateException("Unexpected provider error: ${error.message}", error))
-        } finally {
-            activeProvider.compareAndSet(provider, null)
+                "Indexed ${symbolInventory.filesScanned} Python files and ${symbolInventory.symbolCount} symbols with Python AST."
+            },
+        )
+        val prompt = PromptEnvelopeFactory.buildWalkthroughPrompt(
+            question = question,
+            mode = mode,
+            maxSteps = settings().maxSteps,
+            queryContext = queryContext,
+            followUpContext = followUpContext,
+            featureScope = featureScope,
+            providerCapabilities = provider.capabilities,
+            json = json,
+            mechanicalSymbolInventory = symbolInventory.payload,
+        )
+        val providerResponse = provider.query(prompt, PromptKind.WALKTHROUGH, onProgress)
+        val response = decodeResponse(providerResponse.content)
+        val validatedResponse = if (response.type == "flow_map" && response.steps != null) {
+            val flowMap = response.toFlowMap()
+                ?: return@withProvider Result.failure(
+                    IllegalStateException("Unexpected flow map response from LLM"),
+                )
+            val mechanicalArchitecture = decodeMechanicalArchitecture(symbolInventory.payload)
+                ?: return@withProvider Result.failure(
+                    IllegalStateException("Python analyzer omitted verified architecture"),
+                )
+            val validated = StepValidator(projectRoot.toString(), mechanicalArchitecture).validate(flowMap)
+            val enrichedInventory = MechanicalSymbolAnalyzer.enrich(
+                inventory = symbolInventory,
+                projectRoot = projectRoot,
+                steps = validated.steps.filterNot(FlowStep::broken),
+                semanticToolResults = providerResponse.toolResults,
+                json = json,
+                analysisRoot = analysisRoot,
+            )
+            latestSymbolInventory.set(enrichedInventory)
+            val verified = addToolEvidence(validated, enrichedInventory, providerResponse.toolResults)
+            response.copy(
+                summary = verified.architecture?.systemPurpose ?: response.summary,
+                steps = verified.steps,
+                architecture = verified.architecture,
+                learningPath = verified.learningPath,
+                entryStepId = verified.entryStepId,
+                terminalStepIds = verified.terminalStepIds,
+                edges = verified.edges,
+                analysisTrace = verified.analysisTrace,
+            )
+        } else {
+            response
         }
+        Result.success(MappingResult(validatedResponse, buildMetadata(providerResponse.metadata, validatedResponse)))
     }
 
     suspend fun answerStepQuestion(
@@ -143,30 +128,42 @@ class WalkthroughEngine(
         featureScope: FeatureScopeContext? = null,
         providerOverride: AiProvider? = null,
         onProgress: ((String) -> Unit)? = null,
-    ): Result<StepAnswerResult> {
+    ): Result<StepAnswerResult> = withProvider(providerOverride) { provider ->
+        val prompt = PromptEnvelopeFactory.buildStepQuestionPrompt(
+            question = question,
+            step = step,
+            mode = mode,
+            queryContext = queryContext,
+            followUpContext = followUpContext,
+            featureScope = featureScope,
+            providerCapabilities = provider.capabilities,
+            json = json,
+        )
+        val providerResponse = provider.query(prompt, PromptKind.WALKTHROUGH, onProgress)
+        val answer = decodeResponse(providerResponse.content).toStepAnswer()
+            ?: return@withProvider Result.failure(IllegalStateException("Unexpected response from LLM"))
+        Result.success(
+            StepAnswerResult(
+                answer = sanitizeStepAnswer(answer, step),
+                metadata = providerResponse.metadata,
+            ),
+        )
+    }
+
+    /**
+     * Owns the provider lifecycle and the failure mapping both entry points share: capability check,
+     * cancellation handle, and turning provider faults into a failed [Result] without losing an
+     * in-flight coroutine cancellation.
+     */
+    private suspend fun <T> withProvider(
+        providerOverride: AiProvider?,
+        block: suspend (LlmProvider) -> Result<T>,
+    ): Result<T> {
         val provider = providerFor(providerOverride ?: settings().provider)
         return try {
             requireRepoGroundedWalkthroughSupport(provider)
             activeProvider.set(provider)
-            val prompt = PromptEnvelopeFactory.buildStepQuestionPrompt(
-                question = question,
-                step = step,
-                mode = mode,
-                queryContext = queryContext,
-                followUpContext = followUpContext,
-                featureScope = featureScope,
-                providerCapabilities = provider.capabilities,
-                json = json,
-            )
-            val providerResponse = provider.query(prompt, PromptKind.WALKTHROUGH, onProgress)
-            val answer = decodeResponse(providerResponse.content).toStepAnswer()
-                ?: return Result.failure(IllegalStateException("Unexpected response from LLM"))
-            Result.success(
-                StepAnswerResult(
-                    answer = sanitizeStepAnswer(answer, step),
-                    metadata = providerResponse.metadata,
-                ),
-            )
+            block(provider)
         } catch (error: SerializationException) {
             currentCoroutineContext().ensureActive()
             Result.failure(IllegalStateException("Failed to parse response: ${error.message}", error))
