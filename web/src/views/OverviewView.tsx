@@ -13,13 +13,20 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
+import { ArchitectureDiagram } from '../ArchitectureDiagram';
 import {
-  ArchitectureDiagram,
   architectureEvidenceKey,
   componentResponsibilities,
+  evidenceBelongsToOwner,
+  hasCodeLocation,
+  lastSymbolPart,
+  methodBehavior,
+  methodLabel,
+  responsibilityBelongsToOwner,
   responsibilityOwners,
-  roleForKind,
-} from '../ArchitectureDiagram';
+  uniqueEvidence,
+} from '../architecture/evidence';
+import { humanize, roleForKind } from '../architecture/taxonomy';
 import type { RightPaneActions } from '../RightPane';
 import type {
   ArchitectureComponent,
@@ -408,7 +415,7 @@ function CodeOwnerRow({ owner, selected, onPreview }: {
               className="code-owner-method"
               disabled={!hasCodeLocation(method)}
               onClick={() => onPreview(method, behavior ?? `Method owned by ${evidence.label}.`)}
-            >{methodName(method.label)}</UnstyledButton>
+            >{methodLabel(method.label)}</UnstyledButton>
             {behavior !== undefined && <Text className="code-owner-method-behavior" size="xs" c="dimmed">{behavior}</Text>}
           </div>;
         })}
@@ -447,10 +454,6 @@ function deriveStages(stages: ReadonlyArray<LearningStage>, steps: ReadonlyArray
     component_ids: [],
     step_ids: steps.map((step) => step.id),
   }];
-}
-
-function humanize(value: string): string {
-  return value.replaceAll('_', ' ');
 }
 
 function codeOwners(
@@ -519,10 +522,6 @@ function callableEvidence(kind: string, label: string, path: string, item: Mecha
   };
 }
 
-function responsibilityBelongsToOwner(responsibility: ArchitectureResponsibility, owner: EvidenceItem): boolean {
-  return responsibility.evidence.some((evidence) => sameCodeOwner(evidence, owner) || evidenceBelongsToOwner(evidence, owner));
-}
-
 function ownerMatchesKeySymbols(owner: CodeOwner, keySymbols: ReadonlyArray<string>): boolean {
   const symbols = new Set(keySymbols);
   return symbols.has(owner.evidence.label) ||
@@ -539,29 +538,6 @@ function uniqueCodeOwners(owners: ReadonlyArray<CodeOwner>): ReadonlyArray<CodeO
   });
 }
 
-function uniqueEvidence(evidence: ReadonlyArray<EvidenceItem>): ReadonlyArray<EvidenceItem> {
-  const seen = new Set<string>();
-  return evidence.filter((item) => {
-    const key = architectureEvidenceKey(item);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function sameCodeOwner(left: EvidenceItem, right: EvidenceItem): boolean {
-  return left.kind === right.kind && left.label === right.label && left.file_path === right.file_path;
-}
-
-function evidenceBelongsToOwner(evidence: EvidenceItem, owner: EvidenceItem): boolean {
-  if (evidence.file_path !== owner.file_path || evidence.start_line === undefined || owner.start_line === undefined) {
-    return false;
-  }
-  const evidenceEnd = evidence.end_line ?? evidence.start_line;
-  const ownerEnd = owner.end_line ?? owner.start_line;
-  return evidence.start_line >= owner.start_line && evidenceEnd <= ownerEnd;
-}
-
 function modulesForComponent(
   inventory: MechanicalSymbolInventory,
   mappedPaths: ReadonlyArray<string>,
@@ -572,43 +548,10 @@ function modulesForComponent(
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function methodName(label: string): string {
-  const name = lastSymbolPart(label);
-  return name.endsWith('()') ? name : `${name}()`;
-}
-
-function methodBehavior(
-  method: EvidenceItem,
-  responsibilities: ReadonlyArray<ArchitectureResponsibility>,
-): string | undefined {
-  for (const responsibility of responsibilities) {
-    const evidence = responsibility.evidence.find((candidate) => candidate.kind === 'method' && sameMethod(candidate, method));
-    if (evidence?.text !== undefined) return evidence.text;
-    if (evidence !== undefined) return responsibility.description;
-  }
-  return method.text;
-}
-
-function sameMethod(left: EvidenceItem, right: EvidenceItem): boolean {
-  if (left.file_path !== right.file_path || lastSymbolPart(left.label) !== lastSymbolPart(right.label)) return false;
-  if (left.start_line === undefined || right.start_line === undefined) return true;
-  const leftEnd = left.end_line ?? left.start_line;
-  const rightEnd = right.end_line ?? right.start_line;
-  return left.start_line <= rightEnd && right.start_line <= leftEnd;
-}
-
-function lastSymbolPart(label: string): string {
-  return label.split('.').pop() ?? label;
-}
-
 function stepsForComponent(component: ArchitectureComponent, steps: ReadonlyArray<FlowStep>): ReadonlyArray<FlowStep> {
   const paths = new Set(component.key_paths);
   const symbols = new Set(component.key_symbols);
   return steps.filter((step) => paths.has(step.file_path) || (step.symbol !== undefined && symbols.has(step.symbol)));
-}
-
-function hasCodeLocation(evidence: EvidenceItem): boolean {
-  return evidence.file_path !== undefined && evidence.start_line !== undefined;
 }
 
 function formatCount(value: number, singular: string, plural = `${singular}s`): string {

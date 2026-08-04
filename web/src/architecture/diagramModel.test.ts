@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import { createArchitectureDiagramModel } from './ArchitectureDiagram';
-import type { CodebaseArchitecture } from './types';
+import { createArchitectureDiagramModel } from './diagramModel';
+import type { CodebaseArchitecture } from '../types';
 
 const architecture: CodebaseArchitecture = {
   system_purpose: 'Process a request and store its result.',
