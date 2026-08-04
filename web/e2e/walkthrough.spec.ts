@@ -73,6 +73,21 @@ const flow = {
         collaborator_component_ids: ['entrypoint'],
         relationship_ids: ['entrypoint-application'],
         uncertain: false,
+      }, {
+        id: 'expose-lifecycle',
+        title: 'Expose lifecycle state',
+        description: 'Keeps the validated lifecycle entry visible to the walkthrough.',
+        evidence: [{
+          kind: 'method',
+          label: 'start',
+          file_path: 'src/Main.kt',
+          start_line: 6,
+          end_line: 6,
+          text: 'Exposes the application lifecycle operation.',
+        }],
+        collaborator_component_ids: [],
+        relationship_ids: [],
+        uncertain: false,
       }],
       key_paths: ['src/Main.kt'],
       key_symbols: ['ApplicationRunner', 'start'],
@@ -243,12 +258,17 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   expect(detailsBox).not.toBeNull();
   expect(diagramBox!.x).toBeLessThan(detailsBox!.x);
   await expect(page.getByText('Run an application from a local entrypoint.', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /AST-grounded Explore implementation · 1 class · 1 function · 1 method/ })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Code files' })).toBeVisible();
   await page.getByLabel('Architecture depth').getByText('Component', { exact: true }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Program entrypoint, Accept process startup/ }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Application, Coordinate the application run/ }).click();
+  const responsibilityRows = page.locator('.responsibility-table-row');
+  await expect(responsibilityRows).toHaveCount(2);
+  const responsibilityBoxes = await responsibilityRows.evaluateAll((rows) =>
+    rows.map((row) => row.getBoundingClientRect().height));
+  expect(Math.abs(responsibilityBoxes[0]! - responsibilityBoxes[1]!)).toBeLessThan(1);
   const ownerButton = page.getByRole('button', { name: 'class ApplicationRunner' });
   const [ownerNameBox, ownerKindBox] = await Promise.all([
     ownerButton.locator('code').boundingBox(),
@@ -257,11 +277,12 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   expect(ownerNameBox).not.toBeNull();
   expect(ownerKindBox).not.toBeNull();
   expect(ownerNameBox!.x + ownerNameBox!.width).toBeLessThanOrEqual(ownerKindBox!.x);
-  await page.getByRole('tab', { name: 'Implementation (2)' }).click();
+  await page.getByRole('tab', { name: 'Code files' }).click();
   const structure = page.getByLabel('Mechanical code structure');
-  await expect(structure.getByText('ApplicationRunner', { exact: true })).toBeVisible();
-  await expect(structure.getByText('ApplicationRunner.start()')).toBeVisible();
-  await page.getByRole('tab', { name: 'Responsibilities (1)' }).click();
+  await expect(structure.getByText('src/Main.kt', { exact: true })).toBeVisible();
+  await expect(structure.getByText('1 class · 1 function · 1 method')).toBeVisible();
+  await expect(structure.getByText('ApplicationRunner.start()')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Responsibilities (2)' }).click();
   await page.getByRole('button', { name: 'class ApplicationRunner' }).click();
   await expect(page.getByRole('heading', { name: 'Application runner' })).toBeVisible();
   await expect(page.getByText('Implementation details')).toBeVisible();

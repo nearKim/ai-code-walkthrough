@@ -362,7 +362,7 @@ function createComponentModel(
 
   return {
     level: 'component',
-    rankDirection: 'LR',
+    rankDirection: architecture.components.length >= 6 ? 'TB' : 'LR',
     caption: `All ${architecture.components.length} components stay visible. ${directCount} ${directCount === 1 ? 'connection touches' : 'connections touch'} ${component.name}; select any component to inspect it.`,
     nodes: architecture.components.map((candidate) => ({
       id: candidate.id,
@@ -482,7 +482,7 @@ function createResponsibilityModel(
 
   return {
     level: 'responsibilities',
-    rankDirection: 'LR',
+    rankDirection: nodes.length >= 7 ? 'TB' : 'LR',
     caption: responsibilities.length === 0
       ? `${component.name} has no structured responsibility mapping; remap the repository to generate one.`
       : `${responsibilities.length} grounded ${responsibilities.length === 1 ? 'responsibility' : 'responsibilities'} for ${component.name}. Select a code owner for method and state detail.`,

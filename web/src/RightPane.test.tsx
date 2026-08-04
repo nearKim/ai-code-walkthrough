@@ -211,12 +211,13 @@ test('explains component roles and links details to validated code', async () =>
   expect(within(selectedComponent).getByRole('heading', { name: 'Experiment application' })).toBeVisible();
   expect(screen.queryByText('Selected component')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Choose component')).not.toBeInTheDocument();
-  await waitFor(() => expect(screen.getByText('Explore implementation · 1 class · 1 function · 1 method')).toBeVisible());
-  fireEvent.click(screen.getByRole('tab', { name: 'Implementation (2)' }));
+  await waitFor(() => expect(screen.getByRole('tab', { name: 'Code files' })).toBeVisible());
+  fireEvent.click(screen.getByRole('tab', { name: 'Code files' }));
   const structure = screen.getByLabelText('Mechanical code structure');
   expect(structure).toBeVisible();
-  expect(within(structure).getByText('ExperimentRunner')).toBeVisible();
-  expect(within(structure).getByText('ExperimentRunner.run()')).toBeVisible();
+  expect(within(structure).getByText('src/app.ts')).toBeVisible();
+  expect(within(structure).getByText('1 class · 1 function · 1 method')).toBeVisible();
+  expect(within(structure).queryByText('ExperimentRunner.run()')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: 'Responsibilities (1)' }));
   fireEvent.click(screen.getByRole('button', { name: 'class ExperimentRunner' }));
   const ownerDetail = screen.getByLabelText('Code owner detail');

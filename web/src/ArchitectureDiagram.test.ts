@@ -110,6 +110,17 @@ test('builds stable architecture and responsibility diagrams', () => {
   ]);
   expect(component.edges.map((edge) => edge.label)).toEqual(['calls', 'writes']);
   expect(component.caption).toContain('All 4 components stay visible');
+  expect(component.rankDirection).toBe('LR');
+
+  const wide = createArchitectureDiagramModel({
+    ...architecture,
+    components: [
+      ...architecture.components,
+      { ...architecture.components[0], id: 'queue', name: 'Work queue' },
+      { ...architecture.components[0], id: 'worker', name: 'Background worker' },
+    ],
+  }, 'component', 'application');
+  expect(wide.rankDirection).toBe('TB');
 
   const responsibilities = createArchitectureDiagramModel(architecture, 'responsibilities', 'application');
   expect(responsibilities.nodes.map((node) => node.label)).toEqual([
