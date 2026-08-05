@@ -337,7 +337,7 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   await page.getByRole('button', { name: 'Walk this section' }).click();
   await expect(page.getByText('Section · Authentication')).toBeVisible();
   await expect(page.getByText('Step 1/1')).toBeVisible();
-  await page.getByRole('button', { name: 'End tour' }).click();
+  await page.getByRole('button', { name: 'Back to overview' }).click();
   await expect(page.getByText('Walkthrough ready')).toBeVisible();
   await page.setViewportSize({ width: 800, height: 900 });
   const [diagramBox, detailsBox] = await Promise.all([
