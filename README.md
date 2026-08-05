@@ -1,14 +1,15 @@
 # AI Code Walkthrough
 
-AI Code Walkthrough is an IntelliJ Platform plugin and local web application for learning an unfamiliar repository from the outside in. It maps the system architecture and component relationships first, builds a staged learning path, and then walks the validated code stops in a read-only editor.
+AI Code Walkthrough is an IntelliJ Platform plugin and local web application for learning an unfamiliar repository from the outside in. It maps the system architecture and component relationships first, presents grounded diagram sections for system, component, and feature views, and then walks the validated code stops in a read-only editor.
 
 ## Learning workflow
 
 1. **Map the architecture** — identify the system purpose, major components, ownership boundaries, and representative paths.
 2. **Inspect responsibilities** — map each component outcome to its owning interface, class, or function, then drill into the important methods, state, and collaborators.
-3. **Follow a curriculum** — progress from system orientation through component responsibilities to representative end-to-end execution paths.
-4. **Read the real code** — open validated symbols and line ranges with editor explanations, important-line annotations, and next-hop previews.
-5. **Interrogate each step** — ask scoped follow-up questions without remapping the repository.
+3. **Choose a diagram section** — switch between system overview, component map, and feature walkthrough views, each anchored to verified components and code stops.
+4. **Follow a curriculum** — progress from system orientation through component responsibilities to representative end-to-end execution paths.
+5. **Read the real code** — open validated symbols and line ranges with editor explanations, important-line annotations, and next-hop previews.
+6. **Interrogate each step** — ask scoped follow-up questions without remapping the repository.
 
 Choose **Learn** and leave the prompt blank to generate a whole-codebase lesson. Add a prompt to focus the architecture and curriculum on a subsystem or behavior. **Review** and **Trace** remain available for risk-oriented and concrete execution-path walkthroughs.
 
@@ -25,6 +26,7 @@ The persisted Python analysis is authoritative; the model selects a teaching rou
 - Component anchors and responsibility code owners must resolve to real project files and lines.
 - Step files, symbols, line annotations, evidence, and next-hop call sites are checked or repaired.
 - Invalid responsibility collaborators, component relationships, and learning-stage references are removed.
+- Diagram sections retain only validated component and step IDs. Their scoped tours cannot advance to a code stop outside the selected section.
 - Coverage notes identify areas that were intentionally excluded or not inspected deeply.
 
 Grounded mapping currently accepts Python targets only. The plugin targets IntelliJ Platform 2025.2 or newer.
@@ -41,7 +43,7 @@ Building the web application requires Node.js 22.13 or newer. Run one repository
 ./web-server/build/install/ai-code-walkthrough/bin/ai-code-walkthrough /path/to/repository
 ```
 
-The server binds to `127.0.0.1`, opens the browser, and serves a resizable split view: local source and temporary line explanations on the left, walkthrough controls on the right. Add `--no-open` or `--port 8080` inside the `--args` value when needed. CLI providers are launched with read-only repository access; browser source requests are restricted to existing UTF-8 files inside the selected repository.
+The server binds to `127.0.0.1`, opens the browser, and serves a resizable split view: local source and temporary line explanations on the left, walkthrough controls on the right. Its overview includes interactive system, component, and feature diagrams; a technical-reference HTML export packages the same validated map for offline sharing. Add `--no-open` or `--port 8080` inside the `--args` value when needed. CLI providers are launched with read-only repository access; browser source requests are restricted to existing UTF-8 files inside the selected repository.
 
 ## Build and test
 

@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.IOException
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicLong
 
@@ -27,10 +28,12 @@ class WebSession(
     projectRoot: Path,
     private val settingsStore: WebSettingsStore,
     private val engine: WalkthroughEngine,
+    private val sessionStore: WebSessionStore = WebSessionStore(projectRoot),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : AutoCloseable {
 
     private val root = projectRoot.toAbsolutePath().normalize()
+    private val restored = sessionStore.load()
     private val lock = Any()
     private val navigator = TourNavigator()
     private val requestGeneration = AtomicLong()
@@ -43,22 +46,33 @@ class WebSession(
 
     val events: SharedFlow<OutboundEvent> = mutableEvents
 
-    private var state = TourState.INPUT
-    private var question: String? = null
-    private var mode = settingsStore.get().defaultMode
-    private var provider = settingsStore.get().provider
-    private var flowMap: FlowMap? = null
-    private var metadata: ResponseMetadata? = null
+    private var state = restoredState(restored)
+    private var question: String? = restored?.question
+    private var mode = restored?.mode?.let(AnalysisMode::fromId) ?: settingsStore.get().defaultMode
+    private var provider = restored?.provider?.let(AiProvider::fromId) ?: settingsStore.get().provider
+    private var flowMap: FlowMap? = restored?.flowMap
+    private var metadata: ResponseMetadata? = restored?.metadata
     private var errorMessage: String? = null
-    private var currentStepIndex = -1
-    private var previewStepIndex = -1
-    private var stepAnswer: StepAnswer? = null
+    private var currentStepIndex = restored?.currentStepIndex?.takeIf { restored.flowMap.hasStepAt(it) } ?: -1
+    private var previewStepIndex = restored?.previewStepIndex?.takeIf { restored.flowMap.hasStepAt(it) } ?: -1
+    private var stepAnswer: StepAnswer? = restored?.stepAnswer
     private var stepAnswerLoading = false
-    private var stepAnswerError: String? = null
-    private var followUpContext: FollowUpContext? = null
-    private val history = mutableListOf<Int>()
+    private var stepAnswerError: String? = restored?.stepAnswerError
+    private var followUpContext: FollowUpContext? = restored?.flowMap?.let { FollowUpContext(question.orEmpty(), it, restored.activeStepId) }
+    private var activeSectionId: String? = restored?.activeSectionId?.takeIf { sectionId ->
+        restored.flowMap?.diagramSections?.any { it.id == sectionId } == true
+    }
+    private val history = restoredHistory(restored)
     private val progressLines = ArrayDeque<String>()
     private var mappingJob: Job? = null
+
+    init {
+        if (state == TourState.TOUR_ACTIVE && currentStepIndex < 0) state = TourState.OVERVIEW
+        if (state == TourState.TOUR_ACTIVE && history.isEmpty()) history += currentStepIndex
+        if (state != TourState.TOUR_ACTIVE || allowedStepIds(flowMap, activeSectionId).isNullOrEmpty()) {
+            activeSectionId = null
+        }
+    }
 
     fun snapshot(): SessionSnapshot = synchronized(lock, ::snapshotLocked)
 
@@ -81,6 +95,7 @@ class WebSession(
             stepAnswerLoading = false
             stepAnswerError = null
             followUpContext = null
+            activeSectionId = null
             history.clear()
             progressLines.clear()
         }
@@ -131,6 +146,7 @@ class WebSession(
             stepAnswerLoading = false
             stepAnswerError = null
             followUpContext = FollowUpContext(SampleWalkthrough.question, sample)
+            activeSectionId = null
             history.clear()
             progressLines.clear()
             state = TourState.OVERVIEW
@@ -154,9 +170,10 @@ class WebSession(
         }
     }
 
-    fun tour(action: String, stepId: String?): Result<SessionSnapshot> = runCatching {
+    fun tour(action: String, stepId: String?, sectionId: String? = null): Result<SessionSnapshot> = runCatching {
         when (action) {
             "start" -> startTour(stepId)
+            "start_section" -> startSection(sectionId ?: throw IllegalArgumentException("section_id is required for start_section"))
             "preview" -> preview(stepId ?: throw IllegalArgumentException("step_id is required for preview"))
             "next" -> next()
             "previous" -> previous()
@@ -211,20 +228,30 @@ class WebSession(
         )
     }
 
-    private fun startTour(requestedStepId: String?): SessionSnapshot {
+    private fun startSection(sectionId: String): SessionSnapshot = startTour(null, sectionId)
+
+    private fun startTour(requestedStepId: String?, sectionId: String? = null): SessionSnapshot {
         val currentFlow = synchronized(lock) { flowMap } ?: throw IllegalStateException("No walkthrough is mapped")
+        val allowedStepIds = allowedStepIds(currentFlow, sectionId)
+        if (sectionId != null && allowedStepIds.isNullOrEmpty()) {
+            throw IllegalArgumentException("Section has no navigable code stops: $sectionId")
+        }
         val requestedIndex = requestedStepId?.let { id -> currentFlow.steps.indexOfFirst { it.id == id } }
             ?.takeIf { it >= 0 }
+            ?: allowedStepIds?.firstNotNullOfOrNull { id ->
+                currentFlow.steps.indexOfFirst { it.id == id }.takeIf { it >= 0 }
+            }
             ?: currentFlow.entryStepId?.let { id -> currentFlow.steps.indexOfFirst { it.id == id } }
             ?.takeIf { it >= 0 }
             ?: 0
-        val index = navigator.findNextNavigableStepIndex(currentFlow, requestedIndex)
+        val index = navigator.findNextNavigableStepIndex(currentFlow, requestedIndex, allowedStepIds)
             ?: throw IllegalStateException("The walkthrough contains no navigable steps")
         answerGeneration.incrementAndGet()
         return mutate {
             state = TourState.TOUR_ACTIVE
             currentStepIndex = index
             previewStepIndex = -1
+            activeSectionId = sectionId
             history.clear()
             history += index
             clearAnswerLocked()
@@ -245,9 +272,10 @@ class WebSession(
     private fun next(): SessionSnapshot {
         val currentFlow = synchronized(lock) { flowMap } ?: throw IllegalStateException("No walkthrough is mapped")
         if (state != TourState.TOUR_ACTIVE) throw IllegalStateException("The guided tour is not active")
+        val allowedStepIds = allowedStepIds(currentFlow, activeSectionId)
         val visited = history.mapNotNull { currentFlow.steps.getOrNull(it)?.id }.toSet()
-        val nextIndex = navigator.findPreferredNextNavigableStepIndex(currentFlow, currentStepIndex, visited)
-            ?: navigator.findNextNavigableStepIndex(currentFlow, currentStepIndex + 1)
+        val nextIndex = navigator.findPreferredNextNavigableStepIndex(currentFlow, currentStepIndex, visited, allowedStepIds)
+            ?: navigator.findNextNavigableStepIndex(currentFlow, currentStepIndex + 1, allowedStepIds)
             ?: return stopTour()
         answerGeneration.incrementAndGet()
         return mutate {
@@ -277,6 +305,7 @@ class WebSession(
             state = TourState.OVERVIEW
             currentStepIndex = -1
             previewStepIndex = -1
+            activeSectionId = null
             history.clear()
             clearAnswerLocked()
         }
@@ -288,6 +317,7 @@ class WebSession(
             state = TourState.INPUT
             currentStepIndex = -1
             previewStepIndex = -1
+            activeSectionId = null
             history.clear()
             clearAnswerLocked()
         }
@@ -312,10 +342,12 @@ class WebSession(
     }
 
     private fun mutate(block: WebSession.() -> Unit): SessionSnapshot {
-        val snapshot = synchronized(lock) {
+        val (snapshot, stored) = synchronized(lock) {
             block()
-            snapshotLocked()
+            val snapshot = snapshotLocked()
+            snapshot to storedSessionLocked()
         }
+        persist(stored)
         emit(snapshot)
         return snapshot
     }
@@ -334,9 +366,10 @@ class WebSession(
         } else {
             emptySet()
         }
-        val nextEdge = displayedStep?.let { navigator.preferredNextHop(flowMap, it.id, visited) }
+        val allowedStepIds = allowedStepIds(flowMap, activeSectionId)
+        val nextEdge = displayedStep?.let { navigator.preferredNextHop(flowMap, it.id, visited, allowedStepIds) }
         val nextStep = nextEdge?.let { edge -> flowMap?.steps?.firstOrNull { it.id == edge.toStepId } }
-            ?: navigator.findNextNavigableStepIndex(flowMap, displayedIndex + 1)?.let { flowMap?.steps?.get(it) }
+            ?: navigator.findNextNavigableStepIndex(flowMap, displayedIndex + 1, allowedStepIds)?.let { flowMap?.steps?.get(it) }
         return SessionSnapshot(
             state = state.name,
             repository = root.fileName?.toString() ?: root.toString(),
@@ -358,6 +391,7 @@ class WebSession(
             errorMessage = errorMessage,
             progressLines = progressLines.toList(),
             canPrevious = history.size > 1,
+            activeSectionId = activeSectionId,
         )
     }
 
@@ -372,6 +406,39 @@ class WebSession(
         followUpContext = followUpContext?.copy(activeStepId = step.id)
     }
 
+    private fun storedSessionLocked(): StoredWebSession? {
+        val currentFlow = flowMap ?: return null
+        if (state == TourState.LOADING) return null
+        return StoredWebSession(
+            repositoryPath = root.toString(),
+            state = state.name,
+            question = question,
+            mode = mode.id,
+            provider = provider.id,
+            flowMap = currentFlow,
+            metadata = metadata,
+            currentStepIndex = currentStepIndex,
+            previewStepIndex = previewStepIndex,
+            stepAnswer = stepAnswer,
+            stepAnswerError = stepAnswerError,
+            activeStepId = followUpContext?.activeStepId,
+            activeSectionId = activeSectionId,
+            historyStepIds = history.mapNotNull { currentFlow.steps.getOrNull(it)?.id },
+        )
+    }
+
+    private fun persist(stored: StoredWebSession?) {
+        if (stored == null) return
+        try {
+            sessionStore.save(stored)
+        } catch (error: IOException) {
+            System.err.println("Could not persist web session: ${error.message}")
+        }
+    }
+
+    private fun allowedStepIds(flowMap: FlowMap?, sectionId: String?): Set<String>? =
+        sectionId?.let { id -> flowMap?.diagramSections?.firstOrNull { it.id == id }?.stepIds?.toSet() }
+
     override fun close() {
         requestGeneration.incrementAndGet()
         answerGeneration.incrementAndGet()
@@ -382,4 +449,20 @@ class WebSession(
     companion object {
         private const val MAX_PROGRESS_LINES = 200
     }
+}
+
+private fun restoredState(stored: StoredWebSession?): TourState {
+    if (stored?.flowMap == null) return TourState.INPUT
+    return TourState.entries.firstOrNull { it.name == stored.state }
+        ?.takeUnless { it == TourState.LOADING }
+        ?: TourState.OVERVIEW
+}
+
+private fun FlowMap?.hasStepAt(index: Int): Boolean = this != null && index in steps.indices
+
+private fun restoredHistory(stored: StoredWebSession?): MutableList<Int> {
+    val flowMap = stored?.flowMap ?: return mutableListOf()
+    return stored.historyStepIds.mapNotNull { id ->
+        flowMap.steps.indexOfFirst { it.id == id }.takeIf { it >= 0 }
+    }.toMutableList()
 }

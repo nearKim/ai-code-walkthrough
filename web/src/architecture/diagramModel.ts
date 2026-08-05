@@ -17,7 +17,17 @@ import {
   type DiagramTone,
 } from './taxonomy';
 
-export type ArchitectureDepth = 'context' | 'containers' | 'components' | 'code';
+export type ArchitectureDepth = 'context' | 'runtime' | 'components' | 'code';
+
+export interface RuntimeCoverageGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly description: string;
+  readonly componentIds: ReadonlyArray<string>;
+  readonly runtimeIds: ReadonlyArray<string>;
+  readonly tone: DiagramTone;
+}
 
 export interface DiagramNode {
   readonly id: string;
@@ -29,6 +39,7 @@ export interface DiagramNode {
   readonly containerId?: string;
   readonly ownerKey?: string;
   readonly evidence?: EvidenceItem;
+  readonly boundary?: boolean;
 }
 
 export interface DiagramEdge {
@@ -52,8 +63,8 @@ export interface ArchitectureDiagramModel {
 export function availableArchitectureDepths(architecture: CodebaseArchitecture): ReadonlyArray<ArchitectureDepth> {
   const containers = architecture.containers ?? [];
   return [
-    ...(containers.length > 0 ? ['context' as const] : []),
-    ...(containers.length > 1 ? ['containers' as const] : []),
+    'context' as const,
+    ...(containers.length > 0 ? ['runtime' as const] : []),
     'components' as const,
     'code' as const,
   ];
@@ -63,77 +74,194 @@ export function createArchitectureDiagramModel(
   architecture: CodebaseArchitecture,
   level: ArchitectureDepth,
   selectedComponentId: string,
+  selectedRuntimeId?: string,
+  focusedComponentIds?: ReadonlyArray<string>,
 ): ArchitectureDiagramModel {
-  if (level === 'context') return createContextModel(architecture);
-  if (level === 'containers') return createContainerModel(architecture);
-  if (level === 'components') return createComponentModel(architecture, selectedComponentId);
+  const focus = componentFocus(architecture, focusedComponentIds);
+  if (level === 'context') return createContextModel(architecture, focus);
+  if (level === 'runtime') return createRuntimeModel(architecture, selectedRuntimeId, focus);
+  if (level === 'components') return createComponentModel(architecture, selectedComponentId, focus);
   return createCodeModel(architecture, selectedComponentId);
 }
 
-function createContextModel(architecture: CodebaseArchitecture): ArchitectureDiagramModel {
-  const containers = architecture.containers ?? [];
-  const grouped = new Map<string, typeof containers>();
-  containers.forEach((container) => grouped.set(container.kind, [...(grouped.get(container.kind) ?? []), container]));
-  const systemId = 'context:system';
-  const nodes: DiagramNode[] = [{
-    id: systemId,
-    label: architecture.system_name ?? 'Analyzed system',
-    detail: architecture.system_purpose,
-    description: architecture.system_purpose,
-    tone: 'primary',
-  }];
-  const edges: DiagramEdge[] = [];
-  [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)).forEach(([kind, entries]) => {
-    const actorId = `context:actor:${kind}`;
-    const entryNames = entries.map((entry) => entry.name).join(', ');
-    nodes.push({
-      id: actorId,
-      label: actorLabel(kind),
-      detail: entryNames,
-      description: `Uses the system through ${entryNames}.`,
-      tone: kind === 'mcp_server' ? 'dependency' : 'neutral',
-    });
-    edges.push({
-      id: `${actorId}:${systemId}`,
-      from: actorId,
-      to: systemId,
-      label: entryNames,
-      tone: kind === 'mcp_server' ? 'dependency' : 'primary',
-      uncertain: entries.some((entry) => entry.uncertain),
-    });
+interface ComponentFocus {
+  readonly selectedIds: ReadonlySet<string>;
+  readonly visibleIds: ReadonlySet<string>;
+  readonly boundaryIds: ReadonlySet<string>;
+}
+
+function componentFocus(
+  architecture: CodebaseArchitecture,
+  focusedComponentIds?: ReadonlyArray<string>,
+): ComponentFocus | undefined {
+  if (focusedComponentIds === undefined || focusedComponentIds.length === 0) return undefined;
+  const knownIds = new Set(architecture.components.map((component) => component.id));
+  const selectedIds = new Set(focusedComponentIds.filter((id) => knownIds.has(id)));
+  if (selectedIds.size === 0) return undefined;
+  const visibleIds = new Set(selectedIds);
+  for (const relationship of architecture.relationships) {
+    if (selectedIds.has(relationship.from_component_id)) visibleIds.add(relationship.to_component_id);
+    if (selectedIds.has(relationship.to_component_id)) visibleIds.add(relationship.from_component_id);
+  }
+  return {
+    selectedIds,
+    visibleIds,
+    boundaryIds: new Set([...visibleIds].filter((id) => !selectedIds.has(id))),
+  };
+}
+
+function createContextModel(
+  architecture: CodebaseArchitecture,
+  focus?: ComponentFocus,
+): ArchitectureDiagramModel {
+  const groups = runtimeCoverageGroups(architecture, focus?.visibleIds);
+  const groupByComponent = new Map(groups.flatMap((group) =>
+    group.componentIds.map((componentId) => [componentId, group.id] as const)));
+  const aggregated = new Map<string, { from: string; to: string; kinds: Set<string>; uncertain: boolean }>();
+  architecture.relationships.forEach((relationship) => {
+    if (focus !== undefined && (!focus.visibleIds.has(relationship.from_component_id) || !focus.visibleIds.has(relationship.to_component_id))) return;
+    const from = groupByComponent.get(relationship.from_component_id);
+    const to = groupByComponent.get(relationship.to_component_id);
+    if (from === undefined || to === undefined || from === to) return;
+    const id = `${from}->${to}`;
+    const current = aggregated.get(id) ?? { from, to, kinds: new Set<string>(), uncertain: false };
+    current.kinds.add(relationship.kind);
+    current.uncertain ||= relationship.uncertain;
+    aggregated.set(id, current);
   });
   return {
     level: 'context',
     rankDirection: 'LR',
-    caption: `${architecture.system_name ?? 'The system'} and its verified entry surfaces.`,
-    nodes,
-    edges,
+    caption: focus === undefined
+      ? `${architecture.components.length} components grouped by verified runtime reachability.`
+      : focusedCaption(focus),
+    nodes: groups.map((group) => ({
+      id: group.id,
+      label: group.label,
+      detail: group.detail,
+      description: group.description,
+      tone: group.tone,
+    })),
+    edges: [...aggregated.entries()].map(([id, relationship]) => ({
+      id: `context:${id}`,
+      from: relationship.from,
+      to: relationship.to,
+      label: [...relationship.kinds].map(humanize).join(' / '),
+      tone: toneForRelationships(relationship.kinds),
+      uncertain: relationship.uncertain,
+    })),
   };
 }
 
-function createContainerModel(architecture: CodebaseArchitecture): ArchitectureDiagramModel {
-  const containers = architecture.containers ?? [];
+function createRuntimeModel(
+  architecture: CodebaseArchitecture,
+  selectedRuntimeId?: string,
+  focus?: ComponentFocus,
+): ArchitectureDiagramModel {
+  const runtime = architecture.containers?.find((candidate) => candidate.id === selectedRuntimeId)
+    ?? architecture.containers?.[0];
+  if (runtime === undefined) {
+    return { level: 'runtime', rankDirection: 'LR', caption: 'No verified runtime entrypoints.', nodes: [], edges: [] };
+  }
+  const componentIds = new Set(runtime.component_ids);
+  const components = architecture.components.filter((component) =>
+    componentIds.has(component.id) && (focus === undefined || focus.visibleIds.has(component.id)));
+  const entryPath = runtime.evidence.find((item) => item.kind === 'module')?.file_path;
+  const entryComponent = entryPath === undefined
+    ? undefined
+    : components.find((component) => component.key_paths.includes(entryPath));
+  const runtimeNodeId = `runtime:${runtime.id}`;
+  const relationships = architecture.relationships.filter((relationship) =>
+    componentIds.has(relationship.from_component_id) && componentIds.has(relationship.to_component_id) &&
+    (focus === undefined || (focus.visibleIds.has(relationship.from_component_id) && focus.visibleIds.has(relationship.to_component_id))));
   return {
-    level: 'containers',
+    level: 'runtime',
     rankDirection: 'LR',
-    caption: `${containers.length} independently invokable runtime applications found in project metadata.`,
-    nodes: containers.map((container) => ({
-      id: container.id,
-      label: container.name,
-      detail: `${humanize(container.kind)} · ${container.component_ids.length} components`,
-      description: container.responsibility,
-      tone: container.kind === 'mcp_server' ? 'dependency' : 'primary',
-      containerId: container.id,
-    })),
-    edges: [],
+    caption: focus === undefined
+      ? `${runtime.name} reaches ${components.length} components through ${relationships.length} verified package dependencies.`
+      : `${runtime.name}: ${focusedCaption(focus)}`,
+    nodes: [{
+      id: runtimeNodeId,
+      label: runtime.name,
+      detail: humanize(runtime.kind),
+      description: runtime.responsibility,
+      tone: runtime.kind === 'mcp_server' ? 'dependency' : 'primary',
+      containerId: runtime.id,
+    }, ...components.map((component) => ({
+      id: component.id,
+      label: component.name,
+      detail: component.responsibility,
+      description: component.responsibility,
+      tone: toneForKind(component.kind),
+      componentId: component.id,
+      boundary: focus?.boundaryIds.has(component.id),
+    }))],
+    edges: [
+      ...(entryComponent === undefined ? [] : [{
+        id: `${runtimeNodeId}:${entryComponent.id}`,
+        from: runtimeNodeId,
+        to: entryComponent.id,
+        label: 'starts',
+        tone: 'primary' as const,
+      }]),
+      ...relationships.map((relationship) => ({
+        id: `runtime:${relationship.id}`,
+        from: relationship.from_component_id,
+        to: relationship.to_component_id,
+        label: humanize(relationship.kind),
+        tone: toneForRelationships(new Set([relationship.kind])),
+        uncertain: relationship.uncertain,
+      })),
+    ],
   };
+}
+
+export function runtimeCoverageGroups(
+  architecture: CodebaseArchitecture,
+  componentIds?: ReadonlySet<string>,
+): ReadonlyArray<RuntimeCoverageGroup> {
+  const runtimes = architecture.containers ?? [];
+  const grouped = new Map<string, ArchitectureComponent[]>();
+  architecture.components.filter((component) => componentIds === undefined || componentIds.has(component.id)).forEach((component) => {
+    const runtimeIds = runtimes
+      .filter((runtime) => runtime.component_ids.includes(component.id))
+      .map((runtime) => runtime.id)
+      .sort();
+    const key = runtimeIds.join('|');
+    grouped.set(key, [...(grouped.get(key) ?? []), component]);
+  });
+  return [...grouped.entries()].map<RuntimeCoverageGroup>(([key, components]) => {
+    const runtimeIds = key.length === 0 ? [] : key.split('|');
+    const matchingRuntimes = runtimes.filter((runtime) => runtimeIds.includes(runtime.id));
+    const label = runtimeIds.length === 0
+      ? 'Outside declared runtimes'
+      : runtimeIds.length === runtimes.length && runtimes.length > 1
+        ? 'Shared runtime core'
+        : `${matchingRuntimes.map((runtime) => runtime.name).join(' + ')} runtime`;
+    return {
+      id: `context:${key || 'unreached'}`,
+      label,
+      detail: `${components.length} ${components.length === 1 ? 'component' : 'components'}`,
+      description: components.map((component) => component.name).join(', '),
+      componentIds: components.map((component) => component.id),
+      runtimeIds,
+      tone: runtimeIds.length === 0 ? 'neutral' : runtimeIds.length > 1 ? 'data' : 'primary',
+    };
+  }).sort((left, right) => {
+    if (left.runtimeIds.length === 0) return 1;
+    if (right.runtimeIds.length === 0) return -1;
+    return left.label.localeCompare(right.label);
+  });
 }
 
 function createComponentModel(
   architecture: CodebaseArchitecture,
   selectedComponentId: string,
+  focus?: ComponentFocus,
 ): ArchitectureDiagramModel {
-  const component = selectedComponent(architecture, selectedComponentId);
+  const components = architecture.components.filter((candidate) =>
+    focus === undefined || focus.visibleIds.has(candidate.id));
+  const component = components.find((candidate) => candidate.id === selectedComponentId) ?? components[0];
   if (component === undefined) {
     return { level: 'components', rankDirection: 'LR', caption: 'No grounded components.', nodes: [], edges: [] };
   }
@@ -144,6 +272,8 @@ function createComponentModel(
     uncertain: boolean;
   }>();
   for (const relationship of architecture.relationships) {
+    if (!components.some((candidate) => candidate.id === relationship.from_component_id) ||
+      !components.some((candidate) => candidate.id === relationship.to_component_id)) continue;
     const key = `${relationship.from_component_id}->${relationship.to_component_id}`;
     const current = aggregated.get(key) ?? {
       from: relationship.from_component_id,
@@ -160,15 +290,18 @@ function createComponentModel(
 
   return {
     level: 'components',
-    rankDirection: architecture.components.length >= 6 ? 'TB' : 'LR',
-    caption: `All ${architecture.components.length} components stay visible. ${directCount} ${directCount === 1 ? 'connection touches' : 'connections touch'} ${component.name}.`,
-    nodes: architecture.components.map((candidate) => ({
+    rankDirection: components.length >= 6 ? 'TB' : 'LR',
+    caption: focus === undefined
+      ? `All ${components.length} components stay visible. ${directCount} ${directCount === 1 ? 'connection touches' : 'connections touch'} ${component.name}.`
+      : `${focusedCaption(focus)} ${directCount} ${directCount === 1 ? 'connection touches' : 'connections touch'} ${component.name}.`,
+    nodes: components.map((candidate) => ({
       id: candidate.id,
       label: candidate.name,
       detail: candidate.responsibility,
       description: candidate.responsibility,
       tone: toneForKind(candidate.kind),
       componentId: candidate.id,
+      boundary: focus?.boundaryIds.has(candidate.id),
     })),
     edges: [...aggregated.entries()].map(([id, relationship]) => ({
       id: `component:${id}`,
@@ -180,6 +313,14 @@ function createComponentModel(
       muted: relationship.from !== component.id && relationship.to !== component.id,
     })),
   };
+}
+
+function focusedCaption(focus: ComponentFocus): string {
+  const selected = focus.selectedIds.size;
+  const boundaries = focus.boundaryIds.size;
+  return `Showing ${selected} selected ${selected === 1 ? 'component' : 'components'}${boundaries === 0
+    ? ''
+    : ` and ${boundaries} direct ${boundaries === 1 ? 'collaborator' : 'collaborators'}`}.`;
 }
 
 function createCodeModel(
@@ -274,12 +415,6 @@ function createCodeModel(
 
 function selectedComponent(architecture: CodebaseArchitecture, selectedComponentId: string): ArchitectureComponent | undefined {
   return architecture.components.find((candidate) => candidate.id === selectedComponentId) ?? architecture.components[0];
-}
-
-function actorLabel(kind: string): string {
-  if (kind === 'command_line_application') return 'Command-line users';
-  if (kind === 'mcp_server') return 'MCP clients';
-  return `${humanize(kind)} users`;
 }
 
 function shortPath(path: string): string {

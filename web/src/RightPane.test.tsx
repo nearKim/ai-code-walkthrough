@@ -18,6 +18,7 @@ test('starts the default whole-codebase walkthrough', async () => {
       tool: 'python_stdlib_ast', language: 'python', files_scanned: 0, symbol_count: 0, truncated: false, modules: [],
     }),
     copyMarkdown: noop,
+    downloadTechnicalReference: noop,
     openSettings: vi.fn(),
     focusCode: vi.fn(),
     previewEvidence: vi.fn(),
@@ -55,6 +56,7 @@ test('explains component roles and links details to validated code', async () =>
   const tour = vi.fn(async () => undefined);
   const previewEvidence = vi.fn();
   const noop = vi.fn(async () => undefined);
+  const downloadTechnicalReference = vi.fn(async () => undefined);
   const actions: RightPaneActions = {
     startMapping: noop,
     showSample: noop,
@@ -82,6 +84,7 @@ test('explains component roles and links details to validated code', async () =>
       }],
     }),
     copyMarkdown: noop,
+    downloadTechnicalReference,
     openSettings: vi.fn(),
     focusCode: vi.fn(),
     previewEvidence,
@@ -209,9 +212,17 @@ test('explains component roles and links details to validated code', async () =>
         coverage_notes: ['Generated files were not inspected.'],
       },
       learning_path: [],
+      diagram_sections: [{
+        id: 'application-flow',
+        title: 'Application flow',
+        summary: 'Trace the request through the application service.',
+        component_ids: ['application'],
+        step_ids: ['run'],
+      }],
       terminal_step_ids: ['run'],
       edges: [],
     },
+    active_section_id: 'application-flow',
   };
 
   render(
@@ -221,16 +232,22 @@ test('explains component roles and links details to validated code', async () =>
   );
 
   expect(await screen.findByLabelText('Architecture depth')).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Diagram focus' })).toHaveValue('Application flow');
+  expect(screen.getByText('Trace the request through the application service.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Walk this section' }));
+  expect(tour).toHaveBeenCalledWith('start_section', undefined, 'application-flow');
   expect(screen.getByRole('button', { name: 'Zoom in' })).toBeVisible();
   expect(screen.getByLabelText('Architecture diagram workspace')).toBeVisible();
   expect(screen.getByLabelText('Component details')).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'Context' })).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'Containers' })).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'Components' })).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'Code' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Experiment system' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'System: big picture' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Runtime: entrypoint path' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Packages: import graph' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Code: files & symbols' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'How this project runs' })).toBeVisible();
+  expect(screen.getByLabelText('Code groups by entry point')).toBeVisible();
   expect(within(screen.getByLabelText('Component details')).getByText('Handle a request.')).toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+  expect(screen.queryByText('Coordinate the experiment workflow.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Code: files & symbols' }));
   expect(screen.getAllByText('application workflow').length).toBeGreaterThan(0);
   const codeOwnership = screen.getByLabelText('Class ownership');
   expect(codeOwnership).toBeVisible();
@@ -253,10 +270,13 @@ test('explains component roles and links details to validated code', async () =>
     expect.objectContaining({ label: 'ExperimentRunner.run', start_line: 6 }),
     'Sequences the lifecycle operations.',
   );
-  fireEvent.click(screen.getByRole('tab', { name: 'Components' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Packages: import graph' }));
   fireEvent.click(screen.getByRole('button', { name: 'Operator interfaces, Accept operator commands.' }));
   await waitFor(() => expect(within(screen.getByLabelText('Selected diagram component')).getByRole('heading', { name: 'Operator interfaces' })).toBeVisible());
-  expect(screen.getByRole('tab', { name: 'Components' })).toHaveAttribute('data-active', 'true');
+  expect(screen.getByRole('tab', { name: 'Packages: import graph' })).toHaveAttribute('data-active', 'true');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Download technical reference' }));
+  expect(downloadTechnicalReference).toHaveBeenCalledOnce();
 
   expect(screen.getByRole('tab', { name: 'System notes' })).toBeVisible();
   expect(screen.getByText('Rules affecting multiple components')).not.toBeVisible();

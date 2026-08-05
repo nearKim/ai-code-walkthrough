@@ -9,13 +9,16 @@ class TourNavigator {
         flowMap: FlowMap?,
         stepId: String,
         visitedStepIds: Set<String> = emptySet(),
+        allowedStepIds: Set<String>? = null,
     ): StepEdge? {
         val currentFlowMap = flowMap ?: return null
+        if (!isAllowed(stepId, allowedStepIds)) return null
         val candidateEdges = currentFlowMap.edges
             .filter { !it.broken && it.fromStepId == stepId }
             .filter { edge ->
                 currentFlowMap.steps.any { step -> step.id == edge.toStepId && !step.broken } &&
-                    edge.toStepId !in visitedStepIds
+                    edge.toStepId !in visitedStepIds &&
+                    isAllowed(edge.toStepId, allowedStepIds)
             }
         return candidateEdges.maxWithOrNull(
             compareBy<StepEdge> { importanceRank(it.importance) }
@@ -25,11 +28,15 @@ class TourNavigator {
         )
     }
 
-    fun findNextNavigableStepIndex(flowMap: FlowMap?, startIndex: Int): Int? {
+    fun findNextNavigableStepIndex(
+        flowMap: FlowMap?,
+        startIndex: Int,
+        allowedStepIds: Set<String>? = null,
+    ): Int? {
         val steps = flowMap?.steps ?: return null
         var index = startIndex.coerceAtLeast(0)
         while (index < steps.size) {
-            if (!steps[index].broken) return index
+            if (!steps[index].broken && isAllowed(steps[index].id, allowedStepIds)) return index
             index++
         }
         return null
@@ -39,10 +46,11 @@ class TourNavigator {
         flowMap: FlowMap?,
         fromIndex: Int,
         visitedStepIds: Set<String>,
+        allowedStepIds: Set<String>? = null,
     ): Int? {
         val currentFlowMap = flowMap ?: return null
         val step = currentFlowMap.steps.getOrNull(fromIndex) ?: return null
-        val preferredEdge = preferredNextHop(currentFlowMap, step.id, visitedStepIds)
+        val preferredEdge = preferredNextHop(currentFlowMap, step.id, visitedStepIds, allowedStepIds)
             ?: return null
         val nextIndex = currentFlowMap.steps.indexOfFirst { candidate ->
             candidate.id == preferredEdge.toStepId && !candidate.broken
@@ -56,4 +64,7 @@ class TourNavigator {
         "low" -> 1
         else -> 0
     }
+
+    private fun isAllowed(stepId: String, allowedStepIds: Set<String>?): Boolean =
+        allowedStepIds == null || stepId in allowedStepIds
 }

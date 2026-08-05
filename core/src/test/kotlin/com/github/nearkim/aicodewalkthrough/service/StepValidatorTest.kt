@@ -4,6 +4,7 @@ import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureContainer
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureResponsibility
 import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
+import com.github.nearkim.aicodewalkthrough.model.DiagramSection
 import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
@@ -445,6 +446,14 @@ class StepValidatorTest {
                             stepIds = listOf("start", "service"),
                         ),
                     ),
+                    diagramSections = listOf(
+                        DiagramSection(
+                            id = "system-overview",
+                            title = "Model overview",
+                            componentIds = listOf("application"),
+                            stepIds = listOf("start"),
+                        ),
+                    ),
                     steps = listOf(
                         FlowStep(
                             id = "start",
@@ -488,6 +497,99 @@ class StepValidatorTest {
                 validated.learningPath.flatMap { it.stepIds },
             )
             assertEquals(listOf("application"), validated.learningPath.first().componentIds)
+            assertEquals(
+                listOf("system-overview", "component-map", "feature-orientation", "feature-core"),
+                validated.diagramSections.map { it.id },
+            )
+            assertEquals("Model overview", validated.diagramSections.first().title)
+            assertEquals(listOf("start"), validated.diagramSections.first().stepIds)
+            assertEquals(listOf("application", "service"), validated.diagramSections[1].componentIds)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `validate keeps independently overlapping grounded diagram sections`() {
+        val root = Files.createTempDirectory("diagram-section-validator")
+        try {
+            val sourceDir = root.resolve("src")
+            Files.createDirectories(sourceDir)
+            Files.writeString(sourceDir.resolve("App.kt"), "fun start() = runService()\n")
+            Files.writeString(sourceDir.resolve("Service.kt"), "fun runService() = Unit\n")
+
+            val validated = StepValidator(root.toString()).validate(
+                FlowMap(
+                    summary = "Application delegates to a service.",
+                    architecture = CodebaseArchitecture(
+                        systemPurpose = "Demonstrate section grounding.",
+                        components = listOf(
+                            ArchitectureComponent(
+                                id = "application",
+                                name = "Application",
+                                responsibility = "Starts the application.",
+                                keyPaths = listOf("src/App.kt"),
+                            ),
+                            ArchitectureComponent(
+                                id = "service",
+                                name = "Service",
+                                responsibility = "Runs the service.",
+                                keyPaths = listOf("src/Service.kt"),
+                            ),
+                        ),
+                    ),
+                    diagramSections = listOf(
+                        DiagramSection(
+                            id = "authentication",
+                            title = " Authentication ",
+                            summary = " Follow the session boundary. ",
+                            componentIds = listOf("missing"),
+                            stepIds = listOf("start", "service", "missing"),
+                        ),
+                        DiagramSection(
+                            id = "component-view",
+                            title = "Component view",
+                            componentIds = listOf("application"),
+                            stepIds = listOf("start"),
+                        ),
+                        DiagramSection(
+                            id = "empty",
+                            title = "Empty",
+                            componentIds = listOf("missing"),
+                            stepIds = listOf("missing"),
+                        ),
+                    ),
+                    steps = listOf(
+                        FlowStep(
+                            id = "start",
+                            title = "Start",
+                            filePath = "src/App.kt",
+                            symbol = "start",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Starts the application.",
+                            whyIncluded = "It is the entrypoint.",
+                        ),
+                        FlowStep(
+                            id = "service",
+                            title = "Service",
+                            filePath = "src/Service.kt",
+                            symbol = "runService",
+                            startLine = 1,
+                            endLine = 1,
+                            explanation = "Runs the service.",
+                            whyIncluded = "It handles the request.",
+                        ),
+                    ),
+                ),
+            )
+
+            assertEquals(listOf("authentication", "component-view"), validated.diagramSections.map { it.id })
+            assertEquals("Authentication", validated.diagramSections.first().title)
+            assertEquals("Follow the session boundary.", validated.diagramSections.first().summary)
+            assertEquals(listOf("application", "service"), validated.diagramSections.first().componentIds)
+            assertEquals(listOf("start", "service"), validated.diagramSections.first().stepIds)
+            assertEquals(listOf("start"), validated.diagramSections[1].stepIds)
         } finally {
             root.toFile().deleteRecursively()
         }

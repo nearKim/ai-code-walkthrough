@@ -15,5 +15,7 @@ class PromptContractTest {
         assertTrue(prompt.contains("Never invent tool output"))
         assertTrue(prompt.contains("persisted deterministic analyzer output"))
         assertTrue(prompt.contains("immutable facts"))
+        assertTrue(prompt.contains("\"diagram_sections\""))
+        assertTrue(prompt.contains("system overview, component map, and feature walkthrough"))
     }
 }

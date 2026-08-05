@@ -3,6 +3,7 @@ package com.github.nearkim.aicodewalkthrough.service
 import com.github.nearkim.aicodewalkthrough.domain.session.TourNavigator
 import com.github.nearkim.aicodewalkthrough.editor.EditorDecorationController
 import com.github.nearkim.aicodewalkthrough.model.AnalysisMode
+import com.github.nearkim.aicodewalkthrough.model.DiagramSection
 import com.github.nearkim.aicodewalkthrough.model.FeatureScopeContext
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
@@ -47,6 +48,8 @@ class TourSessionService(private val project: Project, private val scope: Corout
     var followUpContext: FollowUpContext? = null
         private set
     var currentFeatureScope: FeatureScopeContext? = null
+        private set
+    var activeDiagramSection: DiagramSection? = null
         private set
     var errorMessage: String? = null
         private set
@@ -112,13 +115,19 @@ class TourSessionService(private val project: Project, private val scope: Corout
         }
     }
 
-    fun startTour(startIndex: Int = 0) {
-        val resolvedIndex = tourNavigator.findNextNavigableStepIndex(currentFlowMap, startIndex) ?: return
+    fun startTour(startIndex: Int = 0, diagramSectionId: String? = null) {
+        val flowMap = currentFlowMap ?: return
+        val diagramSection = diagramSectionId?.let { sectionId ->
+            flowMap.diagramSections.firstOrNull { it.id == sectionId } ?: return
+        }
+        val allowedStepIds = diagramSection?.stepIds?.toSet()
+        val resolvedIndex = tourNavigator.findNextNavigableStepIndex(flowMap, startIndex, allowedStepIds) ?: return
+        activeDiagramSection = diagramSection
         clearStepAnswer(notify = false)
         tourStepHistory.clear()
         currentStepIndex = resolvedIndex
         tourStepHistory += resolvedIndex
-        currentContext = currentFlowMap?.steps?.getOrNull(resolvedIndex)?.toQueryContext(currentFeatureScope)
+        currentContext = flowMap.steps.getOrNull(resolvedIndex)?.toQueryContext(currentFeatureScope)
         transitionTo(TourState.TOUR_ACTIVE)
         navigateToCurrentStep()
     }
@@ -134,23 +143,30 @@ class TourSessionService(private val project: Project, private val scope: Corout
         if (stepIndex !in steps.indices) return
 
         val step = steps[stepIndex]
-        if (step.broken) return
+        val allowedStepIds = activeDiagramSection?.stepIds?.toSet()
+        if (step.broken || (allowedStepIds != null && step.id !in allowedStepIds)) return
         currentContext = step.toQueryContext(currentFeatureScope)
 
         updateActiveStepContext(step.id)
 
         val upcomingEdge = preferredNextHop(step.id, visitedStepIds = emptySet())
         val upcomingStep = upcomingEdge?.let { edge -> steps.firstOrNull { it.id == edge.toStepId } }
-            ?: tourNavigator.findNextNavigableStepIndex(currentFlowMap, stepIndex + 1)?.let { steps[it] }
+            ?: tourNavigator.findNextNavigableStepIndex(currentFlowMap, stepIndex + 1, allowedStepIds)?.let { steps[it] }
+        val (displayIndex, totalSteps) = tourPosition(currentFlowMap, stepIndex)
         val decorationController = project.service<EditorDecorationController>()
         ApplicationManager.getApplication().invokeLater {
-            decorationController.showStep(step, stepIndex, steps.size, upcomingStep, upcomingEdge)
+            decorationController.showStep(step, displayIndex, totalSteps, upcomingStep, upcomingEdge)
         }
     }
 
     fun nextStep() {
-        val next = tourNavigator.findPreferredNextNavigableStepIndex(currentFlowMap, currentStepIndex, visitedStepIds())
-            ?: tourNavigator.findNextNavigableStepIndex(currentFlowMap, currentStepIndex + 1)
+        val allowedStepIds = activeDiagramSection?.stepIds?.toSet()
+        val next = tourNavigator.findPreferredNextNavigableStepIndex(
+            currentFlowMap,
+            currentStepIndex,
+            visitedStepIds(),
+            allowedStepIds,
+        ) ?: tourNavigator.findNextNavigableStepIndex(currentFlowMap, currentStepIndex + 1, allowedStepIds)
         if (next == null) {
             stopTour()
             return
@@ -179,11 +195,13 @@ class TourSessionService(private val project: Project, private val scope: Corout
         clearStepAnswer(notify = false)
         tourStepHistory.clear()
         currentStepIndex = -1
+        activeDiagramSection = null
         transitionTo(TourState.OVERVIEW)
     }
 
     fun newQuestion() {
         project.service<EditorDecorationController>().clearDecorations()
+        activeDiagramSection = null
         transitionTo(TourState.INPUT)
     }
 
@@ -202,14 +220,15 @@ class TourSessionService(private val project: Project, private val scope: Corout
         updateActiveStepContext(step.id)
 
         val visitedStepIds = visitedStepIds()
+        val allowedStepIds = activeDiagramSection?.stepIds?.toSet()
         val upcomingEdge = preferredNextHop(step.id, visitedStepIds)
         val upcomingStep = upcomingEdge?.let { edge -> steps.firstOrNull { it.id == edge.toStepId } }
-            ?: tourNavigator.findNextNavigableStepIndex(currentFlowMap, currentStepIndex + 1)?.let { steps[it] }
+            ?: tourNavigator.findNextNavigableStepIndex(currentFlowMap, currentStepIndex + 1, allowedStepIds)?.let { steps[it] }
 
-        val totalSteps = steps.size
+        val (displayIndex, totalSteps) = tourPosition(currentFlowMap, currentStepIndex)
         val decorationController = project.service<EditorDecorationController>()
         ApplicationManager.getApplication().invokeLater {
-            decorationController.showStep(step, currentStepIndex, totalSteps, upcomingStep, upcomingEdge)
+            decorationController.showStep(step, displayIndex, totalSteps, upcomingStep, upcomingEdge)
             listeners.forEach { it.onStepChanged(currentStepIndex, step) }
         }
     }
@@ -234,6 +253,7 @@ class TourSessionService(private val project: Project, private val scope: Corout
         currentMode = mode
         currentContext = queryContext
         currentFeatureScope = featureScope
+        activeDiagramSection = null
         errorMessage = null
         lastMetadata = null
         clearStepAnswer(notify = false)
@@ -331,7 +351,20 @@ class TourSessionService(private val project: Project, private val scope: Corout
     }
 
     private fun preferredNextHop(stepId: String, visitedStepIds: Set<String> = visitedStepIds()): StepEdge? {
-        return tourNavigator.preferredNextHop(currentFlowMap, stepId, visitedStepIds)
+        return tourNavigator.preferredNextHop(
+            currentFlowMap,
+            stepId,
+            visitedStepIds,
+            activeDiagramSection?.stepIds?.toSet(),
+        )
+    }
+
+    private fun tourPosition(flowMap: FlowMap?, stepIndex: Int): Pair<Int, Int> {
+        val steps = flowMap?.steps.orEmpty()
+        val allowedStepIds = activeDiagramSection?.stepIds?.toSet()
+        if (allowedStepIds == null) return stepIndex to steps.size
+        val scopedIndices = steps.indices.filter { steps[it].id in allowedStepIds }
+        return (scopedIndices.indexOf(stepIndex).takeIf { it >= 0 } ?: stepIndex) to scopedIndices.size
     }
 
     private fun clearStepAnswer(notify: Boolean = true) {

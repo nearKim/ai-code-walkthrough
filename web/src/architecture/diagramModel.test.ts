@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { availableArchitectureDepths, createArchitectureDiagramModel } from './diagramModel';
+import { availableArchitectureDepths, createArchitectureDiagramModel, runtimeCoverageGroups } from './diagramModel';
 import type { CodebaseArchitecture } from '../types';
 
 const architecture: CodebaseArchitecture = {
@@ -11,7 +11,13 @@ const architecture: CodebaseArchitecture = {
     kind: 'command_line_application',
     responsibility: 'Runs requests from a terminal.',
     component_ids: ['interface', 'application', 'data', 'shared'],
-    evidence: [],
+    evidence: [{
+      kind: 'module',
+      label: 'request entry',
+      file_path: 'src/http.ts',
+      start_line: 1,
+      end_line: 10,
+    }],
     uncertain: false,
   }, {
     id: 'mcp',
@@ -114,14 +120,21 @@ const architecture: CodebaseArchitecture = {
   coverage_notes: [],
 };
 
-test('builds context, container, component, and code diagrams', () => {
-  expect(availableArchitectureDepths(architecture)).toEqual(['context', 'containers', 'components', 'code']);
+test('builds context, runtime, component, and code diagrams', () => {
+  expect(availableArchitectureDepths(architecture)).toEqual(['context', 'runtime', 'components', 'code']);
   const context = createArchitectureDiagramModel(architecture, 'context', 'application');
-  expect(context.nodes.map((node) => node.label)).toEqual(['Request processor', 'Command-line users', 'MCP clients']);
-  expect(context.edges.map((edge) => edge.label)).toEqual(['request-cli', 'request-mcp']);
+  expect(context.nodes.map((node) => node.label)).toEqual(['request-cli runtime', 'Shared runtime core']);
+  expect(context.edges.map((edge) => edge.label)).toEqual(['calls']);
 
-  const containers = createArchitectureDiagramModel(architecture, 'containers', 'application');
-  expect(containers.nodes.map((node) => node.label)).toEqual(['request-cli', 'request-mcp']);
+  const runtime = createArchitectureDiagramModel(architecture, 'runtime', 'application', 'cli');
+  expect(runtime.nodes.map((node) => node.label)).toEqual([
+    'request-cli',
+    'HTTP interface',
+    'Application service',
+    'Result store',
+    'Shared contracts',
+  ]);
+  expect(runtime.edges.map((edge) => edge.label)).toEqual(['starts', 'calls', 'writes']);
 
   const component = createArchitectureDiagramModel(architecture, 'components', 'application');
   expect(component.nodes.map((node) => node.label)).toEqual([
@@ -156,6 +169,13 @@ test('builds context, container, component, and code diagrams', () => {
   });
 });
 
+test('keeps code outside declared entrypoint reachability visible in context', () => {
+  const support = { ...architecture.components[0], id: 'support', name: 'Fixture loader' };
+  const groups = runtimeCoverageGroups({ ...architecture, components: [...architecture.components, support] });
+
+  expect(groups.find((group) => group.label === 'Outside declared runtimes')?.componentIds).toEqual(['support']);
+});
+
 test('does not collapse mechanically classified Python packages', () => {
   const python = createArchitectureDiagramModel({
     ...architecture,
@@ -166,4 +186,18 @@ test('does not collapse mechanically classified Python packages', () => {
 
   expect(python.nodes.map((node) => node.label)).toEqual(['HTTP interface', 'Application service']);
   expect(python.edges).toHaveLength(1);
+});
+
+test('keeps only a section and its direct collaborators in the component map', () => {
+  const focused = createArchitectureDiagramModel(architecture, 'components', 'application', undefined, ['application']);
+
+  expect(focused.nodes.map((node) => node.label)).toEqual([
+    'HTTP interface',
+    'Application service',
+    'Result store',
+  ]);
+  expect(focused.nodes.find((node) => node.componentId === 'interface')).toMatchObject({ boundary: true });
+  expect(focused.nodes.find((node) => node.componentId === 'data')).toMatchObject({ boundary: true });
+  expect(focused.nodes.find((node) => node.componentId === 'shared')).toBeUndefined();
+  expect(focused.edges.map((edge) => edge.label)).toEqual(['calls', 'writes']);
 });

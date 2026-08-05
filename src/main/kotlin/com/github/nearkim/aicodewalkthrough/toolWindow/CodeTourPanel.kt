@@ -38,6 +38,7 @@ class CodeTourPanel(
     private val loading = LoadingCard(onStop = { session.cancelRequest() })
     private val overview = OverviewCard(
         onStartTour = { session.startTour() },
+        onStartSectionTour = { section -> session.startTour(diagramSectionId = section.id) },
         onPreviewStep = { session.previewStep(it) },
         onCopyMarkdown = ::copyMarkdown,
         onNewQuestion = { session.newQuestion() },
@@ -68,10 +69,24 @@ class CodeTourPanel(
     override fun onStepChanged(stepIndex: Int, step: FlowStep) {
         ApplicationManager.getApplication().invokeLater {
             val flowMap = session.currentFlowMap
-            val total = flowMap?.steps?.size ?: 0
+            val section = session.activeDiagramSection
+            val steps = flowMap?.steps.orEmpty()
+            val scopedIndices = section?.stepIds?.let { stepIds ->
+                steps.indices.filter { index -> steps[index].id in stepIds }
+            }
+            val displayIndex = scopedIndices?.indexOf(stepIndex)?.takeIf { it >= 0 } ?: stepIndex
+            val total = scopedIndices?.size ?: steps.size
             val stageIndex = flowMap?.learningPath?.indexOfFirst { step.id in it.stepIds } ?: -1
             val stage = flowMap?.learningPath?.getOrNull(stageIndex)
-            tour.setStep(stepIndex, total, step, stage, stageIndex, flowMap?.learningPath?.size ?: 0)
+            tour.setStep(
+                displayIndex,
+                total,
+                step,
+                stage,
+                stageIndex,
+                flowMap?.learningPath?.size ?: 0,
+                section,
+            )
         }
     }
 

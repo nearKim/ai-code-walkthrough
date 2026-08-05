@@ -20,6 +20,7 @@ import type {
   ProviderId,
   ProviderStatus,
   SessionSnapshot,
+  TourAction,
   WalkthroughSettings,
 } from './types';
 import { OverviewView } from './views/OverviewView';
@@ -29,9 +30,10 @@ export interface RightPaneActions {
   readonly startMapping: (question: string, mode: AnalysisModeId, provider: ProviderId) => Promise<void>;
   readonly showSample: () => Promise<void>;
   readonly cancelMapping: () => Promise<void>;
-  readonly tour: (action: 'start' | 'preview' | 'next' | 'previous' | 'stop' | 'new', stepId?: string) => Promise<void>;
+  readonly tour: (action: TourAction, stepId?: string, sectionId?: string) => Promise<void>;
   readonly answer: (question: string) => Promise<void>;
   readonly copyMarkdown: () => Promise<void>;
+  readonly downloadTechnicalReference: () => Promise<void>;
   readonly loadSymbolInventory: () => Promise<MechanicalSymbolInventory>;
   readonly openSettings: () => void;
   readonly focusCode: () => void;
@@ -89,56 +91,83 @@ function InputView({ session, settings, providers, actions, actionError }: Input
   return (
     <div className="pane-content input-workspace">
       <section className="input-intro">
-        <div>
-          <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Repository field guide</Text>
-          <Title order={1}>Understand <span>{session.repository}</span></Title>
-          <Text className="input-intro-copy" c="dimmed">
-            Build a source-grounded route from the system map to the code that makes it work.
+        <div className="input-intro-lead">
+          <p className="field-label">Local code review workspace</p>
+          <Title order={1}>
+            Read <span className="repo-highlight">{session.repository}</span>
+            <br />as a system
+          </Title>
+          <Text className="input-intro-copy">
+            Grounded maps of architecture and execution paths. Every stop links to validated
+            source ranges in this repository—nothing escapes the project tree.
           </Text>
         </div>
+
         <ol aria-label="Walkthrough workflow" className="workflow-diagram">
           <li>
-            <span>01</span>
-            <div><strong>Map the system</strong><small>Components, boundaries, relationships</small></div>
+            <span className="workflow-index">1</span>
+            <div>
+              <strong>Map structure</strong>
+              <small>Components, ownership, import edges</small>
+            </div>
           </li>
           <li>
-            <span>02</span>
-            <div><strong>Choose a route</strong><small>A staged path through validated stops</small></div>
+            <span className="workflow-index">2</span>
+            <div>
+              <strong>Stage a route</strong>
+              <small>Ordered stops with checkpoints</small>
+            </div>
           </li>
           <li>
-            <span>03</span>
-            <div><strong>Read the evidence</strong><small>Source, call sites, and line-level notes</small></div>
+            <span className="workflow-index">3</span>
+            <div>
+              <strong>Inspect source</strong>
+              <small>Highlights, hops, line notes</small>
+            </div>
           </li>
         </ol>
-        <Text size="xs" c="dimmed">Local analysis · repository-contained source · validated locations</Text>
+
+        <ul className="constraint-list">
+          <li>CLI providers only (Codex / Claude)</li>
+          <li>Source-grounded locations only</li>
+          <li>Analysis stays on this machine</li>
+        </ul>
       </section>
 
       <section className="input-console">
-        <div className="input-console-heading">
-          <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>New walkthrough</Text>
-          <Title order={3}>What do you need to understand?</Title>
-        </div>
+        <header className="input-console-heading">
+          <p className="field-label">New walkthrough</p>
+          <Title order={3}>What are you looking at?</Title>
+        </header>
+
         {(session.error_message ?? actionError) !== undefined &&
-          <Alert color="red" title="Walkthrough failed">{session.error_message ?? actionError}</Alert>}
-        <SegmentedControl
-          className="mode-switcher"
-          fullWidth
-          value={mode}
-          onChange={(value) => setMode(value as AnalysisModeId)}
-          data={[
-            { value: 'understand', label: 'Learn' },
-            { value: 'review', label: 'Review' },
-            { value: 'trace', label: 'Trace' },
-          ]}
-        />
-        <div className="mode-description">
-          <Text fw={700}>{modeDetails.title}</Text>
-          <Text size="sm" c="dimmed">{modeDetails.description}</Text>
+          <Alert color="red" title="Walkthrough failed" variant="light">
+            {session.error_message ?? actionError}
+          </Alert>}
+
+        <div className="console-block">
+          <p className="field-label">Mode</p>
+          <SegmentedControl
+            className="mode-switcher"
+            fullWidth
+            value={mode}
+            onChange={(value) => setMode(value as AnalysisModeId)}
+            data={[
+              { value: 'understand', label: 'Learn' },
+              { value: 'review', label: 'Review' },
+              { value: 'trace', label: 'Trace' },
+            ]}
+          />
+          <div className="mode-description">
+            <Text fw={650} size="sm">{modeDetails.title}</Text>
+            <Text size="sm" c="dimmed">{modeDetails.description}</Text>
+          </div>
         </div>
+
         <Textarea
           className="walkthrough-prompt"
           label="Focus"
-          description={mode === 'understand' ? 'Optional—leave blank to map the whole codebase.' : 'Required for this mode.'}
+          description={mode === 'understand' ? 'Optional. Leave blank to map the whole codebase.' : 'Required for this mode.'}
           placeholder={modeDetails.placeholder}
           minRows={5}
           autosize
@@ -149,6 +178,7 @@ function InputView({ session, settings, providers, actions, actionError }: Input
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) void submit();
           }}
         />
+
         <div className="provider-row">
           <Select
             label="Analysis engine"
@@ -160,27 +190,50 @@ function InputView({ session, settings, providers, actions, actionError }: Input
           />
           <div className="provider-state">
             <Group gap="xs" wrap="nowrap" className="provider-status">
-              <span className={`status-dot ${selectedStatus?.available === true ? 'available' : selectedStatus === undefined ? 'checking' : 'unavailable'}`} />
-              <Text size="xs" c="dimmed" lineClamp={2}>{selectedStatus?.message ?? 'Checking provider…'}</Text>
+              <span
+                className={`status-dot ${
+                  selectedStatus?.available === true
+                    ? 'available'
+                    : selectedStatus === undefined
+                      ? 'checking'
+                      : 'unavailable'
+                }`}
+              />
+              <Text size="xs" c="dimmed" lineClamp={2}>
+                {selectedStatus?.message ?? 'Checking provider…'}
+              </Text>
             </Group>
-            <Button variant="subtle" size="compact-sm" onClick={actions.openSettings}>Settings</Button>
+            <Button variant="default" size="compact-sm" onClick={actions.openSettings}>
+              Settings
+            </Button>
           </div>
         </div>
-        <Button
-          className="start-button"
-          size="md"
-          onClick={() => void submit()}
-          loading={submitting}
-          disabled={selectedStatus?.available === false || (mode !== 'understand' && question.trim().length === 0)}
-        >
-          {mode === 'understand' && question.trim().length === 0 ? 'Learn codebase' : 'Start walkthrough'}
-        </Button>
-        <Text size="xs" c="dimmed" ta="center">Ctrl/⌘ + Enter</Text>
+
+        <div className="console-actions">
+          <Button
+            className="start-button"
+            size="md"
+            onClick={() => void submit()}
+            loading={submitting}
+            disabled={
+              selectedStatus?.available === false ||
+              (mode !== 'understand' && question.trim().length === 0)
+            }
+          >
+            {mode === 'understand' && question.trim().length === 0
+              ? 'Learn codebase'
+              : 'Start walkthrough'}
+          </Button>
+          <Text size="xs" c="dimmed" className="shortcut-hint">
+            ⌘/Ctrl + Enter
+          </Text>
+        </div>
+
         <div className="sample-preview">
-          <Button size="compact-sm" variant="subtle" onClick={() => void actions.showSample()}>
+          <Button size="compact-sm" variant="subtle" color="gray" onClick={() => void actions.showSample()}>
             Preview sample result
           </Button>
-          <Text size="xs" c="dimmed">Instant illustrative result — no repository analysis.</Text>
+          <Text size="xs" c="dimmed">Illustrative map only. No project analysis.</Text>
         </div>
       </section>
     </div>
@@ -200,33 +253,51 @@ function LoadingView({ session, onCancel }: { readonly session: SessionSnapshot;
     <div className="pane-content loading-workspace">
       <section className="loading-summary">
         <div className="loading-heading">
-          <Loader size="sm" />
+          <Loader size="sm" color="copper" />
           <div>
-            <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Analysis in progress</Text>
+            <p className="field-label">Analysis in progress</p>
             <Title order={2}>Mapping the walkthrough</Title>
           </div>
         </div>
         <div aria-label="Mapping pipeline" className="mapping-pipeline">
-          <div><span>1</span><strong>Inspect</strong><small>symbols &amp; modules</small></div>
+          <div>
+            <span>1</span>
+            <strong>Inspect</strong>
+            <small>symbols &amp; modules</small>
+          </div>
           <i aria-hidden="true" />
-          <div><span>2</span><strong>Connect</strong><small>components &amp; hops</small></div>
+          <div>
+            <span>2</span>
+            <strong>Connect</strong>
+            <small>components &amp; hops</small>
+          </div>
           <i aria-hidden="true" />
-          <div><span>3</span><strong>Validate</strong><small>paths &amp; ranges</small></div>
+          <div>
+            <span>3</span>
+            <strong>Validate</strong>
+            <small>paths &amp; ranges</small>
+          </div>
         </div>
-        <Group justify="space-between">
-          <Text size="sm" c="dimmed">The provider can run until the repository map is complete.</Text>
-          <Badge variant="light">{elapsed.toFixed(1)}s</Badge>
+        <Group justify="space-between" align="center">
+          <Text size="sm" c="dimmed">
+            Provider runs until the map is complete or you stop it.
+          </Text>
+          <Badge variant="outline" color="gray" className="elapsed-badge">
+            {elapsed.toFixed(1)}s
+          </Badge>
         </Group>
       </section>
       <section className="activity-panel">
         <div className="activity-panel-heading">
-          <Text fw={700}>Live analysis trace</Text>
-          <Text size="xs" c="dimmed">Newest provider output appears at the bottom.</Text>
+          <Text fw={650}>Live analysis trace</Text>
+          <Text size="xs" c="dimmed">Newest provider output at the bottom.</Text>
         </div>
         <ScrollArea className="progress-log" type="auto" offsetScrollbars>
           <Code block>{lines.join('\n') || 'Waiting for provider output…'}</Code>
         </ScrollArea>
-        <Button color="red" variant="light" onClick={() => void onCancel()}>Stop analysis</Button>
+        <Button color="red" variant="light" onClick={() => void onCancel()}>
+          Stop analysis
+        </Button>
       </section>
     </div>
   );
@@ -234,18 +305,18 @@ function LoadingView({ session, onCancel }: { readonly session: SessionSnapshot;
 
 const modeDescriptions: Record<AnalysisModeId, { readonly title: string; readonly description: string; readonly placeholder: string }> = {
   understand: {
-    title: 'Learn the system from architecture to code',
-    description: 'Build a grounded component map and staged path through representative execution flows.',
-    placeholder: 'Optional: focus the lesson on a subsystem or question',
+    title: 'Architecture → staged path → code',
+    description: 'Grounded component map and a curriculum of validated execution stops.',
+    placeholder: 'Optional: focus on a subsystem or question',
   },
   review: {
-    title: 'Review a concrete concern',
-    description: 'Order grounded findings by severity and connect them to the relevant code path.',
+    title: 'Findings ordered by severity',
+    description: 'Connect review concerns to the concrete code path that matters.',
     placeholder: 'Is this change safe? Where are the likely regressions?',
   },
   trace: {
-    title: 'Trace an execution path',
-    description: 'Follow callers, branches, async hops, and sinks through validated locations.',
+    title: 'Follow one execution path',
+    description: 'Callers, branches, async hops, and sinks at validated locations.',
     placeholder: 'What happens when a request reaches /api/login?',
   },
 };

@@ -1,5 +1,6 @@
 package com.github.nearkim.aicodewalkthrough.toolwindow.cards
 
+import com.github.nearkim.aicodewalkthrough.model.DiagramSection
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LearningStage
@@ -34,6 +35,7 @@ private const val SUMMARY_TRUNCATE_LENGTH = 120
 
 class OverviewCard(
     private val onStartTour: () -> Unit,
+    private val onStartSectionTour: (DiagramSection) -> Unit,
     private val onPreviewStep: (FlowStep) -> Unit,
     private val onCopyMarkdown: () -> Unit,
     private val onNewQuestion: () -> Unit,
@@ -59,6 +61,7 @@ class OverviewCard(
     private var summaryExpanded = false
 
     private val stageSelector = JComboBox<String>()
+    private val sectionSelector = JComboBox<String>()
     private val listModel = DefaultListModel<FlowStep>()
     private val stepList = JBList(listModel).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
@@ -73,18 +76,30 @@ class OverviewCard(
         foreground = JBColor(Color(95, 95, 95), Color(175, 175, 175))
         border = JBUI.Borders.empty(6, 8)
     }
+    private val diagramSectionContext = WrappingTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+        isOpaque = false
+        foreground = JBColor(Color(95, 95, 95), Color(175, 175, 175))
+        border = JBUI.Borders.empty(6, 8)
+    }
     private val tabs = JBTabbedPane().apply {
         addTab("Architecture", architecturePanel)
         addTab("Learning path", buildLearningPathPanel())
+        addTab("Feature walkthroughs", buildFeatureWalkthroughPanel())
     }
     private val continueButton = JButton("Continue to learning path \u2192")
     private val backButton = JButton("\u2190 Architecture")
     private val startTourButton = JButton("Start guided tour").apply { isDefaultCapable = true }
+    private val startSectionTourButton = JButton("Walk this section")
     private val previewButton = JButton("Preview selected")
     private val copyButton = JButton("Copy as Markdown")
     private val newQuestionButton = JButton("New question")
     private var displayStages: List<LearningStage> = emptyList()
+    private var displaySections: List<DiagramSection> = emptyList()
     private var stepsById: Map<String, FlowStep> = emptyMap()
+    private var componentNamesById: Map<String, String> = emptyMap()
     private var boundFlowMap: FlowMap? = null
 
     init {
@@ -99,6 +114,7 @@ class OverviewCard(
         actionRow.add(continueButton)
         actionRow.add(backButton)
         actionRow.add(startTourButton)
+        actionRow.add(startSectionTourButton)
         actionRow.add(previewButton)
         actionRow.add(copyButton)
         actionRow.add(newQuestionButton)
@@ -107,6 +123,9 @@ class OverviewCard(
         continueButton.addActionListener { tabs.selectedIndex = LEARNING_PATH_TAB }
         backButton.addActionListener { tabs.selectedIndex = ARCHITECTURE_TAB }
         startTourButton.addActionListener { onStartTour() }
+        startSectionTourButton.addActionListener {
+            displaySections.getOrNull(sectionSelector.selectedIndex)?.let(onStartSectionTour)
+        }
         previewButton.addActionListener {
             val selected = stepList.selectedValue ?: return@addActionListener
             onPreviewStep(selected)
@@ -121,6 +140,7 @@ class OverviewCard(
         })
         tabs.addChangeListener { updateSectionActions() }
         stageSelector.addActionListener { updateSelectedStage() }
+        sectionSelector.addActionListener { updateSelectedDiagramSection() }
         stepList.addListSelectionListener { event ->
             if (!event.valueIsAdjusting) updatePreviewAction()
         }
@@ -130,20 +150,28 @@ class OverviewCard(
     fun setFlowMap(flowMap: FlowMap?, providerName: String, question: String? = null) {
         stepList.clearSelection()
         stageSelector.model = DefaultComboBoxModel()
+        sectionSelector.model = DefaultComboBoxModel()
         listModel.clear()
         if (flowMap == null) {
             boundFlowMap = null
             architecturePanel.setArchitecture(null)
             displayStages = emptyList()
+            displaySections = emptyList()
             stepsById = emptyMap()
+            componentNamesById = emptyMap()
             questionLabel.text = " "
             summaryLabel.text = " "
             metaLabel.text = " "
             learningStageContext.text = ""
+            diagramSectionContext.text = ""
             toggleLink.isVisible = false
             startTourButton.isEnabled = false
+            startSectionTourButton.isEnabled = false
             previewButton.isEnabled = false
             copyButton.isEnabled = false
+            tabs.setEnabledAt(ARCHITECTURE_TAB, false)
+            tabs.setEnabledAt(FEATURE_WALKTHROUGHS_TAB, false)
+            updateSectionActions()
             return
         }
         val isNewFlowMap = flowMap !== boundFlowMap
@@ -167,23 +195,34 @@ class OverviewCard(
             )
         }
         val stageCount = displayStages.size
+        val sectionCount = flowMap.diagramSections.size
         metaLabel.text = buildList {
             if (componentCount > 0) add("$componentCount components")
             if (stageCount > 0) add("$stageCount stages")
+            if (sectionCount > 0) add("$sectionCount sections")
             add("${flowMap.steps.size} steps")
             add(entryTitle)
             add(providerName)
         }.joinToString(" · ")
         architecturePanel.setArchitecture(flowMap.architecture)
         stepsById = flowMap.steps.associateBy { it.id }
+        componentNamesById = flowMap.architecture?.components?.associate { it.id to it.name }.orEmpty()
+        displaySections = flowMap.diagramSections
         stageSelector.model = DefaultComboBoxModel(
             displayStages.mapIndexed { index, stage ->
                 "${index + 1}. ${stage.title} · ${stage.stepIds.size} stops"
             }.toTypedArray(),
         )
+        sectionSelector.model = DefaultComboBoxModel(
+            displaySections.mapIndexed { index, section ->
+                "${index + 1}. ${section.title} · ${section.stepIds.size} stops"
+            }.toTypedArray(),
+        )
         tabs.setTitleAt(ARCHITECTURE_TAB, "Architecture${componentCount.takeIf { it > 0 }?.let { " ($it)" }.orEmpty()}")
         tabs.setTitleAt(LEARNING_PATH_TAB, "Learning path ($stageCount stages · ${flowMap.steps.size} stops)")
+        tabs.setTitleAt(FEATURE_WALKTHROUGHS_TAB, "Feature walkthroughs (${displaySections.size} sections)")
         tabs.setEnabledAt(ARCHITECTURE_TAB, flowMap.architecture != null)
+        tabs.setEnabledAt(FEATURE_WALKTHROUGHS_TAB, displaySections.isNotEmpty())
         startTourButton.isEnabled = flowMap.steps.any { !it.broken }
         copyButton.isEnabled = true
         if (displayStages.isNotEmpty()) {
@@ -192,10 +231,16 @@ class OverviewCard(
             learningStageContext.text = "No validated code stops were returned."
             previewButton.isEnabled = false
         }
+        if (displaySections.isNotEmpty()) {
+            sectionSelector.selectedIndex = 0
+        } else {
+            startSectionTourButton.isEnabled = false
+        }
         if (isNewFlowMap) {
             tabs.selectedIndex = if (flowMap.architecture != null) ARCHITECTURE_TAB else LEARNING_PATH_TAB
         }
         updateSelectedStage()
+        updateSelectedDiagramSection()
         updateSectionActions()
     }
 
@@ -226,6 +271,27 @@ class OverviewCard(
         }, BorderLayout.CENTER)
     }
 
+    private fun buildFeatureWalkthroughPanel(): JPanel = JPanel(BorderLayout()).apply {
+        val sectionPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(6, 0, 4, 0)
+            isOpaque = false
+            add(JBLabel("Diagram sections").apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                font = font.deriveFont(Font.BOLD)
+                border = JBUI.Borders.empty(0, 8, 3, 8)
+            })
+            add(sectionSelector.apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                maximumSize = java.awt.Dimension(Int.MAX_VALUE, preferredSize.height)
+            })
+        }
+        add(sectionPanel, BorderLayout.NORTH)
+        add(JBScrollPane(diagramSectionContext).apply {
+            border = BorderFactory.createMatteBorder(1, 0, 1, 0, JBColor.border())
+        }, BorderLayout.CENTER)
+    }
+
     private fun updateSelectedStage() {
         val index = stageSelector.selectedIndex
         if (index < 0) return
@@ -238,16 +304,38 @@ class OverviewCard(
         updatePreviewAction()
     }
 
+    private fun updateSelectedDiagramSection() {
+        val section = displaySections.getOrNull(sectionSelector.selectedIndex)
+        if (section == null) {
+            diagramSectionContext.text = "No validated feature sections were returned."
+            startSectionTourButton.isEnabled = false
+            return
+        }
+        val components = section.componentIds.mapNotNull(componentNamesById::get)
+        val steps = section.stepIds.mapNotNull(stepsById::get)
+        diagramSectionContext.text = buildList {
+            add("Section ${sectionSelector.selectedIndex + 1}/${displaySections.size} · ${section.title}")
+            section.summary?.trim()?.takeIf { it.isNotEmpty() }?.let(::add)
+            if (components.isNotEmpty()) add("Components: ${components.joinToString(" · ")}")
+            if (steps.isNotEmpty()) add("Code stops:\n${steps.joinToString("\n") { "• ${it.title} (${it.filePath}:${it.startLine})" }}")
+        }.joinToString("\n\n")
+        startSectionTourButton.isEnabled = steps.any { !it.broken }
+        diagramSectionContext.caretPosition = 0
+    }
+
     private fun updatePreviewAction() {
         previewButton.isEnabled = stepList.selectedValue?.broken == false
     }
 
     private fun updateSectionActions() {
         val showingArchitecture = tabs.selectedIndex == ARCHITECTURE_TAB && tabs.isEnabledAt(ARCHITECTURE_TAB)
+        val showingFeatureWalkthroughs = tabs.selectedIndex == FEATURE_WALKTHROUGHS_TAB &&
+            tabs.isEnabledAt(FEATURE_WALKTHROUGHS_TAB)
         continueButton.isVisible = showingArchitecture
         backButton.isVisible = !showingArchitecture && tabs.isEnabledAt(ARCHITECTURE_TAB)
-        startTourButton.isVisible = !showingArchitecture
-        previewButton.isVisible = !showingArchitecture
+        startTourButton.isVisible = !showingArchitecture && !showingFeatureWalkthroughs
+        startSectionTourButton.isVisible = showingFeatureWalkthroughs
+        previewButton.isVisible = !showingArchitecture && !showingFeatureWalkthroughs
         revalidate()
         repaint()
     }
@@ -362,5 +450,6 @@ class OverviewCard(
     companion object {
         private const val ARCHITECTURE_TAB = 0
         private const val LEARNING_PATH_TAB = 1
+        private const val FEATURE_WALKTHROUGHS_TAB = 2
     }
 }

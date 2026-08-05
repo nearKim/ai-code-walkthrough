@@ -20,6 +20,7 @@ data class MappingRequest(
 data class TourRequest(
     val action: String,
     @SerialName("step_id") val stepId: String? = null,
+    @SerialName("section_id") val sectionId: String? = null,
 )
 
 @Serializable
@@ -67,6 +68,7 @@ data class SessionSnapshot(
     @SerialName("error_message") val errorMessage: String? = null,
     @SerialName("progress_lines") val progressLines: List<String> = emptyList(),
     @SerialName("can_previous") val canPrevious: Boolean = false,
+    @SerialName("active_section_id") val activeSectionId: String? = null,
 )
 
 @Serializable

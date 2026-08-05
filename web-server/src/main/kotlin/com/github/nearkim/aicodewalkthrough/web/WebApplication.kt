@@ -6,8 +6,11 @@ import com.github.nearkim.aicodewalkthrough.model.WalkthroughSettings
 import com.github.nearkim.aicodewalkthrough.service.ProjectFiles
 import com.github.nearkim.aicodewalkthrough.service.WalkthroughEngine
 import com.github.nearkim.aicodewalkthrough.util.FlowMapMarkdownExporter
+import com.github.nearkim.aicodewalkthrough.util.FlowMapTechnicalHtmlExporter
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.withCharset
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
@@ -156,7 +159,7 @@ fun Application.configureWebApplication(dependencies: WebDependencies) {
         post("/api/tour") {
             if (!call.requireJson()) return@post
             val request = call.receive<TourRequest>()
-            dependencies.session.tour(request.action, request.stepId).fold(
+            dependencies.session.tour(request.action, request.stepId, request.sectionId).fold(
                 onSuccess = { call.respond(it) },
                 onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorResponse(it.message ?: "Invalid tour action")) },
             )
@@ -213,6 +216,24 @@ fun Application.configureWebApplication(dependencies: WebDependencies) {
                     activeStepId = snapshot.displayedStep?.id,
                 ),
                 ContentType.parse("text/markdown; charset=UTF-8"),
+            )
+        }
+
+        get("/api/export/technical") {
+            val snapshot = dependencies.session.snapshot()
+            val flowMap = snapshot.flowMap
+            if (flowMap == null) {
+                call.respond(HttpStatusCode.Conflict, ErrorResponse("No walkthrough is available to export."))
+                return@get
+            }
+            call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"code-walkthrough.html\"")
+            call.respondText(
+                FlowMapTechnicalHtmlExporter.build(
+                    question = snapshot.question,
+                    flowMap = flowMap,
+                    metadata = snapshot.metadata,
+                ),
+                ContentType.Text.Html.withCharset(StandardCharsets.UTF_8),
             )
         }
 

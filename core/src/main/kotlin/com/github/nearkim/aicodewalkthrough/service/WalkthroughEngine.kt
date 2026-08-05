@@ -84,7 +84,7 @@ class WalkthroughEngine(
         val providerResponse = provider.query(prompt, PromptKind.WALKTHROUGH, onProgress)
         val response = decodeResponse(providerResponse.content)
         val validatedResponse = if (response.type == "flow_map" && response.steps != null) {
-            val flowMap = response.toFlowMap()
+            val flowMap = response.toFlowMap()?.copy(mode = mode.id)
                 ?: return@withProvider Result.failure(
                     IllegalStateException("Unexpected flow map response from LLM"),
                 )
@@ -104,9 +104,11 @@ class WalkthroughEngine(
             latestSymbolInventory.set(enrichedInventory)
             val verified = addToolEvidence(validated, enrichedInventory, providerResponse.toolResults)
             response.copy(
+                mode = mode.id,
                 summary = verified.architecture?.systemPurpose ?: response.summary,
                 steps = verified.steps,
                 architecture = verified.architecture,
+                diagramSections = verified.diagramSections,
                 learningPath = verified.learningPath,
                 entryStepId = verified.entryStepId,
                 terminalStepIds = verified.terminalStepIds,

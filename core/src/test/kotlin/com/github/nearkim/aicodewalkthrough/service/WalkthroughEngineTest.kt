@@ -60,6 +60,8 @@ class WalkthroughEngineTest {
         assertTrue(envelope.containsKey("mechanical_symbol_inventory"))
         assertTrue(progress.indexOfFirst { it.startsWith("Indexed 1 Python files") } < progress.indexOf("provider-called"))
         assertEquals(listOf("python_stdlib_ast"), result.response.analysisTrace?.semanticToolsUsed)
+        assertEquals(AnalysisMode.UNDERSTAND.id, result.response.mode)
+        assertTrue(result.response.diagramSections.orEmpty().any { it.id == "system-overview" })
     }
 
     @Test

@@ -1,6 +1,7 @@
 export type SessionState = 'INPUT' | 'LOADING' | 'OVERVIEW' | 'TOUR_ACTIVE';
 export type AnalysisModeId = 'understand' | 'review' | 'trace';
 export type ProviderId = 'claude_cli' | 'codex_cli';
+export type TourAction = 'start' | 'start_section' | 'preview' | 'next' | 'previous' | 'stop' | 'new';
 
 export interface LineAnnotation {
   readonly start_line: number;
@@ -115,12 +116,21 @@ export interface LearningStage {
   readonly checkpoint?: string;
 }
 
+export interface DiagramSection {
+  readonly id: string;
+  readonly title: string;
+  readonly summary?: string;
+  readonly component_ids: ReadonlyArray<string>;
+  readonly step_ids: ReadonlyArray<string>;
+}
+
 export interface FlowMap {
   readonly mode?: string;
   readonly summary: string;
   readonly steps: ReadonlyArray<FlowStep>;
   readonly architecture?: CodebaseArchitecture;
   readonly learning_path: ReadonlyArray<LearningStage>;
+  readonly diagram_sections?: ReadonlyArray<DiagramSection>;
   readonly entry_step_id?: string;
   readonly terminal_step_ids: ReadonlyArray<string>;
   readonly edges: ReadonlyArray<StepEdge>;
@@ -151,6 +161,7 @@ export interface SessionSnapshot {
   readonly mode: AnalysisModeId;
   readonly provider: ProviderId;
   readonly flow_map?: FlowMap;
+  readonly active_section_id?: string;
   readonly metadata?: ResponseMetadata;
   readonly current_step_index: number;
   readonly displayed_step_index: number;

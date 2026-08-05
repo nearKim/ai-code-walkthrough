@@ -6,6 +6,7 @@ import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.service.validation.ArchitectureValidator
+import com.github.nearkim.aicodewalkthrough.service.validation.DiagramSectionValidator
 import com.github.nearkim.aicodewalkthrough.service.validation.EvidenceSanitizer
 import com.github.nearkim.aicodewalkthrough.service.validation.LearningPathValidator
 import com.github.nearkim.aicodewalkthrough.service.validation.StepAnchorValidator
@@ -24,6 +25,7 @@ class StepValidator(
     private val projectFiles = ProjectFiles(Path.of(projectBasePath))
     private val evidenceSanitizer = EvidenceSanitizer(projectFiles)
     private val architectureValidator = ArchitectureValidator(projectFiles, evidenceSanitizer)
+    private val diagramSectionValidator = DiagramSectionValidator()
     private val learningPathValidator = LearningPathValidator(mechanicalArchitecture != null)
     private val stepGraphValidator = StepGraphValidator()
     private val stepAnchorValidator = StepAnchorValidator(
@@ -39,12 +41,29 @@ class StepValidator(
             validatedSteps,
         )
         val architecture = architectureValidator.validate(mechanicalArchitecture ?: flowMap.architecture)
+        val learningPath = learningPathValidator.validate(flowMap.learningPath, architecture, validatedSteps)
+        val entryStepId = stepGraphValidator.resolveEntryStepId(flowMap.entryStepId, validatedSteps, validatedEdges)
+        val diagramSections = diagramSectionValidator.validate(flowMap.diagramSections, architecture, validatedSteps)
+            .let { sections ->
+                if (flowMap.mode == "understand") {
+                    diagramSectionValidator.addLearnFallbacks(
+                        sections,
+                        architecture,
+                        validatedSteps,
+                        learningPath,
+                        entryStepId,
+                    )
+                } else {
+                    sections
+                }
+            }
 
         return flowMap.copy(
             steps = validatedSteps,
             architecture = architecture,
-            learningPath = learningPathValidator.validate(flowMap.learningPath, architecture, validatedSteps),
-            entryStepId = stepGraphValidator.resolveEntryStepId(flowMap.entryStepId, validatedSteps, validatedEdges),
+            diagramSections = diagramSections,
+            learningPath = learningPath,
+            entryStepId = entryStepId,
             terminalStepIds = stepGraphValidator.resolveTerminalStepIds(
                 flowMap.terminalStepIds,
                 validatedSteps,

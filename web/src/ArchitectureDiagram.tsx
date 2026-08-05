@@ -45,6 +45,7 @@ interface ArchitectureDiagramProps {
   readonly selectedComponentId: string;
   readonly selectedContainerId?: string;
   readonly selectedOwnerKey?: string;
+  readonly focusedComponentIds?: ReadonlyArray<string>;
   readonly onDepthChange: (depth: ArchitectureDepth) => void;
   readonly onComponentSelect: (componentId: string) => void;
   readonly onContainerSelect: (containerId: string) => void;
@@ -58,6 +59,7 @@ export function ArchitectureDiagram({
   selectedComponentId,
   selectedContainerId,
   selectedOwnerKey,
+  focusedComponentIds,
   onDepthChange,
   onComponentSelect,
   onContainerSelect,
@@ -67,19 +69,31 @@ export function ArchitectureDiagram({
   const transformRef = useRef<ReactZoomPanPinchContentRef>(null);
   const depths = availableArchitectureDepths(architecture);
   const model = useMemo(
-    () => createArchitectureDiagramModel(architecture, depth, selectedComponentId),
-    [architecture, depth, selectedComponentId],
+    () => createArchitectureDiagramModel(architecture, depth, selectedComponentId, selectedContainerId, focusedComponentIds),
+    [architecture, depth, focusedComponentIds, selectedComponentId, selectedContainerId],
   );
   const diagram = useMemo(() => positionDiagram(model), [model]);
 
   useEffect(() => {
-    const animation = window.requestAnimationFrame(() => {
-      const controls = transformRef.current;
-      if (controls === null) return;
-      fitDiagram(controls, diagram);
-    });
-    return () => window.cancelAnimationFrame(animation);
-  }, [architecture, depth]);
+    let animation = 0;
+    const fit = () => {
+      window.cancelAnimationFrame(animation);
+      animation = window.requestAnimationFrame(() => {
+        const controls = transformRef.current;
+        if (controls !== null) fitDiagram(controls, diagram);
+      });
+    };
+    fit();
+    const wrapper = transformRef.current?.instance.wrapperComponent;
+    const observer = wrapper === null || wrapper === undefined || typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(fit);
+    if (wrapper !== null && wrapper !== undefined) observer?.observe(wrapper);
+    return () => {
+      observer?.disconnect();
+      window.cancelAnimationFrame(animation);
+    };
+  }, [diagram]);
 
   const selectNode = (node: DiagramNode) => {
     if (node.ownerKey !== undefined) {
@@ -99,14 +113,25 @@ export function ArchitectureDiagram({
 
   return <Stack gap="xs" className="architecture-diagram">
     <div className="diagram-toolbar">
-      <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Map depth</Text>
+      <div className="diagram-level-summary">
+        <p className="field-label">Architecture levels</p>
+        <Text size="xs" c="dimmed">{model.caption}</Text>
+      </div>
       <Tabs
         value={depth}
         onChange={(value) => value !== null && onDepthChange(value as ArchitectureDepth)}
         className="architecture-depth-tabs"
       >
         <Tabs.List aria-label="Architecture depth">
-          {depths.map((item) => <Tabs.Tab key={item} value={item}>{titleForDepth(item)}</Tabs.Tab>)}
+          {depths.map((item) => {
+            const level = definitionForDepth(item);
+            return <Tabs.Tab aria-label={`${level.title}: ${level.scope}`} key={item} value={item}>
+              <span className="architecture-depth-tab">
+                <strong>{level.title}</strong>
+                <small>{level.scope}</small>
+              </span>
+            </Tabs.Tab>;
+          })}
         </Tabs.List>
       </Tabs>
     </div>
@@ -134,7 +159,7 @@ export function ArchitectureDiagram({
           <TransformComponent
             wrapperClass="diagram-transform-wrapper"
             contentClass="diagram-transform-content"
-            wrapperStyle={{ height: viewportHeight(depth, diagram.height) }}
+            wrapperStyle={{ height: '100%' }}
           >
             <svg
               aria-label={`${titleForDepth(depth)} architecture diagram`}
@@ -194,7 +219,7 @@ export function ArchitectureDiagram({
             key={node.id}
             id={node.componentId === undefined ? undefined : diagramNodeDomId(node.componentId)}
             aria-label={`${node.label}, ${node.detail}`}
-            className={`diagram-node ${node.tone}${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}`}
+            className={`diagram-node ${node.tone}${selected ? ' selected' : ''}${node.boundary === true ? ' boundary' : ''}${interactive ? ' interactive' : ''}`}
             data-component-id={node.componentId}
             onClick={interactive ? () => selectNode(node) : undefined}
             onKeyDown={interactive ? (event) => {
@@ -305,17 +330,11 @@ function fitDiagram(controls: ReactZoomPanPinchContentRef, diagram: PositionedDi
   const wrapper = controls.instance.wrapperComponent;
   if (wrapper === null) return;
   const scale = Math.max(0.25, Math.min(
-    1,
+    1.4,
     (wrapper.clientWidth - 24) / diagram.width,
     (wrapper.clientHeight - 24) / diagram.height,
   ));
   controls.centerView(scale, 0);
-}
-
-function viewportHeight(depth: ArchitectureDepth, diagramHeight: number): number {
-  if (depth === 'components') return Math.min(420, Math.max(280, diagramHeight));
-  if (depth === 'code') return Math.min(460, Math.max(300, diagramHeight));
-  return Math.min(430, Math.max(340, diagramHeight));
 }
 
 function diagramNodeDomId(componentId: string): string {
@@ -345,8 +364,12 @@ function truncate(value: string, length: number): string {
 }
 
 function titleForDepth(depth: ArchitectureDepth): string {
-  if (depth === 'context') return 'Context';
-  if (depth === 'containers') return 'Containers';
-  if (depth === 'components') return 'Components';
-  return 'Code';
+  return definitionForDepth(depth).title;
+}
+
+function definitionForDepth(depth: ArchitectureDepth): { readonly title: string; readonly scope: string } {
+  if (depth === 'context') return { title: 'System', scope: 'big picture' };
+  if (depth === 'runtime') return { title: 'Runtime', scope: 'entrypoint path' };
+  if (depth === 'components') return { title: 'Packages', scope: 'import graph' };
+  return { title: 'Code', scope: 'files & symbols' };
 }

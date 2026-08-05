@@ -1,5 +1,6 @@
 package com.github.nearkim.aicodewalkthrough.toolwindow.cards
 
+import com.github.nearkim.aicodewalkthrough.model.DiagramSection
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
 import com.github.nearkim.aicodewalkthrough.model.LineAnnotation
 import com.github.nearkim.aicodewalkthrough.model.LearningStage
@@ -53,6 +54,11 @@ class TourActiveCard(
         foreground = mutedForeground()
     }
     private val stageLabel = JBLabel(" ").apply {
+        foreground = mutedForeground()
+        font = font.deriveFont(Font.BOLD, font.size - 1f)
+        isVisible = false
+    }
+    private val sectionLabel = JBLabel(" ").apply {
         foreground = mutedForeground()
         font = font.deriveFont(Font.BOLD, font.size - 1f)
         isVisible = false
@@ -153,9 +159,12 @@ class TourActiveCard(
         stage: LearningStage? = null,
         stageIndex: Int = -1,
         totalStages: Int = 0,
+        diagramSection: DiagramSection? = null,
     ) {
         headerLabel.text = "Step ${stepIndex + 1}/$totalSteps \u00B7 ${step.title}"
         subtitleLabel.text = "${step.filePath}:${step.startLine}-${step.endLine}"
+        sectionLabel.text = diagramSection?.let { "Feature section · ${it.title}" } ?: " "
+        sectionLabel.isVisible = diagramSection != null
         stageLabel.text = if (stage != null) {
             "Stage ${stageIndex + 1}/$totalStages · ${stage.title}"
         } else {
@@ -299,6 +308,7 @@ class TourActiveCard(
             add(JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 add(headerLabel)
+                add(sectionLabel)
                 add(stageLabel)
                 add(subtitleLabel)
             }, BorderLayout.WEST)

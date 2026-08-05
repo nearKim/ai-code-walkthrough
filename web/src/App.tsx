@@ -5,8 +5,8 @@ import {
   Loader,
   localStorageColorSchemeManager,
   MantineProvider,
-  SegmentedControl,
   Text,
+  UnstyledButton,
   useComputedColorScheme,
   useMantineColorScheme,
 } from '@mantine/core';
@@ -16,6 +16,7 @@ import { api, subscribeToEvents } from './api';
 import { CodePane } from './CodePane';
 import { RightPane, type RightPaneActions } from './RightPane';
 import { SettingsModal } from './SettingsModal';
+import { walkthroughTheme } from './theme';
 import type {
   AnalysisModeId,
   EvidenceItem,
@@ -31,9 +32,15 @@ const colorSchemeManager = localStorageColorSchemeManager({
 });
 
 export function App() {
-  return <MantineProvider colorSchemeManager={colorSchemeManager} defaultColorScheme="auto">
-    <WalkthroughApplication />
-  </MantineProvider>;
+  return (
+    <MantineProvider
+      theme={walkthroughTheme}
+      colorSchemeManager={colorSchemeManager}
+      defaultColorScheme="auto"
+    >
+      <WalkthroughApplication />
+    </MantineProvider>
+  );
 }
 
 function WalkthroughApplication() {
@@ -148,9 +155,9 @@ function WalkthroughApplication() {
       await perform(api.sample);
     },
     cancelMapping: async () => perform(api.cancelMapping),
-    tour: async (action, stepId) => {
+    tour: async (action, stepId, sectionId) => {
       setEvidencePreview(undefined);
-      await perform(() => api.tour(action, stepId));
+      await perform(() => api.tour(action, stepId, sectionId));
     },
     answer: async (question) => perform(() => api.answer(question)),
     loadSymbolInventory: api.symbols,
@@ -158,6 +165,19 @@ function WalkthroughApplication() {
       setActionError(undefined);
       try {
         await navigator.clipboard.writeText(await api.exportMarkdown());
+      } catch (reason: unknown) {
+        setActionError(messageOf(reason));
+      }
+    },
+    downloadTechnicalReference: async () => {
+      setActionError(undefined);
+      try {
+        const url = URL.createObjectURL(await api.exportTechnicalReference());
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'technical-reference.html';
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
       } catch (reason: unknown) {
         setActionError(messageOf(reason));
       }
@@ -199,91 +219,142 @@ function WalkthroughApplication() {
     }
   };
 
-  return <main className="app-shell">
+  const stateLabel = session === undefined
+    ? 'connecting'
+    : session.state === 'INPUT'
+      ? 'ready'
+      : session.state === 'LOADING'
+        ? 'mapping'
+        : session.state === 'OVERVIEW'
+          ? 'overview'
+          : 'tour';
+
+  return (
+    <main className="app-shell">
       <header className="app-header">
         <div className="app-brand">
-          <span aria-hidden="true" className="app-brand-mark">↳</span>
-          <div>
-            <Text fw={800}>AI Code Walkthrough</Text>
-            <Text size="xs" c="dimmed">Architecture to implementation</Text>
+          <span aria-hidden="true" className="app-brand-mark">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M2 14V4h2.4l2.5 6.2L9.4 4H12v10h-2V7.6L7.7 14H6.1L3.9 7.6V14H2z" fill="currentColor" />
+              <path d="M13 4h1.5l1.8 10H14.8l-.3-1.8h-2.2L12 14h-1.6L13 4zm.7 2.6-.7 4.4h1.4l-.7-4.4z" fill="currentColor" opacity="0.55" />
+            </svg>
+          </span>
+          <div className="app-brand-copy">
+            <Text className="app-brand-title">Code Cartograph</Text>
+            <Text className="app-brand-sub">Review · map · understand</Text>
           </div>
         </div>
-        <div className="app-header-controls">
-          <div className="repository-context">
-            <span>Repository</span>
-            <Text size="xs" ff="monospace" truncate title={session?.repository_path}>
-              {session?.repository_path ?? 'Connecting to local server…'}
+
+        <div className="app-header-meta">
+          <div className="repository-context" title={session?.repository_path}>
+            <span className="meta-label">Repository</span>
+            <Text className="repository-name" ff="monospace" truncate>
+              {session?.repository ?? 'Connecting…'}
             </Text>
           </div>
-          {shouldShowCode && <Button
-            aria-controls="code"
-            aria-expanded={!codeCollapsed}
-            size="compact-xs"
-            variant="subtle"
-            onClick={toggleCodePane}
-          >{codeCollapsed ? 'Show code pane' : 'Hide code pane'}</Button>}
-          <SegmentedControl
-            aria-label="Color theme"
-            data={['Light', 'Dark']}
-            size="xs"
-            value={dark ? 'Dark' : 'Light'}
-            onChange={(value) => setColorScheme(value === 'Dark' ? 'dark' : 'light')}
-          />
+          <div className="session-chip" data-state={stateLabel}>
+            <span className="session-chip-dot" aria-hidden="true" />
+            <span className="meta-label">Session</span>
+            <Text className="session-chip-value">{stateLabel}</Text>
+          </div>
+        </div>
+
+        <div className="app-header-controls">
+          {shouldShowCode && (
+            <Button
+              aria-controls="code"
+              aria-expanded={!codeCollapsed}
+              size="compact-xs"
+              variant="default"
+              onClick={toggleCodePane}
+            >
+              {codeCollapsed ? 'Show source' : 'Hide source'}
+            </Button>
+          )}
+          <div className="theme-toggle" role="group" aria-label="Color theme">
+            <UnstyledButton
+              className={!dark ? 'active' : undefined}
+              aria-pressed={!dark}
+              onClick={() => setColorScheme('light')}
+            >
+              Light
+            </UnstyledButton>
+            <UnstyledButton
+              className={dark ? 'active' : undefined}
+              aria-pressed={dark}
+              onClick={() => setColorScheme('dark')}
+            >
+              Dark
+            </UnstyledButton>
+          </div>
         </div>
       </header>
-      {actionError !== undefined && <Alert className="global-error" color="red" withCloseButton onClose={() => setActionError(undefined)}>
-        {actionError}
-      </Alert>}
-      {session === undefined
-        ? <Center className="app-loading"><Loader size="sm" /></Center>
-        : <PanelGroup
-            orientation="horizontal"
-            className="workspace"
-            defaultLayout={shouldShowCode ? { code: 70, walkthrough: 30 } : { code: 0, walkthrough: 100 }}
+
+      {actionError !== undefined && (
+        <Alert
+          className="global-error"
+          color="red"
+          withCloseButton
+          onClose={() => setActionError(undefined)}
+        >
+          {actionError}
+        </Alert>
+      )}
+
+      {session === undefined ? (
+        <Center className="app-loading"><Loader size="sm" color="copper" /></Center>
+      ) : (
+        <PanelGroup
+          orientation="horizontal"
+          className="workspace"
+          defaultLayout={shouldShowCode ? { code: 70, walkthrough: 30 } : { code: 0, walkthrough: 100 }}
+        >
+          <Panel
+            id="code"
+            panelRef={setCodePanel}
+            minSize={480}
+            collapsible
+            collapsedSize={0}
+            onResize={(size) => setCodeCollapsed(size.inPixels <= 1)}
           >
-            <Panel
-              id="code"
-              panelRef={setCodePanel}
-              minSize={480}
-              collapsible
-              collapsedSize={0}
-              onResize={(size) => setCodeCollapsed(size.inPixels <= 1)}
-            >
-              <CodePane
-                step={displayedStep}
-                nextStep={evidencePreview === undefined ? session.next_step : undefined}
-                nextEdge={evidencePreview === undefined ? session.next_edge : undefined}
-                dark={dark}
-                focusNonce={focusNonce}
-              />
-            </Panel>
-            <Separator className="pane-separator" />
-            <Panel
-              id="walkthrough"
-              defaultSize="30"
-              minSize={360}
-              onResize={(size) => setWalkthroughNarrow((current) => {
-                const next = size.inPixels <= 720;
-                return current === next ? current : next;
-              })}
-            >
-              <RightPane
-                session={session}
-                settings={settings}
-                providers={providers}
-                actions={actions}
-                actionError={actionError}
-                compact={walkthroughNarrow}
-              />
-            </Panel>
-          </PanelGroup>}
+            <CodePane
+              step={displayedStep}
+              nextStep={evidencePreview === undefined ? session.next_step : undefined}
+              nextEdge={evidencePreview === undefined ? session.next_edge : undefined}
+              dark={dark}
+              focusNonce={focusNonce}
+            />
+          </Panel>
+          <Separator className="pane-separator" />
+          <Panel
+            id="walkthrough"
+            defaultSize="30"
+            minSize={360}
+            onResize={(size) => setWalkthroughNarrow((current) => {
+              const next = size.inPixels <= 720;
+              return current === next ? current : next;
+            })}
+          >
+            <RightPane
+              session={session}
+              settings={settings}
+              providers={providers}
+              actions={actions}
+              actionError={actionError}
+              compact={walkthroughNarrow}
+            />
+          </Panel>
+        </PanelGroup>
+      )}
+
       <SettingsModal
         opened={settingsOpened}
         settings={settings}
         onClose={() => setSettingsOpened(false)}
         onSave={saveSettings}
       />
-    </main>;
+    </main>
+  );
 }
 
 function messageOf(value: unknown): string {

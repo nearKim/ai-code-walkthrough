@@ -46,6 +46,33 @@ class TourNavigatorTest {
         assertNull(missing)
     }
 
+    @Test
+    fun `section scope never navigates outside its allowed steps`() {
+        val flowMap = FlowMap(
+            summary = "Flow",
+            steps = listOf(step("s1"), step("s2"), step("s3")),
+            edges = listOf(
+                edge("outside", from = "s1", to = "s2", importance = "high"),
+                edge("inside", from = "s1", to = "s3", importance = "medium"),
+            ),
+        )
+        val allowed = setOf("s1", "s3")
+
+        val preferred = navigator.preferredNextHop(flowMap, "s1", allowedStepIds = allowed)
+        val preferredIndex = navigator.findPreferredNextNavigableStepIndex(
+            flowMap,
+            fromIndex = 0,
+            visitedStepIds = emptySet(),
+            allowedStepIds = allowed,
+        )
+        val fallbackIndex = navigator.findNextNavigableStepIndex(flowMap, startIndex = 1, allowedStepIds = allowed)
+
+        assertEquals("inside", preferred?.id)
+        assertEquals(2, preferredIndex)
+        assertEquals(2, fallbackIndex)
+        assertNull(navigator.findNextNavigableStepIndex(flowMap, startIndex = 3, allowedStepIds = allowed))
+    }
+
     private fun step(id: String, broken: Boolean = false): FlowStep {
         return FlowStep(
             id = id,

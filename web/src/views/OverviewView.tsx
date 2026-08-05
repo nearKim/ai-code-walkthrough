@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   ScrollArea,
+  Select,
   Stack,
   Tabs,
   Text,
@@ -15,6 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArchitectureDiagram } from '../ArchitectureDiagram';
 import {
   availableArchitectureDepths,
+  runtimeCoverageGroups,
   type ArchitectureDepth,
 } from '../architecture/diagramModel';
 import {
@@ -37,6 +39,7 @@ import type {
   ArchitectureContainer,
   ArchitectureResponsibility,
   CodebaseArchitecture,
+  DiagramSection,
   EvidenceItem,
   FlowStep,
   LearningStage,
@@ -49,6 +52,8 @@ interface OverviewViewProps {
   readonly session: SessionSnapshot;
   readonly actions: RightPaneActions;
 }
+
+const ALL_SECTIONS = '__all__';
 
 export function OverviewView({ session, actions }: OverviewViewProps) {
   const flow = session.flow_map;
@@ -80,10 +85,10 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
     <div className="pane-column">
       <div className="pane-header overview-header">
         <div>
-          <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Walkthrough mapped</Text>
-          <Title order={2} lineClamp={1}>{session.question ?? 'Repository walkthrough'}</Title>
+          <p className="field-label">Walkthrough ready</p>
+          <Title order={2} lineClamp={1}>{session.question ?? 'Project walkthrough'}</Title>
         </div>
-        <Text size="sm" c="dimmed" lineClamp={2}>{flow.summary}</Text>
+        <Text size="sm" c="dimmed" lineClamp={3} className="overview-summary">{flow.summary}</Text>
       </div>
       <Tabs defaultValue={flow.architecture === undefined ? 'path' : 'architecture'} className="overview-tabs">
         <Tabs.List className="overview-tab-list">
@@ -95,8 +100,11 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
           <ArchitectureView
             architecture={flow.architecture}
             steps={flow.steps}
+            sections={flow.diagram_sections ?? []}
+            activeSectionId={session.active_section_id}
             brokenStepIds={broken}
             onPreviewStep={(stepId) => void actions.tour('preview', stepId)}
+            onStartSection={(sectionId) => void actions.tour('start_section', undefined, sectionId)}
             onPreviewEvidence={actions.previewEvidence}
             loadSymbolInventory={actions.loadSymbolInventory}
           />
@@ -104,7 +112,7 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
         <Tabs.Panel value="path" className="overview-panel">
           <div className="learning-path-workspace">
             <nav aria-label="Learning stages" className="learning-stage-rail">
-              <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Route</Text>
+              <p className="field-label">Route</p>
               {stages.map((stage, index) => <UnstyledButton
                 aria-current={index === stageIndex ? 'step' : undefined}
                 className={`learning-stage${index === stageIndex ? ' selected' : ''}`}
@@ -113,7 +121,7 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
               >
                 <span>{String(index + 1).padStart(2, '0')}</span>
                 <div>
-                  <Text size="sm" fw={700}>{stage.title}</Text>
+                  <Text size="sm" fw={650}>{stage.title}</Text>
                   <Text size="xs" c="dimmed">{stage.step_ids.length} code {stage.step_ids.length === 1 ? 'stop' : 'stops'}</Text>
                 </div>
               </UnstyledButton>)}
@@ -121,14 +129,14 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
             <ScrollArea className="learning-stage-detail" offsetScrollbars>
               {activeStage !== undefined && <div className="learning-stage-content">
                 <header className="stage-goal">
-                  <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>
+                  <p className="field-label">
                     Stage {stageIndex + 1} of {stages.length}
-                  </Text>
+                  </p>
                   <Title order={3}>{activeStage.goal}</Title>
                 </header>
                 <div aria-label="Validated code stops" className="code-stop-table" role="table">
                   <div aria-hidden="true" className="code-stop-table-header" role="row">
-                    <span>Stop</span><span>Validated stop</span><span>Type</span>
+                    <span>#</span><span>Stop</span><span>Type</span>
                   </div>
                   {stageSteps.map((step, index) => {
                     const disabled = broken.has(step.id);
@@ -142,17 +150,17 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
                     >
                       <span className="code-stop-index">{String(index + 1).padStart(2, '0')}</span>
                       <span className="code-stop-title">
-                        <Text size="sm" fw={700}>{step.title}</Text>
+                        <Text size="sm" fw={650}>{step.title}</Text>
                         <Text size="xs" c="dimmed" ff="monospace">{shortPath(step.file_path)}:{step.start_line}</Text>
                       </span>
-                      <Badge size="xs" variant="light" color={disabled ? 'red' : 'gray'}>
+                      <Badge size="xs" variant="outline" color={disabled ? 'red' : 'gray'}>
                         {disabled ? 'broken' : step.step_type ?? step.importance ?? 'step'}
                       </Badge>
                     </UnstyledButton>;
                   })}
                 </div>
                 {activeStage.checkpoint !== undefined && <div className="stage-checkpoint">
-                  <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Checkpoint</Text>
+                  <p className="field-label">Checkpoint</p>
                   <Text size="sm">{activeStage.checkpoint}</Text>
                 </div>}
               </div>}
@@ -170,9 +178,12 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
           variant="default"
           disabled={selectedStep === undefined || broken.has(selectedStep.id)}
           onClick={() => selectedStep !== undefined && void actions.tour('preview', selectedStep.id)}
-        >Preview selected</Button>
-        <Button size="xs" variant="subtle" onClick={() => void actions.copyMarkdown()}>Copy Markdown</Button>
-        <Button size="xs" variant="subtle" onClick={() => void actions.tour('new')}>New question</Button>
+        >Preview stop</Button>
+        <Button size="xs" variant="subtle" color="gray" onClick={() => void actions.copyMarkdown()}>Copy Markdown</Button>
+        <Button size="xs" variant="subtle" color="gray" onClick={() => void actions.downloadTechnicalReference()}>
+          Download technical reference
+        </Button>
+        <Button size="xs" variant="subtle" color="gray" onClick={() => void actions.tour('new')}>New walkthrough</Button>
       </Group>
     </div>
   );
@@ -181,15 +192,21 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
 function ArchitectureView({
   architecture,
   steps,
+  sections,
+  activeSectionId,
   brokenStepIds,
   onPreviewStep,
+  onStartSection,
   onPreviewEvidence,
   loadSymbolInventory,
 }: {
   readonly architecture: CodebaseArchitecture;
   readonly steps: ReadonlyArray<FlowStep>;
+  readonly sections: ReadonlyArray<DiagramSection>;
+  readonly activeSectionId?: string;
   readonly brokenStepIds: ReadonlySet<string>;
   readonly onPreviewStep: (stepId: string) => void;
+  readonly onStartSection: (sectionId: string) => void;
   readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
   readonly loadSymbolInventory: () => Promise<MechanicalSymbolInventory>;
 }) {
@@ -200,7 +217,9 @@ function ArchitectureView({
   const [ownerKey, setOwnerKey] = useState<string>();
   const [symbolInventory, setSymbolInventory] = useState<MechanicalSymbolInventory>();
   const [symbolError, setSymbolError] = useState<string>();
+  const [sectionId, setSectionId] = useState(activeSectionId ?? ALL_SECTIONS);
   const effectiveArchitecture = symbolInventory?.architecture ?? architecture;
+  const section = sections.find((candidate) => candidate.id === sectionId);
   const depths = useMemo(() => availableArchitectureDepths(effectiveArchitecture), [effectiveArchitecture]);
   const component = effectiveArchitecture.components.find((candidate) => candidate.id === componentId)
     ?? effectiveArchitecture.components[0];
@@ -238,6 +257,21 @@ function ArchitectureView({
     }
     if (!inventoryLoading && !depths.includes(depth)) setDepth(depths[0] ?? 'components');
   }, [componentId, containerId, depth, depths, effectiveArchitecture, inventoryLoading]);
+  useEffect(() => {
+    setSectionId((current) => {
+      if (activeSectionId !== undefined && sections.some((candidate) => candidate.id === activeSectionId)) return activeSectionId;
+      return sections.some((candidate) => candidate.id === current) || current === ALL_SECTIONS ? current : ALL_SECTIONS;
+    });
+  }, [activeSectionId, sections]);
+  useEffect(() => {
+    if (section === undefined) return;
+    const sectionComponentId = section.component_ids.find((id) =>
+      effectiveArchitecture.components.some((candidate) => candidate.id === id));
+    if (sectionComponentId === undefined) return;
+    setComponentId(sectionComponentId);
+    const runtime = effectiveArchitecture.containers?.find((candidate) => candidate.component_ids.includes(sectionComponentId));
+    if (runtime !== undefined) setContainerId(runtime.id);
+  }, [effectiveArchitecture, section]);
   useEffect(() => setOwnerKey(undefined), [componentId]);
   useEffect(() => {
     if (isVirtualSample) return;
@@ -265,27 +299,57 @@ function ArchitectureView({
   return (
     <div className="architecture-workspace">
       <div aria-label="Architecture diagram workspace" className="architecture-workspace-diagram">
-        {inventoryLoading && <Text size="sm" c="dimmed">Refreshing grounded architecture…</Text>}
-        {!inventoryLoading && effectiveArchitecture.components.length > 0 && <ArchitectureDiagram
-          architecture={effectiveArchitecture}
-          depth={depth}
-          selectedComponentId={componentId}
-          selectedContainerId={container?.id}
-          selectedOwnerKey={ownerKey}
-          onDepthChange={setDepth}
-          onComponentSelect={selectComponent}
-          onContainerSelect={selectContainer}
-          onOwnerSelect={setOwnerKey}
-          onEvidenceSelect={previewEvidence}
-        />}
+        {sections.length > 0 && <div aria-label="Diagram section" className="diagram-section-focus">
+          <Select
+            aria-label="Diagram focus"
+            label="Diagram focus"
+            data={[
+              { value: ALL_SECTIONS, label: 'Whole system' },
+              ...sections.map((candidate) => ({ value: candidate.id, label: candidate.title })),
+            ]}
+            value={sectionId}
+            onChange={(value) => setSectionId(value ?? ALL_SECTIONS)}
+          />
+          <div className="diagram-section-summary">
+            <Text fw={650} size="sm">{section?.title ?? 'Whole system'}</Text>
+            <Text size="xs" c="dimmed" lineClamp={2}>
+              {section?.summary ?? 'All verified components and relationships in this walkthrough.'}
+            </Text>
+          </div>
+          {section !== undefined && section.step_ids.length > 0 && <Button
+            size="compact-sm"
+            onClick={() => onStartSection(section.id)}
+          >Walk this section</Button>}
+        </div>}
+        <div className="architecture-diagram-viewport">
+          {inventoryLoading && <Text size="sm" c="dimmed">Refreshing grounded architecture…</Text>}
+          {!inventoryLoading && effectiveArchitecture.components.length > 0 && <ArchitectureDiagram
+            architecture={effectiveArchitecture}
+            depth={depth}
+            selectedComponentId={componentId}
+            selectedContainerId={container?.id}
+            selectedOwnerKey={ownerKey}
+            focusedComponentIds={section?.component_ids}
+            onDepthChange={setDepth}
+            onComponentSelect={selectComponent}
+            onContainerSelect={selectContainer}
+            onOwnerSelect={setOwnerKey}
+            onEvidenceSelect={previewEvidence}
+          />}
+        </div>
       </div>
       <ScrollArea aria-label="Component details" className="architecture-inspector" offsetScrollbars>
         <Stack gap="md" p="sm">
           {symbolError !== undefined && <Text size="xs" c="yellow">Mechanical structure unavailable: {symbolError}</Text>}
-          {depth === 'context' && <ContextInspector architecture={effectiveArchitecture} />}
-          {depth === 'containers' && container !== undefined && <ContainerInspector
-            container={container}
+          {depth === 'context' && <ContextInspector
             architecture={effectiveArchitecture}
+            onComponentSelect={(id) => { selectComponent(id); setDepth('components'); }}
+          />}
+          {depth === 'runtime' && container !== undefined && <RuntimeInspector
+            runtime={container}
+            runtimes={effectiveArchitecture.containers ?? []}
+            architecture={effectiveArchitecture}
+            onRuntimeSelect={selectContainer}
             onComponentSelect={(id) => { selectComponent(id); setDepth('components'); }}
             onPreviewEvidence={previewEvidence}
           />}
@@ -324,37 +388,62 @@ function ArchitectureView({
   );
 }
 
-function ContextInspector({ architecture }: { readonly architecture: CodebaseArchitecture }) {
-  const containers = architecture.containers ?? [];
+function ContextInspector({ architecture, onComponentSelect }: {
+  readonly architecture: CodebaseArchitecture;
+  readonly onComponentSelect: (componentId: string) => void;
+}) {
+  const groups = runtimeCoverageGroups(architecture);
   return <Stack gap="md">
-    <section className="component-summary">
-      <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>System context</Text>
-      <Title order={4}>{architecture.system_name ?? 'Analyzed system'}</Title>
+    <section className="component-summary architecture-context-summary">
+      <p className="field-label">System overview</p>
+      <Title order={4}>How this project runs</Title>
       <Text size="sm">{architecture.system_purpose}</Text>
+      <div className="architecture-metrics">
+        <div><strong>{architecture.components.length}</strong><span>parts</span></div>
+        <div><strong>{architecture.relationships.length}</strong><span>links</span></div>
+        <div><strong>{architecture.containers?.length ?? 0}</strong><span>entry points</span></div>
+      </div>
     </section>
-    <section className="architecture-fact-list">
-      <Text fw={700} size="sm">Verified entry surfaces</Text>
-      {containers.map((item) => <div key={item.id}>
-        <Text size="sm" fw={700}>{item.name}</Text>
-        <Text size="xs" c="dimmed">{humanize(item.kind)}</Text>
-      </div>)}
-    </section>
+    <div aria-label="Code groups by entry point" className="architecture-context-groups">
+      {groups.map((group) => <section className="architecture-context-group" key={group.id}>
+        <Group gap="xs" justify="space-between" wrap="nowrap">
+          <Text fw={700} size="sm">{group.label}</Text>
+          <Badge size="xs" variant="light">{group.detail}</Badge>
+        </Group>
+        <div className="architecture-context-components">
+          {group.componentIds.map((id) => {
+            const component = architecture.components.find((item) => item.id === id);
+            return component === undefined ? null : <UnstyledButton
+              aria-label={`View ${component.name}: ${component.responsibility}`}
+              key={id}
+              title={component.responsibility}
+              onClick={() => onComponentSelect(id)}
+            >
+              <Text size="sm" fw={700} lineClamp={1}>{component.name}</Text>
+              <Text size="xs" c="dimmed" lineClamp={1}>{roleForKind(component.kind)}</Text>
+            </UnstyledButton>;
+          })}
+        </div>
+      </section>)}
+    </div>
   </Stack>;
 }
 
-function ContainerInspector({ container, architecture, onComponentSelect, onPreviewEvidence }: {
-  readonly container: ArchitectureContainer;
+function RuntimeInspector({ runtime, runtimes, architecture, onRuntimeSelect, onComponentSelect, onPreviewEvidence }: {
+  readonly runtime: ArchitectureContainer;
+  readonly runtimes: ReadonlyArray<ArchitectureContainer>;
   readonly architecture: CodebaseArchitecture;
+  readonly onRuntimeSelect: (runtimeId: string) => void;
   readonly onComponentSelect: (componentId: string) => void;
   readonly onPreviewEvidence: (evidence: EvidenceItem) => void;
 }) {
-  const components = container.component_ids.map((id) => architecture.components.find((item) => item.id === id))
+  const components = runtime.component_ids.map((id) => architecture.components.find((item) => item.id === id))
     .filter((item): item is NonNullable<typeof item> => item !== undefined);
   return <Stack gap="md">
     <section className="component-summary">
-      <Group gap="xs" wrap="wrap"><Title order={4}>{container.name}</Title><Badge size="sm" variant="light">{humanize(container.kind)}</Badge></Group>
-      <Text size="sm">{container.responsibility}</Text>
-      <Group gap="xs" wrap="wrap">{container.evidence.map((item) => <Button
+      <Group gap="xs" wrap="wrap"><Title order={4}>{runtime.name}</Title><Badge size="sm" variant="light">{humanize(runtime.kind)}</Badge></Group>
+      <Text size="sm">{runtime.responsibility}</Text>
+      <Group gap="xs" wrap="wrap">{runtime.evidence.map((item) => <Button
         key={`${item.file_path}:${item.start_line}`}
         size="compact-xs"
         variant="subtle"
@@ -363,7 +452,14 @@ function ContainerInspector({ container, architecture, onComponentSelect, onPrev
       >{item.label}</Button>)}</Group>
     </section>
     <section className="architecture-fact-list">
-      <Text fw={700} size="sm">Included components</Text>
+      <Text fw={700} size="sm">Runtime entrypoints</Text>
+      {runtimes.map((item) => <UnstyledButton key={item.id} onClick={() => onRuntimeSelect(item.id)}>
+        <Text size="sm" fw={700} c={item.id === runtime.id ? 'var(--accent)' : undefined}>{item.name}</Text>
+        <Text size="xs" c="dimmed">{humanize(item.kind)} · {item.component_ids.length} reachable components</Text>
+      </UnstyledButton>)}
+    </section>
+    <section className="architecture-fact-list">
+      <Text fw={700} size="sm">Reachable components</Text>
       {components.map((item) => <UnstyledButton key={item.id} onClick={() => onComponentSelect(item.id)}>
         <Text size="sm" fw={700}>{item.name}</Text><Text size="xs" c="dimmed">{item.responsibility}</Text>
       </UnstyledButton>)}

@@ -1,8 +1,10 @@
 package com.github.nearkim.aicodewalkthrough.model
 
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FlowMapSerializationTest {
@@ -61,6 +63,15 @@ class FlowMapSerializationTest {
                   "checkpoint": "What owns walkthrough state?"
                 }
               ],
+              "diagram_sections": [
+                {
+                  "id": "system-overview",
+                  "title": "System overview",
+                  "summary": "Start with the UI boundary.",
+                  "component_ids": ["ui"],
+                  "step_ids": ["step-1"]
+                }
+              ],
               "steps": [
                 {
                   "id": "step-1",
@@ -83,5 +94,9 @@ class FlowMapSerializationTest {
         assertEquals("CodeTourPanel", flowMap.architecture?.components?.single()?.responsibilities?.single()?.evidence?.single()?.label)
         assertEquals(listOf("step-1"), flowMap.learningPath.single().stepIds)
         assertFalse(flowMap.learningPath.single().checkpoint.isNullOrBlank())
+        assertEquals("system-overview", flowMap.diagramSections.single().id)
+        assertEquals(listOf("ui"), flowMap.diagramSections.single().componentIds)
+        assertEquals(listOf("step-1"), flowMap.diagramSections.single().stepIds)
+        assertTrue(Json.encodeToString(flowMap).contains("\"diagram_sections\""))
     }
 }

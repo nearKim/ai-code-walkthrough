@@ -143,6 +143,13 @@ const flow = {
     step_ids: ['entry', 'logic'],
     checkpoint: 'You can explain how control reaches start.',
   }],
+  diagram_sections: [{
+    id: 'authentication',
+    title: 'Authentication',
+    summary: 'Follow the authenticated request boundary.',
+    component_ids: ['entrypoint', 'application'],
+    step_ids: ['entry'],
+  }],
   entry_step_id: 'entry',
   terminal_step_ids: ['logic'],
   edges: [edge],
@@ -233,7 +240,33 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
       return;
     }
     if (path === '/api/tour') {
-      const action = (request.postDataJSON() as { action: string }).action;
+      const payload = request.postDataJSON() as { action: string; section_id?: string };
+      const action = payload.action;
+      if (action === 'start_section') {
+        expect(payload.section_id).toBe('authentication');
+        session = {
+          ...baseSession,
+          state: 'TOUR_ACTIVE',
+          question: 'Learn this repository',
+          flow_map: flow,
+          active_section_id: payload.section_id,
+          current_step_index: 0,
+          displayed_step_index: 0,
+          displayed_step: firstStep,
+        };
+        await route.fulfill({ json: session });
+        return;
+      }
+      if (action === 'stop') {
+        session = {
+          ...baseSession,
+          state: 'OVERVIEW',
+          question: 'Learn this repository',
+          flow_map: flow,
+        };
+        await route.fulfill({ json: session });
+        return;
+      }
       const step = action === 'next' ? secondStep : firstStep;
       const index = action === 'next' ? 1 : 0;
       session = {
@@ -256,7 +289,7 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   await page.setViewportSize({ width: 2560, height: 1323 });
   await page.goto('/');
   const inputWorkspace = page.locator('.input-workspace');
-  await expect.poll(async () => inputWorkspace.evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(1800);
+  await expect.poll(async () => inputWorkspace.evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(1520);
   await page.setViewportSize({ width: 800, height: 900 });
   await expect.poll(async () => page.locator('.app-shell').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(800);
   await expect.poll(() => page.getByLabel('Color theme').evaluate((element) =>
@@ -270,12 +303,43 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   await page.getByLabel('Color theme').getByText('Light', { exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'light');
   await page.getByRole('button', { name: 'Learn codebase' }).click();
-  await expect(page.getByText('Walkthrough mapped')).toBeVisible();
+  await expect(page.getByText('Walkthrough ready')).toBeVisible();
   const codePanel = page.locator('#code');
   await expect(codePanel).toHaveCSS('width', '0px');
   await expect(codePanel).toHaveCSS('overflow', 'hidden');
   const diagramWorkspace = page.getByLabel('Architecture diagram workspace');
   const componentDetails = page.getByLabel('Component details');
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await expect.poll(async () => {
+    const [pane, frame] = await Promise.all([
+      diagramWorkspace.boundingBox(),
+      page.locator('.architecture-diagram-frame').boundingBox(),
+    ]);
+    return pane === null || frame === null ? Number.POSITIVE_INFINITY : pane.width - frame.width;
+  }).toBeLessThan(40);
+  const [wideDiagramBox, wideDetailsBox, wideFrameBox] = await Promise.all([
+    diagramWorkspace.boundingBox(),
+    componentDetails.boundingBox(),
+    page.locator('.architecture-diagram-frame').boundingBox(),
+  ]);
+  expect(wideDiagramBox).not.toBeNull();
+  expect(wideDetailsBox).not.toBeNull();
+  expect(wideFrameBox).not.toBeNull();
+  expect(wideDiagramBox!.width).toBeGreaterThan(wideDetailsBox!.width * 2);
+  expect(wideDetailsBox!.width).toBeLessThanOrEqual(440);
+  expect(wideDiagramBox!.width - wideFrameBox!.width).toBeLessThan(40);
+  await expect(page.getByRole('tab', { name: 'System: big picture' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'How this project runs' })).toBeVisible();
+  await expect(componentDetails.getByText('Coordinate the application run.', { exact: true })).toHaveCount(0);
+  await page.getByRole('combobox', { name: 'Diagram focus' }).click();
+  await page.getByRole('option', { name: 'Authentication' }).click();
+  await expect(page.getByText('Follow the authenticated request boundary.')).toBeVisible();
+  await page.getByRole('button', { name: 'Walk this section' }).click();
+  await expect(page.getByText('Section · Authentication')).toBeVisible();
+  await expect(page.getByText('Step 1/1')).toBeVisible();
+  await page.getByRole('button', { name: 'End tour' }).click();
+  await expect(page.getByText('Walkthrough ready')).toBeVisible();
+  await page.setViewportSize({ width: 800, height: 900 });
   const [diagramBox, detailsBox] = await Promise.all([
     diagramWorkspace.boundingBox(),
     componentDetails.boundingBox(),
@@ -283,17 +347,25 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   expect(diagramBox).not.toBeNull();
   expect(detailsBox).not.toBeNull();
   expect(diagramBox!.x).toBeLessThan(detailsBox!.x);
+  const [diagramPaneBox, diagramFrameBox] = await Promise.all([
+    page.locator('.architecture-workspace-diagram').boundingBox(),
+    page.locator('.architecture-diagram-frame').boundingBox(),
+  ]);
+  expect(diagramPaneBox).not.toBeNull();
+  expect(diagramFrameBox).not.toBeNull();
+  expect(diagramFrameBox!.y).toBeGreaterThanOrEqual(diagramPaneBox!.y);
+  expect(diagramFrameBox!.height).toBeGreaterThanOrEqual(260);
   await expect(componentDetails.getByText('Run an application from a local entrypoint.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Context' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Containers' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Components' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Code' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Components' }).click();
+  await expect(page.getByRole('tab', { name: 'System: big picture' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Runtime: entrypoint path' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Packages: import graph' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Code: files & symbols' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Packages: import graph' }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Program entrypoint, Accept process startup/ }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Application, Coordinate the application run/ }).click();
-  await page.getByRole('tab', { name: 'Code' }).click();
+  await page.getByRole('tab', { name: 'Code: files & symbols' }).click();
   const codeOwnership = page.getByLabel('Class ownership');
   await expect(codeOwnership.locator('.code-owner-row')).toHaveCount(1);
   await expect(codeOwnership.getByText('ApplicationRunner', { exact: true })).toBeVisible();
@@ -316,6 +388,30 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   expect(mobileDiagramBox).not.toBeNull();
   expect(mobileDetailsBox).not.toBeNull();
   expect(mobileDetailsBox!.y).toBeGreaterThan(mobileDiagramBox!.y);
+  const mobileFrameBox = await page.locator('.architecture-diagram-frame').boundingBox();
+  const mobileNodeBoxes = await page.locator('.diagram-node').evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { left: box.left, right: box.right };
+  }));
+  expect(mobileFrameBox).not.toBeNull();
+  expect(mobileFrameBox!.y + mobileFrameBox!.height).toBeLessThanOrEqual(
+    mobileDiagramBox!.y + mobileDiagramBox!.height,
+  );
+  await expect.poll(() => page.getByRole('tabpanel', { name: 'Architecture' }).evaluate((panel) =>
+    panel.scrollHeight > panel.clientHeight,
+  )).toBe(true);
+  expect(mobileNodeBoxes.every((box) =>
+    box.left >= mobileFrameBox!.x && box.right <= mobileFrameBox!.x + mobileFrameBox!.width)).toBe(true);
+  const [mobileDepthListBox, mobileDepthTabBoxes] = await Promise.all([
+    page.getByLabel('Architecture depth').boundingBox(),
+    page.getByLabel('Architecture depth').getByRole('tab').evaluateAll((tabs) => tabs.map((tab) => {
+      const box = tab.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    })),
+  ]);
+  expect(mobileDepthListBox).not.toBeNull();
+  expect(mobileDepthTabBoxes.every((box) =>
+    box.left >= mobileDepthListBox!.x && box.right <= mobileDepthListBox!.x + mobileDepthListBox!.width)).toBe(true);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.setViewportSize({ width: 1024, height: 800 });
   await codeOwnership.getByRole('button', { name: 'Show ApplicationRunner.start source' }).click();
@@ -333,22 +429,22 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
     (element) => element.scrollWidth <= element.clientWidth,
   )).toBe(true);
   await expect(codePanel.getByText('L6–6')).toBeVisible();
-  await page.getByRole('button', { name: 'Hide code pane' }).click();
+  await page.getByRole('button', { name: 'Hide source' }).click();
   await expect(codePanel).toHaveCSS('width', '0px');
-  await page.getByRole('button', { name: 'Show code pane' }).click();
+  await page.getByRole('button', { name: 'Show source' }).click();
   await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);
-  await page.getByRole('button', { name: 'Hide code pane' }).click();
+  await page.getByRole('button', { name: 'Hide source' }).click();
   await expect(codePanel).toHaveCSS('width', '0px');
 
-  await page.getByRole('button', { name: 'Preview selected' }).click();
-  await expect(page.getByRole('button', { name: 'Hide code pane' })).toBeVisible();
+  await page.getByRole('button', { name: 'Preview stop' }).click();
+  await expect(page.getByRole('button', { name: 'Hide source' })).toBeVisible();
   await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);
   await expect(page.locator('.walkthrough-zone-annotation')).toContainText('crosses into application logic');
   await expect(page.locator('.walkthrough-next-line').first()).toBeVisible();
 
   await page.getByRole('button', { name: 'Start guided tour' }).click();
   await expect(page.getByText('Step 1/2')).toBeVisible();
-  await page.getByRole('button', { name: 'Next ▶' }).click();
+  await page.getByRole('button', { name: 'Next stop' }).click();
   await expect(page.getByText('Step 2/2')).toBeVisible();
   await expect(page.locator('.walkthrough-zone-annotation')).toContainText('reached the implementation');
 });

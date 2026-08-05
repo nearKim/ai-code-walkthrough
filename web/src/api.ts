@@ -5,6 +5,7 @@ import type {
   ProviderId,
   ProviderStatus,
   SessionSnapshot,
+  TourAction,
   SourceFile,
   WalkthroughSettings,
 } from './types';
@@ -46,12 +47,12 @@ interface RawSymbolInventory {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
-    const message = await response.json()
+    const message = await readJson<unknown>(response, path)
       .then((body: unknown) => isErrorResponse(body) ? body.message : undefined)
       .catch(() => undefined);
     throw new Error(message ?? `${response.status} ${response.statusText}`);
   }
-  return response.json() as Promise<T>;
+  return readJson(response, path);
 }
 
 function isErrorResponse(value: unknown): value is ErrorResponse {
@@ -80,20 +81,39 @@ export const api = {
   startMapping: (question: string, mode: AnalysisModeId, provider: ProviderId): Promise<SessionSnapshot> =>
     request('/api/mapping', jsonRequest('POST', { question, mode, provider })),
   cancelMapping: (): Promise<SessionSnapshot> => request('/api/mapping', { method: 'DELETE' }),
-  tour: (action: 'start' | 'preview' | 'next' | 'previous' | 'stop' | 'new', stepId?: string): Promise<SessionSnapshot> =>
-    request('/api/tour', jsonRequest('POST', { action, step_id: stepId })),
+  tour: (action: TourAction, stepId?: string, sectionId?: string): Promise<SessionSnapshot> =>
+    request('/api/tour', jsonRequest('POST', { action, step_id: stepId, section_id: sectionId })),
   answer: (question: string): Promise<SessionSnapshot> =>
     request('/api/step-answer', jsonRequest('POST', { question })),
   source: (path: string): Promise<SourceFile> => request(`/api/source?path=${encodeURIComponent(path)}`),
   exportMarkdown: async (): Promise<string> => {
     const response = await fetch('/api/export');
     if (!response.ok) {
-      const body = await response.json() as ErrorResponse;
+      const body = await readJson<ErrorResponse>(response, '/api/export');
       throw new Error(body.message ?? `${response.status} ${response.statusText}`);
     }
     return response.text();
   },
+  exportTechnicalReference: async (): Promise<Blob> => {
+    const response = await fetch('/api/export/technical');
+    if (!response.ok) {
+      const body = await readJson<ErrorResponse>(response, '/api/export/technical');
+      throw new Error(body.message ?? `${response.status} ${response.statusText}`);
+    }
+    return response.blob();
+  },
 };
+
+async function readJson<T>(response: Response, path: string): Promise<T> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('json')) {
+    const preview = await response.text()
+      .then((body) => body.trim().slice(0, 80))
+      .catch(() => '');
+    throw new Error(`${path} returned ${response.status} ${response.statusText} ${contentType || 'without a content type'} instead of JSON${preview.length > 0 ? `: ${preview}` : ''}`);
+  }
+  return response.json() as Promise<T>;
+}
 
 function normalizeSymbolInventory(raw: RawSymbolInventory): MechanicalSymbolInventory {
   const callable = (item: RawCallable) => ({

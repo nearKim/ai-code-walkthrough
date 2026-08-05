@@ -64,11 +64,34 @@ class WebApplicationTest {
             assertEquals("OVERVIEW", sampleSnapshot.state)
             assertEquals(SampleWalkthrough.question, sampleSnapshot.question)
             assertEquals("sample-map", sampleSnapshot.flowMap?.entryStepId)
+            assertEquals("system-overview", sampleSnapshot.flowMap?.diagramSections?.firstOrNull()?.id)
             assertTrue(samplePayload.contains("WalkthroughSample.mapSystem"))
             val sampleSource = client.get("/api/source?path=${SampleWalkthrough.sourcePath}")
             assertEquals(HttpStatusCode.OK, sampleSource.status)
             assertTrue(sampleSource.bodyAsText().contains("This source exists only to demonstrate"))
             assertTrue(sampleSource.bodyAsText().contains("class WalkthroughSample"))
+
+            val technicalReference = client.get("/api/export/technical")
+            assertEquals(HttpStatusCode.OK, technicalReference.status)
+            assertTrue(technicalReference.headers[HttpHeaders.ContentDisposition]?.contains("code-walkthrough.html") == true)
+            assertTrue(technicalReference.bodyAsText().contains("Feature walkthrough"))
+
+            val scopedTour = client.post("/api/tour") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"action":"start_section","section_id":"system-overview"}""")
+            }
+            val scopedSnapshot = Json.decodeFromString<SessionSnapshot>(scopedTour.bodyAsText())
+            assertEquals("TOUR_ACTIVE", scopedSnapshot.state)
+            assertEquals("system-overview", scopedSnapshot.activeSectionId)
+            assertEquals("sample-map", scopedSnapshot.displayedStep?.id)
+
+            val sectionEnd = client.post("/api/tour") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"action":"next"}""")
+            }
+            val endedSnapshot = Json.decodeFromString<SessionSnapshot>(sectionEnd.bodyAsText())
+            assertEquals("OVERVIEW", endedSnapshot.state)
+            assertEquals(null, endedSnapshot.activeSectionId)
 
             val mapping = client.post("/api/mapping") {
                 contentType(ContentType.Application.Json)
@@ -123,6 +146,34 @@ class WebApplicationTest {
             assertFalse(event.data.contains("\"displayed_step\":null"))
         } finally {
             session.close()
+        }
+    }
+
+    @Test
+    fun `restores a completed session from disk`() {
+        val root = temporary.newFolder("persisted-repository").toPath()
+        val settings = WebSettingsStore(root.resolve("settings/settings.json"))
+        val provider = FakeProvider()
+        val engine = WalkthroughEngine(root, settings::get, temporary.newFolder("persisted-analysis").toPath()) { provider }
+        val store = WebSessionStore(root, root.resolve("settings/session.json"))
+        val first = WebSession(root, settings, engine, store)
+        try {
+            first.showSample()
+            val active = first.tour("start", null).getOrThrow()
+            assertEquals("TOUR_ACTIVE", active.state)
+        } finally {
+            first.close()
+        }
+
+        val second = WebSession(root, settings, engine, store)
+        try {
+            val restored = second.snapshot()
+            assertEquals("TOUR_ACTIVE", restored.state)
+            assertEquals(SampleWalkthrough.question, restored.question)
+            assertEquals("sample-map", restored.flowMap?.entryStepId)
+            assertEquals("sample-map", restored.displayedStep?.id)
+        } finally {
+            second.close()
         }
     }
 

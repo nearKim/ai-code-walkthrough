@@ -4,6 +4,7 @@ import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureResponsibility
 import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
 import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
+import com.github.nearkim.aicodewalkthrough.model.DiagramSection
 import com.github.nearkim.aicodewalkthrough.model.EvidenceItem
 import com.github.nearkim.aicodewalkthrough.model.FlowMap
 import com.github.nearkim.aicodewalkthrough.model.FlowStep
@@ -126,6 +127,29 @@ internal object SampleWalkthrough {
                 coverageNotes = listOf(
                     "No provider, subagent, AST, semantic, or symbolic-execution tool ran for this sample.",
                     "The displayed source is virtual and exists only to demonstrate the renderer.",
+                ),
+            ),
+            diagramSections = listOf(
+                DiagramSection(
+                    id = "system-overview",
+                    title = "System overview",
+                    summary = "Orient to the validated system boundary before following its behavior.",
+                    componentIds = listOf("sample-system", "sample-behavior", "sample-evidence"),
+                    stepIds = listOf("sample-map"),
+                ),
+                DiagramSection(
+                    id = "component-map",
+                    title = "Component map",
+                    summary = "Inspect the components and their connected representative stops.",
+                    componentIds = listOf("sample-system", "sample-behavior", "sample-evidence"),
+                    stepIds = listOf("sample-map", "sample-behavior", "sample-evidence"),
+                ),
+                DiagramSection(
+                    id = "feature-walkthrough",
+                    title = "Feature walkthrough",
+                    summary = "Follow the representative path from system map through behavior and evidence.",
+                    componentIds = listOf("sample-system", "sample-behavior", "sample-evidence"),
+                    stepIds = listOf("sample-map", "sample-behavior", "sample-evidence"),
                 ),
             ),
             learningPath = listOf(

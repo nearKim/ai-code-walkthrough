@@ -155,9 +155,12 @@ export function CodePane({ step, nextStep, nextEdge, dark, focusNonce }: CodePan
   if (source === undefined && step === undefined) {
     return (
       <Center className="code-empty">
-        <Stack align="center" gap="xs">
-          <Text fw={600}>Code appears here</Text>
-          <Text c="dimmed" size="sm">Map a walkthrough, then preview or start a validated code stop.</Text>
+        <Stack align="center" gap={6} className="code-empty-card">
+          <p className="field-label">Source pane</p>
+          <Text fw={650}>No stop selected</Text>
+          <Text c="dimmed" size="sm" ta="center">
+            Map a walkthrough, then preview a stop or start the tour.
+          </Text>
         </Stack>
       </Center>
     );
@@ -166,8 +169,15 @@ export function CodePane({ step, nextStep, nextEdge, dark, focusNonce }: CodePan
   return (
     <div className="code-pane">
       <div className="code-toolbar">
-        <Text size="sm" fw={600} truncate>{source?.path ?? step?.file_path}</Text>
-        {step !== undefined && <Text size="xs" c="dimmed">L{step.start_line}–{step.end_line}</Text>}
+        <div className="code-path-block">
+          <p className="field-label">File</p>
+          <Text size="sm" fw={600} ff="monospace" truncate>{source?.path ?? step?.file_path}</Text>
+        </div>
+        {step !== undefined && (
+          <Text size="xs" className="code-range" ff="monospace">
+            L{step.start_line}–{step.end_line}
+          </Text>
+        )}
       </div>
       {error !== undefined && <Alert color="red" title="Source unavailable">{error}</Alert>}
       {loading && source === undefined

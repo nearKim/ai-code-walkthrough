@@ -98,11 +98,21 @@ data class FlowStep(
 )
 
 @Serializable
+data class DiagramSection(
+    val id: String,
+    val title: String,
+    val summary: String? = null,
+    @SerialName("component_ids") val componentIds: List<String> = emptyList(),
+    @SerialName("step_ids") val stepIds: List<String> = emptyList(),
+)
+
+@Serializable
 data class FlowMap(
     val mode: String? = null,
     val summary: String,
     val steps: List<FlowStep>,
     val architecture: CodebaseArchitecture? = null,
+    @SerialName("diagram_sections") val diagramSections: List<DiagramSection> = emptyList(),
     @SerialName("learning_path") val learningPath: List<LearningStage> = emptyList(),
     @SerialName("entry_step_id") val entryStepId: String? = null,
     @SerialName("terminal_step_ids") val terminalStepIds: List<String> = emptyList(),
@@ -120,6 +130,7 @@ data class LlmResponse(
     val summary: String? = null,
     val steps: List<FlowStep>? = null,
     val architecture: CodebaseArchitecture? = null,
+    @SerialName("diagram_sections") val diagramSections: List<DiagramSection>? = null,
     @SerialName("learning_path") val learningPath: List<LearningStage>? = null,
     @SerialName("entry_step_id") val entryStepId: String? = null,
     @SerialName("terminal_step_ids") val terminalStepIds: List<String>? = null,
@@ -142,6 +153,7 @@ data class LlmResponse(
             summary = summary,
             steps = steps,
             architecture = architecture,
+            diagramSections = diagramSections ?: emptyList(),
             learningPath = learningPath ?: emptyList(),
             entryStepId = entryStepId,
             terminalStepIds = terminalStepIds ?: emptyList(),
