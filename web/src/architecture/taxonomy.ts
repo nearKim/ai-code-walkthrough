@@ -1,6 +1,6 @@
 export type DiagramTone = 'primary' | 'data' | 'dependency' | 'neutral';
 
-export const kindOrder = ['entrypoint', 'application', 'domain', 'infrastructure', 'data', 'shared'];
+export const kindOrder = ['entrypoint', 'application', 'domain', 'infrastructure', 'data', 'shared', 'python_package'];
 
 export function toneForKind(kind: string): DiagramTone {
   if (kind === 'entrypoint' || kind === 'application') return 'primary';
@@ -12,7 +12,7 @@ export function toneForKind(kind: string): DiagramTone {
 export function toneForRelationship(kind: string): DiagramTone {
   if (kind === 'call' || kind === 'calls' || kind === 'creates' || kind === 'instantiation') return 'primary';
   if (kind === 'read' || kind === 'reads' || kind === 'write' || kind === 'writes' || kind === 'data_flow') return 'data';
-  if (kind === 'depends_on' || kind === 'dependency') return 'dependency';
+  if (kind === 'depends_on' || kind === 'dependency' || kind === 'imports') return 'dependency';
   return 'neutral';
 }
 
@@ -31,6 +31,7 @@ export function titleForKind(kind: string): string {
     infrastructure: 'Infrastructure',
     data: 'Data boundaries',
     shared: 'Shared contracts',
+    python_package: 'Python packages',
   };
   return titles[kind] ?? humanize(kind);
 }
@@ -43,6 +44,7 @@ export function roleForKind(kind: string): string {
     infrastructure: 'runtime infrastructure',
     data: 'data boundary',
     shared: 'shared contract',
+    python_package: 'verified package',
   };
   return roles[kind] ?? humanize(kind);
 }

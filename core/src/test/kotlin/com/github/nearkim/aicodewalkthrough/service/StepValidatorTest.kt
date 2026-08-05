@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service
 
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureContainer
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureResponsibility
 import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
 import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
@@ -322,7 +323,25 @@ class StepValidatorTest {
                     mode = "understand",
                     summary = "Application delegates to a service.",
                     architecture = CodebaseArchitecture(
+                        systemName = "Example",
                         systemPurpose = "Demonstrate an application boundary.",
+                        containers = listOf(
+                            ArchitectureContainer(
+                                id = "cli",
+                                name = "example-cli",
+                                kind = "command_line_application",
+                                responsibility = "Starts the application.",
+                                componentIds = listOf("application", "invented"),
+                                evidence = listOf(
+                                    EvidenceItem(
+                                        kind = "entrypoint",
+                                        label = "example-cli",
+                                        filePath = "src/App.kt",
+                                        startLine = 1,
+                                    ),
+                                ),
+                            ),
+                        ),
                         components = listOf(
                             ArchitectureComponent(
                                 id = "application",
@@ -453,6 +472,7 @@ class StepValidatorTest {
 
             val architecture = validated.architecture ?: error("Expected a validated architecture")
             assertEquals(listOf("application", "service"), architecture.components.map { it.id })
+            assertEquals(listOf("application"), architecture.containers.single().componentIds)
             val application = architecture.components.first()
             assertEquals(listOf("src/App.kt"), application.keyPaths)
             assertTrue(application.uncertain)

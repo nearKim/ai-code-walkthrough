@@ -994,6 +994,35 @@ body {
   min-width: min(380px, 70%);
 }
 
+.architecture-depth-tabs [role="tablist"] {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  border-bottom: 0;
+}
+
+.architecture-depth-tabs [role="tab"] {
+  min-width: 88px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.architecture-fact-list {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.architecture-fact-list > button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 0;
+  text-align: left;
+}
+
 .architecture-diagram-frame {
   position: relative;
   width: 100%;
@@ -1449,6 +1478,54 @@ body {
   .overview-header {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    min-width: 0;
+  }
+
+  .overview-tab-list {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .overview-tab-list button {
+    min-width: 112px;
+  }
+
+  .architecture-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(360px, 0.9fr) minmax(260px, 1fr);
+  }
+
+  .architecture-workspace-diagram {
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .diagram-toolbar {
+    display: grid;
+    align-items: start;
+    gap: 6px;
+  }
+
+  .diagram-toolbar > div {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .architecture-depth-tabs [role="tab"] {
+    min-width: 86px;
+  }
+
+  .pane-actions {
+    padding-right: 8px;
+    padding-left: 8px;
   }
 }
 

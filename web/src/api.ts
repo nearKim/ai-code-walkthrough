@@ -1,5 +1,6 @@
 import type {
   AnalysisModeId,
+  CodebaseArchitecture,
   MechanicalSymbolInventory,
   ProviderId,
   ProviderStatus,
@@ -33,6 +34,7 @@ interface RawSymbolInventory {
   readonly files_scanned: number;
   readonly symbol_count: number;
   readonly truncated: boolean;
+  readonly architecture?: CodebaseArchitecture;
   readonly modules: ReadonlyArray<{
     readonly p: string;
     readonly i: ReadonlyArray<string>;
@@ -105,6 +107,7 @@ function normalizeSymbolInventory(raw: RawSymbolInventory): MechanicalSymbolInve
     files_scanned: raw.files_scanned,
     symbol_count: raw.symbol_count,
     truncated: raw.truncated,
+    architecture: raw.architecture,
     modules: raw.modules.map((module) => ({
       path: module.p,
       imports: module.i,

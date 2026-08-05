@@ -1,6 +1,7 @@
 package com.github.nearkim.aicodewalkthrough.service.validation
 
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureComponent
+import com.github.nearkim.aicodewalkthrough.model.ArchitectureContainer
 import com.github.nearkim.aicodewalkthrough.model.ArchitectureResponsibility
 import com.github.nearkim.aicodewalkthrough.model.CodebaseArchitecture
 import com.github.nearkim.aicodewalkthrough.model.ComponentRelationship
@@ -38,12 +39,37 @@ internal class ArchitectureValidator(
         val groundedComponents = components.map { component ->
             validateResponsibilityReferences(component, componentById.keys, relationshipById)
         }
+        val containers = architecture.containers
+            .mapNotNull { validateContainer(it, componentById) }
+            .distinctBy { it.id }
 
         return architecture.copy(
+            systemName = architecture.systemName?.trim()?.takeIf(String::isNotBlank),
+            containers = containers,
             components = groundedComponents,
             relationships = relationships,
             crossCuttingConcerns = architecture.crossCuttingConcerns.cleanTextItems(),
             coverageNotes = architecture.coverageNotes.cleanTextItems(),
+        )
+    }
+
+    private fun validateContainer(
+        container: ArchitectureContainer,
+        componentById: Map<String, ArchitectureComponent>,
+    ): ArchitectureContainer? {
+        if (container.id.isBlank() || container.name.isBlank() || container.responsibility.isBlank()) return null
+        val componentIds = container.componentIds.filter(componentById::containsKey).distinct()
+        if (componentIds.isEmpty()) return null
+        val defaultPath = container.evidence.firstNotNullOfOrNull { it.filePath }
+            ?: componentById.getValue(componentIds.first()).keyPaths.first()
+        val notes = mutableListOf<String>()
+        val evidence = evidenceSanitizer.sanitize(container.evidence, defaultPath, notes)
+        if (evidence.value.none { it.filePath != null && it.startLine != null }) return null
+        return container.copy(
+            kind = container.kind.ifBlank { "application" },
+            componentIds = componentIds,
+            evidence = evidence.value,
+            uncertain = container.uncertain || componentIds.size != container.componentIds.distinct().size || evidence.changed,
         )
     }
 

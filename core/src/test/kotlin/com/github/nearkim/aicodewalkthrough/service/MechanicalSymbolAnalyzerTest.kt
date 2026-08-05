@@ -18,7 +18,11 @@ class MechanicalSymbolAnalyzerTest {
     @Test
     fun `python AST inventory exposes code owners methods state and ranges before mapping`() = runBlocking {
         val root = Files.createTempDirectory("python-symbols")
-        Files.writeString(root.resolve("pyproject.toml"), "[project]\nname = \"sample\"\n")
+        Files.writeString(
+            root.resolve("pyproject.toml"),
+            "[project]\nname = \"sample\"\ndescription = \"Run the sample service.\"\n" +
+                "[project.scripts]\nsample-cli = \"sample.service:build_runner\"\n",
+        )
         Files.createDirectories(root.resolve("sample"))
         Files.writeString(
             root.resolve("sample/service.py"),
@@ -74,6 +78,16 @@ class MechanicalSymbolAnalyzerTest {
         )
         assertFalse(inventory.payload.getValue("truncated").jsonPrimitive.content.toBoolean())
         val architecture = inventory.payload.getValue("architecture").jsonObject
+        assertEquals("sample", architecture.getValue("system_name").jsonPrimitive.content)
+        assertEquals("Run the sample service.", architecture.getValue("system_purpose").jsonPrimitive.content)
+        val container = architecture.getValue("containers").jsonArray.single().jsonObject
+        assertEquals("sample-cli", container.getValue("name").jsonPrimitive.content)
+        assertEquals("command_line_application", container.getValue("kind").jsonPrimitive.content)
+        assertEquals(listOf("python-sample"), container.getValue("component_ids").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(
+            listOf("pyproject.toml", "sample/service.py"),
+            container.getValue("evidence").jsonArray.map { it.jsonObject.getValue("file_path").jsonPrimitive.content },
+        )
         val component = architecture.getValue("components").jsonArray.single().jsonObject
         assertEquals("sample", component.getValue("name").jsonPrimitive.content)
         val responsibility = component.getValue("responsibilities").jsonArray
@@ -90,9 +104,10 @@ class MechanicalSymbolAnalyzerTest {
     }
 
     @Test
-    fun `persisted inventory is reused only while the Python source fingerprint matches`() = runBlocking {
+    fun `persisted inventory is reused only while source and project metadata match`() = runBlocking {
         val root = Files.createTempDirectory("python-symbol-persistence")
         val analysisRoot = Files.createTempDirectory("python-symbol-persistence-cache")
+        Files.writeString(root.resolve("pyproject.toml"), "[project]\nname = \"sample\"\n")
         Files.writeString(root.resolve("app.py"), "def run() -> int:\n    return 1\n")
 
         val first = MechanicalSymbolAnalyzer.analyze(root, Json, analysisRoot)!!
@@ -123,7 +138,7 @@ class MechanicalSymbolAnalyzerTest {
                 .getValue("z").jsonPrimitive.content.toBoolean(),
         )
 
-        Files.writeString(root.resolve("app.py"), "def run() -> int:\n    return 2\n")
+        Files.writeString(root.resolve("pyproject.toml"), "[project]\nname = \"renamed-sample\"\n")
         val changed = MechanicalSymbolAnalyzer.analyze(root, Json, analysisRoot)!!
 
         assertFalse(changed.cacheHit)

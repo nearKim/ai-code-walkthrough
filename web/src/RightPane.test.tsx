@@ -113,7 +113,25 @@ test('explains component roles and links details to validated code', async () =>
         evidence: [],
       }],
       architecture: {
+        system_name: 'Experiment system',
         system_purpose: 'Handle a request.',
+        containers: [{
+          id: 'cli',
+          name: 'experiment-cli',
+          kind: 'command_line_application',
+          responsibility: 'Starts the experiment from a terminal.',
+          component_ids: ['interface', 'application'],
+          evidence: [{ kind: 'entrypoint', label: 'experiment-cli', file_path: 'src/cli.ts', start_line: 1, end_line: 1 }],
+          uncertain: false,
+        }, {
+          id: 'mcp',
+          name: 'experiment-mcp',
+          kind: 'mcp_server',
+          responsibility: 'Starts the experiment through MCP.',
+          component_ids: ['application'],
+          evidence: [{ kind: 'entrypoint', label: 'experiment-mcp', file_path: 'src/app.ts', start_line: 1, end_line: 1 }],
+          uncertain: false,
+        }],
         components: [{
           id: 'application',
           name: 'Experiment application',
@@ -202,17 +220,22 @@ test('explains component roles and links details to validated code', async () =>
     </MantineProvider>,
   );
 
-  expect(screen.getByLabelText('Architecture depth')).toBeVisible();
+  expect(await screen.findByLabelText('Architecture depth')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Zoom in' })).toBeVisible();
   expect(screen.getByLabelText('Architecture diagram workspace')).toBeVisible();
   expect(screen.getByLabelText('Component details')).toBeVisible();
-  expect(screen.queryByText('What this system does')).not.toBeInTheDocument();
-  expect(screen.queryByText('Handle a request.')).not.toBeInTheDocument();
+  expect(screen.getByRole('tab', { name: 'Context' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Containers' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Components' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Code' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Experiment system' })).toBeVisible();
+  expect(within(screen.getByLabelText('Component details')).getByText('Handle a request.')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
   expect(screen.getAllByText('application workflow').length).toBeGreaterThan(0);
   const codeOwnership = screen.getByLabelText('Class ownership');
   expect(codeOwnership).toBeVisible();
   await waitFor(() => expect(within(codeOwnership).getByRole('button', { name: 'Show ExperimentRunner.run source' })).toBeVisible());
-  const experimentRunner = screen.getByText('ExperimentRunner').closest('.code-owner-row');
+  const experimentRunner = within(codeOwnership).getByText('ExperimentRunner').closest('.code-owner-row');
   expect(experimentRunner).not.toBeNull();
   expect(within(experimentRunner as HTMLElement).getByText('run()')).toBeVisible();
   expect(within(experimentRunner as HTMLElement).getByText('Coordinate one experiment run')).toBeVisible();
@@ -230,10 +253,10 @@ test('explains component roles and links details to validated code', async () =>
     expect.objectContaining({ label: 'ExperimentRunner.run', start_line: 6 }),
     'Sequences the lifecycle operations.',
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Interfaces, 1 component' }));
-  await waitFor(() => expect(within(selectedComponent).getByRole('heading', { name: 'Operator interfaces' })).toBeVisible());
+  fireEvent.click(screen.getByRole('tab', { name: 'Components' }));
   fireEvent.click(screen.getByRole('button', { name: 'Operator interfaces, Accept operator commands.' }));
-  expect(screen.getByRole('radio', { name: 'Component' })).toBeChecked();
+  await waitFor(() => expect(within(screen.getByLabelText('Selected diagram component')).getByRole('heading', { name: 'Operator interfaces' })).toBeVisible());
+  expect(screen.getByRole('tab', { name: 'Components' })).toHaveAttribute('data-active', 'true');
 
   expect(screen.getByRole('tab', { name: 'System notes' })).toBeVisible();
   expect(screen.getByText('Rules affecting multiple components')).not.toBeVisible();

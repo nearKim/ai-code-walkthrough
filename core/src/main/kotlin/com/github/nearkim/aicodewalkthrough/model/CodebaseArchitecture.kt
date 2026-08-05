@@ -6,10 +6,23 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class CodebaseArchitecture(
     @SerialName("system_purpose") val systemPurpose: String,
+    @SerialName("system_name") val systemName: String? = null,
+    val containers: List<ArchitectureContainer> = emptyList(),
     val components: List<ArchitectureComponent> = emptyList(),
     val relationships: List<ComponentRelationship> = emptyList(),
     @SerialName("cross_cutting_concerns") val crossCuttingConcerns: List<String> = emptyList(),
     @SerialName("coverage_notes") val coverageNotes: List<String> = emptyList(),
+)
+
+@Serializable
+data class ArchitectureContainer(
+    val id: String,
+    val name: String,
+    val kind: String = "application",
+    val responsibility: String,
+    @SerialName("component_ids") val componentIds: List<String> = emptyList(),
+    val evidence: List<EvidenceItem> = emptyList(),
+    val uncertain: Boolean = false,
 )
 
 @Serializable

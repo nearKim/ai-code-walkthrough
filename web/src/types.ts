@@ -86,8 +86,20 @@ export interface ComponentRelationship {
   readonly uncertain: boolean;
 }
 
+export interface ArchitectureContainer {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: string;
+  readonly responsibility: string;
+  readonly component_ids: ReadonlyArray<string>;
+  readonly evidence: ReadonlyArray<EvidenceItem>;
+  readonly uncertain: boolean;
+}
+
 export interface CodebaseArchitecture {
+  readonly system_name?: string;
   readonly system_purpose: string;
+  readonly containers?: ReadonlyArray<ArchitectureContainer>;
   readonly components: ReadonlyArray<ArchitectureComponent>;
   readonly relationships: ReadonlyArray<ComponentRelationship>;
   readonly cross_cutting_concerns: ReadonlyArray<string>;
@@ -205,5 +217,6 @@ export interface MechanicalSymbolInventory {
   readonly files_scanned: number;
   readonly symbol_count: number;
   readonly truncated: boolean;
+  readonly architecture?: CodebaseArchitecture;
   readonly modules: ReadonlyArray<MechanicalModule>;
 }

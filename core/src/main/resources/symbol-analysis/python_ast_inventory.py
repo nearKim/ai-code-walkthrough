@@ -7,7 +7,12 @@ import sys
 from collections import defaultdict
 from typing import Any, Optional, Union
 
-ANALYZER_VERSION = 2
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+
+ANALYZER_VERSION = 3
 IGNORED_DIRECTORIES = {
     ".ai-code-walkthrough",
     ".git",
@@ -272,7 +277,7 @@ def python_files(root: str) -> tuple[list[tuple[str, str]], list[dict[str, str]]
     return sorted(paths), skipped
 
 
-def source_fingerprint(files: list[tuple[str, str]], skipped: list[dict[str, str]]) -> str:
+def source_fingerprint(root: str, files: list[tuple[str, str]], skipped: list[dict[str, str]]) -> str:
     digest = hashlib.sha256()
     for relative_path, path in files:
         digest.update(relative_path.encode("utf-8"))
@@ -289,6 +294,14 @@ def source_fingerprint(files: list[tuple[str, str]], skipped: list[dict[str, str
         digest.update(b"\0")
         digest.update(item["reason"].encode("utf-8", errors="replace"))
         digest.update(b"\0")
+    metadata_path = os.path.join(root, "pyproject.toml")
+    if os.path.isfile(metadata_path):
+        digest.update(b"pyproject.toml\0")
+        try:
+            with open(metadata_path, "rb") as metadata_file:
+                digest.update(metadata_file.read())
+        except OSError as error:
+            digest.update(str(error).encode("utf-8", errors="replace"))
     return digest.hexdigest()
 
 
@@ -313,6 +326,93 @@ def component_id(group: str) -> str:
 
 def stable_id(*parts: str) -> str:
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def project_metadata(root: str) -> dict[str, Any]:
+    path = os.path.join(root, "pyproject.toml")
+    if tomllib is None or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "rb") as source:
+            project = tomllib.load(source).get("project", {})
+        with open(path, "r", encoding="utf-8") as source:
+            lines = source.readlines()
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return {}
+    scripts = project.get("scripts", {})
+    script_lines = {}
+    for name in scripts if isinstance(scripts, dict) else []:
+        pattern = re.compile(rf"^\s*{re.escape(str(name))}\s*=")
+        script_lines[str(name)] = next(
+            (index for index, line in enumerate(lines, 1) if pattern.search(line)),
+            1,
+        )
+    return {
+        "name": project.get("name"),
+        "description": project.get("description"),
+        "scripts": scripts if isinstance(scripts, dict) else {},
+        "script_lines": script_lines,
+    }
+
+
+def reachable_components(
+    entry_module: str,
+    modules: dict[str, dict[str, Any]],
+) -> list[str]:
+    pending = [entry_module]
+    visited = set()
+    groups = set()
+    while pending:
+        name = pending.pop()
+        if name in visited or name not in modules:
+            continue
+        visited.add(name)
+        module = modules[name]
+        groups.add(module_group(module["p"]))
+        for imported in module["x"]:
+            target = resolve_import(name, imported["n"], modules)
+            if target and target not in visited:
+                pending.append(target)
+    return [component_id(group) for group in sorted(groups)]
+
+
+def build_containers(modules: dict[str, dict[str, Any]], metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    containers = []
+    for script_name, raw_target in sorted(metadata.get("scripts", {}).items()):
+        if not isinstance(raw_target, str):
+            continue
+        entry_module = raw_target.split(":", 1)[0]
+        module = modules.get(entry_module)
+        component_ids = reachable_components(entry_module, modules)
+        if module is None or not component_ids:
+            continue
+        line = metadata.get("script_lines", {}).get(script_name, 1)
+        module_item = {"r": module["r"]}
+        entry_evidence = [{
+            "kind": "entrypoint",
+            "label": script_name,
+            "file_path": "pyproject.toml",
+            "start_line": line,
+            "end_line": line,
+            "text": f"Declares {script_name} as {raw_target}.",
+        }, evidence(
+            "module",
+            entry_module,
+            module["p"],
+            module_item,
+            f"Implements the {script_name} entry module.",
+        )]
+        is_mcp = "mcp" in script_name.lower() or "mcp" in raw_target.lower()
+        containers.append({
+            "id": f"entry-{stable_id(script_name, raw_target)}",
+            "name": script_name,
+            "kind": "mcp_server" if is_mcp else "command_line_application",
+            "responsibility": f"Runs the {raw_target} entry point.",
+            "component_ids": component_ids,
+            "evidence": entry_evidence,
+            "uncertain": False,
+        })
+    return containers
 
 
 def behavior(item: dict[str, Any], fallback: str) -> str:
@@ -367,6 +467,7 @@ def resolve_import(source_module: str, imported: str, modules: dict[str, dict[st
 
 
 def build_architecture(
+    root: str,
     modules: list[dict[str, Any]],
     truncated: bool,
     errors: list[dict[str, str]],
@@ -475,6 +576,8 @@ def build_architecture(
 
     class_count = sum(len(module["c"]) for module in modules)
     function_count = sum(len(module["f"]) for module in modules)
+    metadata = project_metadata(root)
+    containers = build_containers(by_name, metadata)
     notes = ["Architecture, ownership, and import edges are derived from the persisted Python AST inventory."]
     if truncated:
         notes.append("The mechanical inventory reached its configured file or symbol limit.")
@@ -484,7 +587,9 @@ def build_architecture(
         notes.append(f"{len(skipped)} oversized or unreadable Python file(s) were excluded from verified claims.")
     notes.append("Dynamic dispatch and unresolved imports are omitted rather than inferred.")
     return {
-        "system_purpose": f"Python codebase with {len(modules)} production module(s), {class_count} class(es), and {function_count} top-level function(s).",
+        "system_name": metadata.get("name"),
+        "system_purpose": metadata.get("description") or f"Python codebase with {len(modules)} production module(s), {class_count} class(es), and {function_count} top-level function(s).",
+        "containers": containers,
         "components": components,
         "relationships": relationships,
         "cross_cutting_concerns": [],
@@ -536,7 +641,7 @@ def inventory(root: str) -> dict[str, Any]:
     symbol_count = 0
     files_scanned = 0
     files, skipped = python_files(root)
-    fingerprint = source_fingerprint(files, skipped)
+    fingerprint = source_fingerprint(root, files, skipped)
     for relative_path, path in files[:MAX_FILES]:
         if symbol_count >= MAX_SYMBOLS:
             break
@@ -598,7 +703,7 @@ def inventory(root: str) -> dict[str, Any]:
         "errors": errors[:20],
         "skipped_files": skipped[:20],
     }
-    payload["architecture"] = build_architecture(modules, truncated, errors, skipped)
+    payload["architecture"] = build_architecture(root, modules, truncated, errors, skipped)
     return payload
 
 
@@ -608,7 +713,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[2] == "--fingerprint":
         result = {
             "analyzer_version": ANALYZER_VERSION,
-            "source_fingerprint": source_fingerprint(files, skipped),
+            "source_fingerprint": source_fingerprint(project_root, files, skipped),
         }
     else:
         result = inventory(project_root)

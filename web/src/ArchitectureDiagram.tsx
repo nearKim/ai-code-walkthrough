@@ -1,6 +1,6 @@
 import { Graph, layout, type EdgeLabel, type GraphLabel, type NodeLabel, type Point } from '@dagrejs/dagre';
-import { Group, SegmentedControl, Stack, Text } from '@mantine/core';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Group, Stack, Tabs, Text } from '@mantine/core';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   TransformComponent,
   TransformWrapper,
@@ -8,13 +8,14 @@ import {
 } from 'react-zoom-pan-pinch';
 import {
   createArchitectureDiagramModel,
+  availableArchitectureDepths,
   type ArchitectureDepth,
   type ArchitectureDiagramModel,
   type DiagramEdge,
   type DiagramNode,
 } from './architecture/diagramModel';
 import type { DiagramTone } from './architecture/taxonomy';
-import type { CodebaseArchitecture } from './types';
+import type { CodebaseArchitecture, EvidenceItem } from './types';
 
 interface PositionedNode extends DiagramNode {
   readonly x: number;
@@ -40,21 +41,31 @@ interface PositionedDiagram extends ArchitectureDiagramModel {
 
 interface ArchitectureDiagramProps {
   readonly architecture: CodebaseArchitecture;
+  readonly depth: ArchitectureDepth;
   readonly selectedComponentId: string;
+  readonly selectedContainerId?: string;
   readonly selectedOwnerKey?: string;
+  readonly onDepthChange: (depth: ArchitectureDepth) => void;
   readonly onComponentSelect: (componentId: string) => void;
+  readonly onContainerSelect: (containerId: string) => void;
   readonly onOwnerSelect: (ownerKey: string) => void;
+  readonly onEvidenceSelect: (evidence: EvidenceItem) => void;
 }
 
 export function ArchitectureDiagram({
   architecture,
+  depth,
   selectedComponentId,
+  selectedContainerId,
   selectedOwnerKey,
+  onDepthChange,
   onComponentSelect,
+  onContainerSelect,
   onOwnerSelect,
+  onEvidenceSelect,
 }: ArchitectureDiagramProps) {
-  const [depth, setDepth] = useState<ArchitectureDepth>('system');
   const transformRef = useRef<ReactZoomPanPinchContentRef>(null);
+  const depths = availableArchitectureDepths(architecture);
   const model = useMemo(
     () => createArchitectureDiagramModel(architecture, depth, selectedComponentId),
     [architecture, depth, selectedComponentId],
@@ -75,34 +86,29 @@ export function ArchitectureDiagram({
       onOwnerSelect(node.ownerKey);
       return;
     }
-    if (node.componentKind !== undefined) {
-      const current = architecture.components.find((component) => component.id === selectedComponentId);
-      const component = current?.kind === node.componentKind
-        ? current
-        : architecture.components.find((candidate) => candidate.kind === node.componentKind);
-      if (component !== undefined) onComponentSelect(component.id);
-      setDepth('component');
+    if (node.containerId !== undefined) {
+      onContainerSelect(node.containerId);
       return;
     }
     if (node.componentId !== undefined) {
       onComponentSelect(node.componentId);
+      return;
     }
+    if (node.evidence !== undefined) onEvidenceSelect(node.evidence);
   };
 
   return <Stack gap="xs" className="architecture-diagram">
     <div className="diagram-toolbar">
       <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>Map depth</Text>
-      <SegmentedControl
-        aria-label="Architecture depth"
-        size="xs"
+      <Tabs
         value={depth}
-        onChange={(value) => setDepth(value as ArchitectureDepth)}
-        data={[
-          { value: 'system', label: 'System' },
-          { value: 'component', label: 'Component' },
-          { value: 'responsibilities', label: 'Classes' },
-        ]}
-      />
+        onChange={(value) => value !== null && onDepthChange(value as ArchitectureDepth)}
+        className="architecture-depth-tabs"
+      >
+        <Tabs.List aria-label="Architecture depth">
+          {depths.map((item) => <Tabs.Tab key={item} value={item}>{titleForDepth(item)}</Tabs.Tab>)}
+        </Tabs.List>
+      </Tabs>
     </div>
     <div className="architecture-diagram-frame">
       <TransformWrapper
@@ -177,10 +183,12 @@ export function ArchitectureDiagram({
           </g>}
         </g>)}
         {diagram.nodes.map((node) => {
-          const interactive = node.componentId !== undefined || node.componentKind !== undefined || node.ownerKey !== undefined;
-          const selected = node.componentId === selectedComponentId || node.ownerKey === selectedOwnerKey;
+          const interactive = node.componentId !== undefined || node.containerId !== undefined ||
+            node.ownerKey !== undefined || node.evidence !== undefined;
+          const selected = node.componentId === selectedComponentId || node.containerId === selectedContainerId ||
+            node.ownerKey === selectedOwnerKey;
           const titleLines = wrapLabel(node.label);
-          const detailLines = wrapText(node.detail, model.level === 'system' ? 28 : 34, 2);
+          const detailLines = wrapText(node.detail, model.level === 'context' ? 28 : 34, 2);
           const titleY = titleLines.length === 1 ? 27 : 19;
           return <g
             key={node.id}
@@ -222,7 +230,7 @@ export function ArchitectureDiagram({
         </>}
       </TransformWrapper>
     </div>
-    {depth !== 'responsibilities' && <div className="diagram-footer">
+    {depth !== 'code' && <div className="diagram-footer">
       <Group gap="md" className="diagram-legend">
         <Legend tone="primary" label="control / creation" />
         <Legend tone="data" label="data access" />
@@ -235,17 +243,17 @@ export function ArchitectureDiagram({
 
 function positionDiagram(model: ArchitectureDiagramModel): PositionedDiagram {
   const graph = new Graph<GraphLabel, NodeLabel, EdgeLabel>({ directed: true, multigraph: true });
-  const nodeWidth = model.level === 'system' ? 160 : 230;
-  const nodeHeight = model.level === 'system' ? 60 : model.level === 'component' ? 92 : 84;
+  const nodeWidth = model.level === 'context' ? 190 : 230;
+  const nodeHeight = model.level === 'context' ? 76 : model.level === 'components' ? 92 : 84;
   graph.setGraph({
     rankdir: model.rankDirection,
     ranker: 'network-simplex',
     acyclicer: 'greedy',
-    ranksep: model.level === 'system' ? 48 : 84,
-    nodesep: model.level === 'system' ? 22 : 34,
-    edgesep: model.level === 'system' ? 12 : 18,
-    marginx: model.level === 'system' ? 18 : 28,
-    marginy: model.level === 'system' ? 18 : 28,
+    ranksep: model.level === 'context' ? 56 : 84,
+    nodesep: model.level === 'context' ? 28 : 34,
+    edgesep: model.level === 'context' ? 12 : 18,
+    marginx: model.level === 'context' ? 18 : 28,
+    marginy: model.level === 'context' ? 18 : 28,
   });
   graph.setDefaultEdgeLabel(() => ({}));
   for (const node of model.nodes) graph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
@@ -305,8 +313,8 @@ function fitDiagram(controls: ReactZoomPanPinchContentRef, diagram: PositionedDi
 }
 
 function viewportHeight(depth: ArchitectureDepth, diagramHeight: number): number {
-  if (depth === 'component') return Math.min(420, Math.max(280, diagramHeight));
-  if (depth === 'responsibilities') return Math.min(460, Math.max(300, diagramHeight));
+  if (depth === 'components') return Math.min(420, Math.max(280, diagramHeight));
+  if (depth === 'code') return Math.min(460, Math.max(300, diagramHeight));
   return Math.min(430, Math.max(340, diagramHeight));
 }
 
@@ -337,7 +345,8 @@ function truncate(value: string, length: number): string {
 }
 
 function titleForDepth(depth: ArchitectureDepth): string {
-  if (depth === 'system') return 'System context';
-  if (depth === 'component') return 'Component relationship';
-  return 'Class ownership';
+  if (depth === 'context') return 'Context';
+  if (depth === 'containers') return 'Containers';
+  if (depth === 'components') return 'Components';
+  return 'Code';
 }

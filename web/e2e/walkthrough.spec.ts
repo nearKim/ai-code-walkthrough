@@ -45,7 +45,25 @@ const edge = {
 const flow = {
   summary: 'A small executable flow.',
   architecture: {
+    system_name: 'Sample application',
     system_purpose: 'Run an application from a local entrypoint.',
+    containers: [{
+      id: 'sample-cli',
+      name: 'sample-cli',
+      kind: 'command_line_application',
+      responsibility: 'Starts the local application.',
+      component_ids: ['entrypoint', 'application'],
+      evidence: [{ kind: 'entrypoint', label: 'sample-cli', file_path: 'src/Main.kt', start_line: 1, end_line: 1 }],
+      uncertain: false,
+    }, {
+      id: 'sample-mcp',
+      name: 'sample-mcp',
+      kind: 'mcp_server',
+      responsibility: 'Exposes the application to MCP clients.',
+      component_ids: ['application'],
+      evidence: [{ kind: 'entrypoint', label: 'sample-mcp', file_path: 'src/Main.kt', start_line: 5, end_line: 5 }],
+      uncertain: false,
+    }],
     components: [{
       id: 'application',
       name: 'Application',
@@ -265,16 +283,20 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   expect(diagramBox).not.toBeNull();
   expect(detailsBox).not.toBeNull();
   expect(diagramBox!.x).toBeLessThan(detailsBox!.x);
-  await expect(page.getByText('Run an application from a local entrypoint.', { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel('Class ownership')).toBeVisible();
-  await page.getByLabel('Architecture depth').getByText('Component', { exact: true }).click();
+  await expect(componentDetails.getByText('Run an application from a local entrypoint.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Context' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Containers' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Components' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Code' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Components' }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Program entrypoint, Accept process startup/ }).click();
   await expect(page.locator('.diagram-node[data-component-id]')).toHaveCount(2);
   await page.getByRole('button', { name: /Application, Coordinate the application run/ }).click();
+  await page.getByRole('tab', { name: 'Code' }).click();
   const codeOwnership = page.getByLabel('Class ownership');
   await expect(codeOwnership.locator('.code-owner-row')).toHaveCount(1);
-  await expect(codeOwnership.getByText('ApplicationRunner')).toBeVisible();
+  await expect(codeOwnership.getByText('ApplicationRunner', { exact: true })).toBeVisible();
   await expect(codeOwnership.getByText('start()')).toBeVisible();
   await expect(codeOwnership.getByText('Run the application')).toBeVisible();
   await expect(codeOwnership.getByText('Expose lifecycle state')).toBeVisible();
@@ -282,10 +304,19 @@ test('maps, annotates, and advances through local source', async ({ page }) => {
   await expect(codeOwnership.locator('.behavior-lane, .behavior-node')).toHaveCount(0);
   await expect(page.getByRole('tab', { name: 'Code files' })).toHaveCount(0);
   await expect(codeOwnership.getByRole('button', { name: 'Show ApplicationRunner.start source' })).toBeVisible();
-  await page.getByLabel('Architecture depth').getByText('Classes', { exact: true }).click();
-  await expect(page.getByLabel('Class ownership architecture diagram')).toBeVisible();
+  await expect(page.getByLabel('Code architecture diagram')).toBeVisible();
   await expect(page.locator('.diagram-node').filter({ hasText: 'ApplicationRunner' })).toHaveCount(1);
   await expect(page.locator('.diagram-node').filter({ hasText: 'start()' })).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => page.locator('.app-shell').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(390);
+  const [mobileDiagramBox, mobileDetailsBox] = await Promise.all([
+    diagramWorkspace.boundingBox(),
+    componentDetails.boundingBox(),
+  ]);
+  expect(mobileDiagramBox).not.toBeNull();
+  expect(mobileDetailsBox).not.toBeNull();
+  expect(mobileDetailsBox!.y).toBeGreaterThan(mobileDiagramBox!.y);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.setViewportSize({ width: 1024, height: 800 });
   await codeOwnership.getByRole('button', { name: 'Show ApplicationRunner.start source' }).click();
   await expect.poll(async () => codePanel.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(0);

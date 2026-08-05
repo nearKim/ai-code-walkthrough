@@ -1,9 +1,27 @@
 import { expect, test } from 'vitest';
-import { createArchitectureDiagramModel } from './diagramModel';
+import { availableArchitectureDepths, createArchitectureDiagramModel } from './diagramModel';
 import type { CodebaseArchitecture } from '../types';
 
 const architecture: CodebaseArchitecture = {
+  system_name: 'Request processor',
   system_purpose: 'Process a request and store its result.',
+  containers: [{
+    id: 'cli',
+    name: 'request-cli',
+    kind: 'command_line_application',
+    responsibility: 'Runs requests from a terminal.',
+    component_ids: ['interface', 'application', 'data', 'shared'],
+    evidence: [],
+    uncertain: false,
+  }, {
+    id: 'mcp',
+    name: 'request-mcp',
+    kind: 'mcp_server',
+    responsibility: 'Exposes requests to MCP clients.',
+    component_ids: ['application', 'data', 'shared'],
+    evidence: [],
+    uncertain: false,
+  }],
   components: [
     {
       id: 'interface',
@@ -96,12 +114,16 @@ const architecture: CodebaseArchitecture = {
   coverage_notes: [],
 };
 
-test('builds stable architecture and responsibility diagrams', () => {
-  const system = createArchitectureDiagramModel(architecture, 'system', 'application');
-  expect(system.nodes.map((node) => node.label)).toEqual(['Interfaces', 'Application', 'Data boundaries', 'Shared contracts']);
-  expect(system.edges).toHaveLength(2);
+test('builds context, container, component, and code diagrams', () => {
+  expect(availableArchitectureDepths(architecture)).toEqual(['context', 'containers', 'components', 'code']);
+  const context = createArchitectureDiagramModel(architecture, 'context', 'application');
+  expect(context.nodes.map((node) => node.label)).toEqual(['Request processor', 'Command-line users', 'MCP clients']);
+  expect(context.edges.map((edge) => edge.label)).toEqual(['request-cli', 'request-mcp']);
 
-  const component = createArchitectureDiagramModel(architecture, 'component', 'application');
+  const containers = createArchitectureDiagramModel(architecture, 'containers', 'application');
+  expect(containers.nodes.map((node) => node.label)).toEqual(['request-cli', 'request-mcp']);
+
+  const component = createArchitectureDiagramModel(architecture, 'components', 'application');
   expect(component.nodes.map((node) => node.label)).toEqual([
     'HTTP interface',
     'Application service',
@@ -119,31 +141,29 @@ test('builds stable architecture and responsibility diagrams', () => {
       { ...architecture.components[0], id: 'queue', name: 'Work queue' },
       { ...architecture.components[0], id: 'worker', name: 'Background worker' },
     ],
-  }, 'component', 'application');
+  }, 'components', 'application');
   expect(wide.rankDirection).toBe('TB');
 
-  const responsibilities = createArchitectureDiagramModel(architecture, 'responsibilities', 'application');
-  expect(responsibilities.nodes.map((node) => node.label)).toEqual([
-    'Application service',
-    'ApplicationService',
-    'run()',
-  ]);
-  expect(responsibilities.edges.map((edge) => edge.label)).toEqual(['', '']);
-  expect(responsibilities.nodes.find((node) => node.label === 'ApplicationService')).toMatchObject({
+  const code = createArchitectureDiagramModel(architecture, 'code', 'application');
+  expect(code.nodes.map((node) => node.label)).toContain('src/one.ts');
+  expect(code.nodes.map((node) => node.label)).toContain('ApplicationService');
+  expect(code.nodes.map((node) => node.label)).toContain('run()');
+  expect(code.nodes.find((node) => node.label === 'ApplicationService')).toMatchObject({
     detail: 'Coordinate the request',
   });
-  expect(responsibilities.nodes.find((node) => node.label === 'run()')).toMatchObject({
+  expect(code.nodes.find((node) => node.label === 'run()')).toMatchObject({
     detail: 'Executes the use case.',
   });
 });
 
-test('shows mechanically classified Python packages directly at system depth', () => {
+test('does not collapse mechanically classified Python packages', () => {
   const python = createArchitectureDiagramModel({
     ...architecture,
+    containers: [],
     components: architecture.components.slice(0, 2).map((component) => ({ ...component, kind: 'python_package' })),
     relationships: [architecture.relationships[0]],
-  }, 'system', 'interface');
+  }, 'components', 'interface');
 
   expect(python.nodes.map((node) => node.label)).toEqual(['HTTP interface', 'Application service']);
-  expect(python.edges.map((edge) => edge.label)).toEqual(['calls']);
+  expect(python.edges).toHaveLength(1);
 });

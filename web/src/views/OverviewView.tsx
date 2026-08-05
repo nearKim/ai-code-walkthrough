@@ -14,6 +14,10 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { ArchitectureDiagram } from '../ArchitectureDiagram';
 import {
+  availableArchitectureDepths,
+  type ArchitectureDepth,
+} from '../architecture/diagramModel';
+import {
   codeOwners,
   modulesForComponent,
   stepsForComponent,
@@ -30,6 +34,7 @@ import {
 import { humanize, roleForKind } from '../architecture/taxonomy';
 import type { RightPaneActions } from '../RightPane';
 import type {
+  ArchitectureContainer,
   ArchitectureResponsibility,
   CodebaseArchitecture,
   EvidenceItem,
@@ -188,11 +193,19 @@ function ArchitectureView({
   readonly onPreviewEvidence: (evidence: EvidenceItem, explanation: string) => void;
   readonly loadSymbolInventory: () => Promise<MechanicalSymbolInventory>;
 }) {
+  const isVirtualSample = architecture.components.some((component) => component.key_paths.includes('.walkthrough-sample.ts'));
+  const [depth, setDepth] = useState<ArchitectureDepth>('context');
   const [componentId, setComponentId] = useState(architecture.components[0]?.id ?? '');
+  const [containerId, setContainerId] = useState(architecture.containers?.[0]?.id);
   const [ownerKey, setOwnerKey] = useState<string>();
   const [symbolInventory, setSymbolInventory] = useState<MechanicalSymbolInventory>();
   const [symbolError, setSymbolError] = useState<string>();
-  const component = architecture.components.find((candidate) => candidate.id === componentId);
+  const effectiveArchitecture = symbolInventory?.architecture ?? architecture;
+  const depths = useMemo(() => availableArchitectureDepths(effectiveArchitecture), [effectiveArchitecture]);
+  const component = effectiveArchitecture.components.find((candidate) => candidate.id === componentId)
+    ?? effectiveArchitecture.components[0];
+  const container = (effectiveArchitecture.containers ?? []).find((candidate) => candidate.id === containerId)
+    ?? effectiveArchitecture.containers?.[0];
   const responsibilities = useMemo(
     () => component === undefined ? [] : componentResponsibilities(component),
     [component],
@@ -210,17 +223,21 @@ function ArchitectureView({
     () => symbolInventory === undefined ? [] : modulesForComponent(symbolInventory, mappedFiles),
     [mappedFiles, symbolInventory],
   );
-  const isVirtualSample = mappedFiles.length === 1 && mappedFiles[0] === '.walkthrough-sample.ts';
   const componentSteps = useMemo(
     () => component === undefined ? [] : stepsForComponent(component, steps),
     [component, steps],
   );
+  const inventoryLoading = !isVirtualSample && symbolInventory === undefined && symbolError === undefined;
 
   useEffect(() => {
-    if (!architecture.components.some((candidate) => candidate.id === componentId)) {
-      setComponentId(architecture.components[0]?.id ?? '');
+    if (!effectiveArchitecture.components.some((candidate) => candidate.id === componentId)) {
+      setComponentId(effectiveArchitecture.components[0]?.id ?? '');
     }
-  }, [architecture.components, componentId]);
+    if (!(effectiveArchitecture.containers ?? []).some((candidate) => candidate.id === containerId)) {
+      setContainerId(effectiveArchitecture.containers?.[0]?.id);
+    }
+    if (!inventoryLoading && !depths.includes(depth)) setDepth(depths[0] ?? 'components');
+  }, [componentId, containerId, depth, depths, effectiveArchitecture, inventoryLoading]);
   useEffect(() => setOwnerKey(undefined), [componentId]);
   useEffect(() => {
     if (isVirtualSample) return;
@@ -232,20 +249,53 @@ function ArchitectureView({
     return () => { active = false; };
   }, [isVirtualSample, loadSymbolInventory]);
 
+  const selectContainer = (selectedId: string) => {
+    setContainerId(selectedId);
+    const selected = effectiveArchitecture.containers?.find((candidate) => candidate.id === selectedId);
+    const firstComponentId = selected?.component_ids[0];
+    if (firstComponentId !== undefined) setComponentId(firstComponentId);
+  };
+  const selectComponent = (selectedId: string) => {
+    setComponentId(selectedId);
+    setOwnerKey(undefined);
+  };
+  const previewEvidence = (evidence: EvidenceItem) =>
+    onPreviewEvidence(evidence, evidence.text ?? `Source evidence for ${evidence.label}.`);
+
   return (
     <div className="architecture-workspace">
       <div aria-label="Architecture diagram workspace" className="architecture-workspace-diagram">
-        {architecture.components.length > 0 && <ArchitectureDiagram
-          architecture={architecture}
+        {inventoryLoading && <Text size="sm" c="dimmed">Refreshing grounded architecture…</Text>}
+        {!inventoryLoading && effectiveArchitecture.components.length > 0 && <ArchitectureDiagram
+          architecture={effectiveArchitecture}
+          depth={depth}
           selectedComponentId={componentId}
+          selectedContainerId={container?.id}
           selectedOwnerKey={ownerKey}
-          onComponentSelect={setComponentId}
+          onDepthChange={setDepth}
+          onComponentSelect={selectComponent}
+          onContainerSelect={selectContainer}
           onOwnerSelect={setOwnerKey}
+          onEvidenceSelect={previewEvidence}
         />}
       </div>
       <ScrollArea aria-label="Component details" className="architecture-inspector" offsetScrollbars>
         <Stack gap="md" p="sm">
-          {component !== undefined && <section
+          {symbolError !== undefined && <Text size="xs" c="yellow">Mechanical structure unavailable: {symbolError}</Text>}
+          {depth === 'context' && <ContextInspector architecture={effectiveArchitecture} />}
+          {depth === 'containers' && container !== undefined && <ContainerInspector
+            container={container}
+            architecture={effectiveArchitecture}
+            onComponentSelect={(id) => { selectComponent(id); setDepth('components'); }}
+            onPreviewEvidence={previewEvidence}
+          />}
+          {depth === 'components' && component !== undefined && <ComponentInspector
+            componentId={component.id}
+            architecture={effectiveArchitecture}
+            onComponentSelect={selectComponent}
+            onPreviewEvidence={previewEvidence}
+          />}
+          {depth === 'code' && component !== undefined && <section
             aria-label="Selected diagram component"
             aria-live="polite"
             className="component-summary"
@@ -256,14 +306,14 @@ function ArchitectureView({
             </Group>
             <Text size="sm">{component.responsibility}</Text>
           </section>}
-          {component !== undefined && <CodeOwnershipList
+          {depth === 'code' && component !== undefined && <CodeOwnershipList
             responsibilities={responsibilities}
             modules={mechanicalModules}
             keySymbols={component.key_symbols}
             selectedOwnerKey={ownerKey}
             fallbackSteps={componentSteps}
             brokenStepIds={brokenStepIds}
-            symbolError={symbolError}
+            symbolError={undefined}
             inventoryLoading={symbolInventory === undefined}
             onPreviewEvidence={onPreviewEvidence}
             onPreviewStep={onPreviewStep}
@@ -272,6 +322,90 @@ function ArchitectureView({
       </ScrollArea>
     </div>
   );
+}
+
+function ContextInspector({ architecture }: { readonly architecture: CodebaseArchitecture }) {
+  const containers = architecture.containers ?? [];
+  return <Stack gap="md">
+    <section className="component-summary">
+      <Text className="section-kicker" size="xs" c="dimmed" tt="uppercase" fw={800}>System context</Text>
+      <Title order={4}>{architecture.system_name ?? 'Analyzed system'}</Title>
+      <Text size="sm">{architecture.system_purpose}</Text>
+    </section>
+    <section className="architecture-fact-list">
+      <Text fw={700} size="sm">Verified entry surfaces</Text>
+      {containers.map((item) => <div key={item.id}>
+        <Text size="sm" fw={700}>{item.name}</Text>
+        <Text size="xs" c="dimmed">{humanize(item.kind)}</Text>
+      </div>)}
+    </section>
+  </Stack>;
+}
+
+function ContainerInspector({ container, architecture, onComponentSelect, onPreviewEvidence }: {
+  readonly container: ArchitectureContainer;
+  readonly architecture: CodebaseArchitecture;
+  readonly onComponentSelect: (componentId: string) => void;
+  readonly onPreviewEvidence: (evidence: EvidenceItem) => void;
+}) {
+  const components = container.component_ids.map((id) => architecture.components.find((item) => item.id === id))
+    .filter((item): item is NonNullable<typeof item> => item !== undefined);
+  return <Stack gap="md">
+    <section className="component-summary">
+      <Group gap="xs" wrap="wrap"><Title order={4}>{container.name}</Title><Badge size="sm" variant="light">{humanize(container.kind)}</Badge></Group>
+      <Text size="sm">{container.responsibility}</Text>
+      <Group gap="xs" wrap="wrap">{container.evidence.map((item) => <Button
+        key={`${item.file_path}:${item.start_line}`}
+        size="compact-xs"
+        variant="subtle"
+        disabled={!hasCodeLocation(item)}
+        onClick={() => onPreviewEvidence(item)}
+      >{item.label}</Button>)}</Group>
+    </section>
+    <section className="architecture-fact-list">
+      <Text fw={700} size="sm">Included components</Text>
+      {components.map((item) => <UnstyledButton key={item.id} onClick={() => onComponentSelect(item.id)}>
+        <Text size="sm" fw={700}>{item.name}</Text><Text size="xs" c="dimmed">{item.responsibility}</Text>
+      </UnstyledButton>)}
+    </section>
+  </Stack>;
+}
+
+function ComponentInspector({ componentId, architecture, onComponentSelect, onPreviewEvidence }: {
+  readonly componentId: string;
+  readonly architecture: CodebaseArchitecture;
+  readonly onComponentSelect: (componentId: string) => void;
+  readonly onPreviewEvidence: (evidence: EvidenceItem) => void;
+}) {
+  const component = architecture.components.find((item) => item.id === componentId);
+  if (component === undefined) return null;
+  const connectedIds = architecture.relationships.flatMap((relationship) => {
+    if (relationship.from_component_id === component.id) return [relationship.to_component_id];
+    if (relationship.to_component_id === component.id) return [relationship.from_component_id];
+    return [];
+  });
+  const connected = [...new Set(connectedIds)].map((id) => architecture.components.find((item) => item.id === id))
+    .filter((item): item is NonNullable<typeof item> => item !== undefined);
+  return <Stack gap="md">
+    <section aria-label="Selected diagram component" aria-live="polite" className="component-summary">
+      <Group gap="xs" wrap="wrap"><Title order={4}>{component.name}</Title><Badge size="sm" variant="light">{roleForKind(component.kind)}</Badge></Group>
+      <Text size="sm">{component.responsibility}</Text>
+      <Group gap="xs" wrap="wrap">{component.evidence.slice(0, 4).map((item) => <Button
+        key={`${item.file_path}:${item.start_line}`}
+        size="compact-xs"
+        variant="subtle"
+        disabled={!hasCodeLocation(item)}
+        onClick={() => onPreviewEvidence(item)}
+      >{shortPath(item.file_path ?? item.label)}</Button>)}</Group>
+    </section>
+    <section className="architecture-fact-list">
+      <Text fw={700} size="sm">Direct collaborators</Text>
+      {connected.length === 0 && <Text size="sm" c="dimmed">No verified cross-component relationship.</Text>}
+      {connected.map((item) => <UnstyledButton key={item.id} onClick={() => onComponentSelect(item.id)}>
+        <Text size="sm" fw={700}>{item.name}</Text><Text size="xs" c="dimmed">{item.responsibility}</Text>
+      </UnstyledButton>)}
+    </section>
+  </Stack>;
 }
 
 function SystemNotesView({ architecture }: { readonly architecture: CodebaseArchitecture }) {

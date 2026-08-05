@@ -1,26 +1,23 @@
-import type { ArchitectureComponent, CodebaseArchitecture } from '../types';
+import type { ArchitectureComponent, CodebaseArchitecture, EvidenceItem } from '../types';
 import {
   architectureEvidenceKey,
   componentResponsibilities,
+  evidenceBelongsToOwner,
+  methodBehavior,
   methodLabel,
+  responsibilityBelongsToOwner,
   responsibilityOwners,
   responsibilitySummary,
   uniqueEvidence,
-  evidenceBelongsToOwner,
-  methodBehavior,
-  responsibilityBelongsToOwner,
 } from './evidence';
 import {
   humanize,
-  kindOrder,
-  titleForKind,
   toneForKind,
-  toneForRelationship,
   toneForRelationships,
   type DiagramTone,
 } from './taxonomy';
 
-export type ArchitectureDepth = 'system' | 'component' | 'responsibilities';
+export type ArchitectureDepth = 'context' | 'containers' | 'components' | 'code';
 
 export interface DiagramNode {
   readonly id: string;
@@ -29,8 +26,9 @@ export interface DiagramNode {
   readonly description: string;
   readonly tone: DiagramTone;
   readonly componentId?: string;
-  readonly componentKind?: string;
+  readonly containerId?: string;
   readonly ownerKey?: string;
+  readonly evidence?: EvidenceItem;
 }
 
 export interface DiagramEdge {
@@ -51,89 +49,83 @@ export interface ArchitectureDiagramModel {
   readonly edges: ReadonlyArray<DiagramEdge>;
 }
 
+export function availableArchitectureDepths(architecture: CodebaseArchitecture): ReadonlyArray<ArchitectureDepth> {
+  const containers = architecture.containers ?? [];
+  return [
+    ...(containers.length > 0 ? ['context' as const] : []),
+    ...(containers.length > 1 ? ['containers' as const] : []),
+    'components' as const,
+    'code' as const,
+  ];
+}
+
 export function createArchitectureDiagramModel(
   architecture: CodebaseArchitecture,
   level: ArchitectureDepth,
   selectedComponentId: string,
 ): ArchitectureDiagramModel {
-  if (level === 'system') return createSystemModel(architecture);
-  if (level === 'component') return createComponentModel(architecture, selectedComponentId);
-  return createResponsibilityModel(architecture, selectedComponentId);
+  if (level === 'context') return createContextModel(architecture);
+  if (level === 'containers') return createContainerModel(architecture);
+  if (level === 'components') return createComponentModel(architecture, selectedComponentId);
+  return createCodeModel(architecture, selectedComponentId);
 }
 
-function createSystemModel(architecture: CodebaseArchitecture): ArchitectureDiagramModel {
-  const groups = new Map<string, ArchitectureComponent[]>();
-  for (const component of architecture.components) {
-    groups.set(component.kind, [...(groups.get(component.kind) ?? []), component]);
-  }
-  if (groups.size === 1) {
-    return {
-      level: 'system',
-      rankDirection: architecture.components.length >= 6 ? 'TB' : 'LR',
-      caption: 'Verified Python packages and their import edges.',
-      nodes: architecture.components.map((component) => ({
-        id: component.id,
-        label: component.name,
-        detail: component.responsibility,
-        description: component.responsibility,
-        tone: 'neutral',
-        componentId: component.id,
-      })),
-      edges: architecture.relationships.map((relationship) => ({
-        id: `system:${relationship.id}`,
-        from: relationship.from_component_id,
-        to: relationship.to_component_id,
-        label: humanize(relationship.kind),
-        tone: toneForRelationship(relationship.kind),
-        uncertain: relationship.uncertain,
-      })),
-    };
-  }
-  const kinds = [...groups.keys()].sort((left, right) => {
-    const leftIndex = kindOrder.indexOf(left);
-    const rightIndex = kindOrder.indexOf(right);
-    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
-    if (leftIndex === -1) return 1;
-    if (rightIndex === -1) return -1;
-    return leftIndex - rightIndex;
+function createContextModel(architecture: CodebaseArchitecture): ArchitectureDiagramModel {
+  const containers = architecture.containers ?? [];
+  const grouped = new Map<string, typeof containers>();
+  containers.forEach((container) => grouped.set(container.kind, [...(grouped.get(container.kind) ?? []), container]));
+  const systemId = 'context:system';
+  const nodes: DiagramNode[] = [{
+    id: systemId,
+    label: architecture.system_name ?? 'Analyzed system',
+    detail: architecture.system_purpose,
+    description: architecture.system_purpose,
+    tone: 'primary',
+  }];
+  const edges: DiagramEdge[] = [];
+  [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)).forEach(([kind, entries]) => {
+    const actorId = `context:actor:${kind}`;
+    const entryNames = entries.map((entry) => entry.name).join(', ');
+    nodes.push({
+      id: actorId,
+      label: actorLabel(kind),
+      detail: entryNames,
+      description: `Uses the system through ${entryNames}.`,
+      tone: kind === 'mcp_server' ? 'dependency' : 'neutral',
+    });
+    edges.push({
+      id: `${actorId}:${systemId}`,
+      from: actorId,
+      to: systemId,
+      label: entryNames,
+      tone: kind === 'mcp_server' ? 'dependency' : 'primary',
+      uncertain: entries.some((entry) => entry.uncertain),
+    });
   });
-  const componentsById = new Map(architecture.components.map((component) => [component.id, component]));
-  const aggregated = new Map<string, { from: string; to: string; kinds: Set<string>; count: number; uncertain: boolean }>();
-  for (const relationship of architecture.relationships) {
-    const from = componentsById.get(relationship.from_component_id)?.kind;
-    const to = componentsById.get(relationship.to_component_id)?.kind;
-    if (from === undefined || to === undefined || from === to) continue;
-    const key = `${from}->${to}`;
-    const current = aggregated.get(key) ?? { from, to, kinds: new Set<string>(), count: 0, uncertain: false };
-    current.kinds.add(relationship.kind);
-    current.count += 1;
-    current.uncertain ||= relationship.uncertain;
-    aggregated.set(key, current);
-  }
-
   return {
-    level: 'system',
-    rankDirection: 'TB',
-    caption: 'Select a responsibility band to inspect its components.',
-    nodes: kinds.map((kind) => {
-      const components = groups.get(kind) ?? [];
-      return {
-        id: `kind:${kind}`,
-        label: titleForKind(kind),
-        detail: `${components.length} ${components.length === 1 ? 'component' : 'components'}`,
-        description: components.map((component) => component.name).join(', '),
-        tone: toneForKind(kind),
-        componentKind: kind,
-      };
-    }),
-    edges: [...aggregated.entries()].map(([id, edge]) => ({
-      id: `system:${id}`,
-      from: `kind:${edge.from}`,
-      to: `kind:${edge.to}`,
-      label: edge.count === 1 ? humanize([...edge.kinds][0] ?? 'relates') : `${edge.count} links`,
-      tone: toneForRelationships(edge.kinds),
-      uncertain: edge.uncertain,
+    level: 'context',
+    rankDirection: 'LR',
+    caption: `${architecture.system_name ?? 'The system'} and its verified entry surfaces.`,
+    nodes,
+    edges,
+  };
+}
+
+function createContainerModel(architecture: CodebaseArchitecture): ArchitectureDiagramModel {
+  const containers = architecture.containers ?? [];
+  return {
+    level: 'containers',
+    rankDirection: 'LR',
+    caption: `${containers.length} independently invokable runtime applications found in project metadata.`,
+    nodes: containers.map((container) => ({
+      id: container.id,
+      label: container.name,
+      detail: `${humanize(container.kind)} · ${container.component_ids.length} components`,
+      description: container.responsibility,
+      tone: container.kind === 'mcp_server' ? 'dependency' : 'primary',
+      containerId: container.id,
     })),
+    edges: [],
   };
 }
 
@@ -141,10 +133,9 @@ function createComponentModel(
   architecture: CodebaseArchitecture,
   selectedComponentId: string,
 ): ArchitectureDiagramModel {
-  const component = architecture.components.find((candidate) => candidate.id === selectedComponentId)
-    ?? architecture.components[0];
+  const component = selectedComponent(architecture, selectedComponentId);
   if (component === undefined) {
-    return { level: 'component', rankDirection: 'LR', caption: 'No grounded components.', nodes: [], edges: [] };
+    return { level: 'components', rankDirection: 'LR', caption: 'No grounded components.', nodes: [], edges: [] };
   }
   const aggregated = new Map<string, {
     from: string;
@@ -168,9 +159,9 @@ function createComponentModel(
     relationship.from_component_id === component.id || relationship.to_component_id === component.id).length;
 
   return {
-    level: 'component',
+    level: 'components',
     rankDirection: architecture.components.length >= 6 ? 'TB' : 'LR',
-    caption: `All ${architecture.components.length} components stay visible. ${directCount} ${directCount === 1 ? 'connection touches' : 'connections touch'} ${component.name}; select any component to inspect it.`,
+    caption: `All ${architecture.components.length} components stay visible. ${directCount} ${directCount === 1 ? 'connection touches' : 'connections touch'} ${component.name}.`,
     nodes: architecture.components.map((candidate) => ({
       id: candidate.id,
       label: candidate.name,
@@ -191,16 +182,22 @@ function createComponentModel(
   };
 }
 
-function createResponsibilityModel(
+function createCodeModel(
   architecture: CodebaseArchitecture,
   selectedComponentId: string,
 ): ArchitectureDiagramModel {
-  const component = architecture.components.find((candidate) => candidate.id === selectedComponentId)
-    ?? architecture.components[0];
+  const component = selectedComponent(architecture, selectedComponentId);
   if (component === undefined) {
-    return { level: 'responsibilities', rankDirection: 'LR', caption: 'No grounded responsibilities.', nodes: [], edges: [] };
+    return { level: 'code', rankDirection: 'LR', caption: 'No grounded code owners.', nodes: [], edges: [] };
   }
-  const responsibilities = componentResponsibilities(component).slice(0, 5);
+  const responsibilities = componentResponsibilities(component).slice(0, 8);
+  const owners = uniqueEvidence(responsibilities.flatMap(responsibilityOwners));
+  const files = new Map<string, EvidenceItem | undefined>();
+  component.key_paths.forEach((path) => files.set(path, undefined));
+  component.evidence.filter((item) => item.file_path !== undefined).forEach((item) => files.set(item.file_path!, item));
+  owners.filter((item) => item.file_path !== undefined).forEach((item) => {
+    if (!files.has(item.file_path!)) files.set(item.file_path!, undefined);
+  });
   const nodes: DiagramNode[] = [{
     id: component.id,
     label: component.name,
@@ -210,7 +207,20 @@ function createResponsibilityModel(
     componentId: component.id,
   }];
   const edges: DiagramEdge[] = [];
-  const owners = uniqueEvidence(responsibilities.flatMap(responsibilityOwners));
+
+  files.forEach((fileEvidence, path) => {
+    const fileNodeId = `file:${path}`;
+    const ownerCount = owners.filter((owner) => owner.file_path === path).length;
+    nodes.push({
+      id: fileNodeId,
+      label: shortPath(path),
+      detail: `${ownerCount} ${ownerCount === 1 ? 'code owner' : 'code owners'}`,
+      description: path,
+      tone: 'data',
+      evidence: fileEvidence,
+    });
+    edges.push({ id: `${component.id}:${fileNodeId}`, from: component.id, to: fileNodeId, label: '', tone: 'data' });
+  });
 
   owners.forEach((owner) => {
     const ownedResponsibilities = responsibilities.filter((responsibility) =>
@@ -223,10 +233,12 @@ function createResponsibilityModel(
       description: owner.text ?? responsibilitySummary(ownedResponsibilities) ?? owner.label,
       tone: 'dependency',
       ownerKey: architectureEvidenceKey(owner),
+      evidence: owner,
     });
+    const parentId = owner.file_path === undefined ? component.id : `file:${owner.file_path}`;
     edges.push({
-      id: `${component.id}:${ownerNodeId}`,
-      from: component.id,
+      id: `${parentId}:${ownerNodeId}`,
+      from: parentId,
       to: ownerNodeId,
       label: '',
       tone: 'dependency',
@@ -235,7 +247,7 @@ function createResponsibilityModel(
 
     if (owner.kind !== 'class') return;
     const methods = uniqueEvidence(ownedResponsibilities.flatMap((responsibility) =>
-      responsibility.evidence.filter((evidence) => evidence.kind === 'method' && evidenceBelongsToOwner(evidence, owner))));
+      responsibility.evidence.filter((item) => item.kind === 'method' && evidenceBelongsToOwner(item, owner))));
     methods.forEach((method) => {
       const methodNodeId = `method:${architectureEvidenceKey(method)}`;
       const behavior = methodBehavior(method, ownedResponsibilities) ?? '';
@@ -245,22 +257,32 @@ function createResponsibilityModel(
         detail: behavior,
         description: behavior || method.label,
         tone: 'neutral',
+        evidence: method,
       });
-      edges.push({
-        id: `${ownerNodeId}:${methodNodeId}`,
-        from: ownerNodeId,
-        to: methodNodeId,
-        label: '',
-        tone: 'neutral',
-      });
+      edges.push({ id: `${ownerNodeId}:${methodNodeId}`, from: ownerNodeId, to: methodNodeId, label: '', tone: 'neutral' });
     });
   });
 
   return {
-    level: 'responsibilities',
+    level: 'code',
     rankDirection: nodes.length >= 7 ? 'TB' : 'LR',
-    caption: `${component.name} class ownership.`,
+    caption: `${component.name} files and code owners. Showing ${responsibilities.length} responsibilities.`,
     nodes,
     edges,
   };
+}
+
+function selectedComponent(architecture: CodebaseArchitecture, selectedComponentId: string): ArchitectureComponent | undefined {
+  return architecture.components.find((candidate) => candidate.id === selectedComponentId) ?? architecture.components[0];
+}
+
+function actorLabel(kind: string): string {
+  if (kind === 'command_line_application') return 'Command-line users';
+  if (kind === 'mcp_server') return 'MCP clients';
+  return `${humanize(kind)} users`;
+}
+
+function shortPath(path: string): string {
+  const parts = path.split('/');
+  return parts.slice(-2).join('/');
 }
