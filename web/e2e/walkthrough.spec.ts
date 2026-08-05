@@ -201,6 +201,7 @@ test('maps a feature, walks it, and keeps the source visible', async ({ page }) 
   await expect(page.locator('#code')).not.toHaveCSS('width', '0px');
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#code')).toBeVisible();
   const [sourceBox, controlsBox] = await Promise.all([
     page.locator('#code').boundingBox(),
     page.getByLabel('Walkthrough controls').boundingBox(),
@@ -221,8 +222,7 @@ test('maps a feature, walks it, and keeps the source visible', async ({ page }) 
 
   await expect(page.locator('.architecture-diagram-frame')).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await page.getByRole('button', { name: 'More walkthrough actions' }).click();
-  await page.getByRole('menuitem', { name: 'New walkthrough' }).click();
+  await page.getByRole('button', { name: 'New run' }).click();
   await expect(page.getByRole('heading', { name: 'Understand the codebase' })).toBeVisible();
   await expect.poll(() => page.locator('#code').evaluate((element) => element.getBoundingClientRect().height <= 1)).toBe(true);
 });

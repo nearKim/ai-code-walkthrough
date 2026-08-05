@@ -146,6 +146,11 @@ function WalkthroughApplication() {
     }
   }, []);
 
+  const newRun = useCallback(async () => {
+    setEvidencePreview(undefined);
+    await perform(() => api.tour('new'));
+  }, [perform]);
+
   const actions: RightPaneActions = useMemo(() => ({
     startMapping,
     showSample: async () => {
@@ -222,6 +227,11 @@ function WalkthroughApplication() {
           </Text>
         </div>
         <div className="app-header-controls">
+          {(session?.state === 'OVERVIEW' || session?.state === 'TOUR_ACTIVE') && (
+            <Button size="compact-xs" variant="default" onClick={() => void newRun()}>
+              New run
+            </Button>
+          )}
           {shouldShowCode && (
             <Button
               aria-controls="code"

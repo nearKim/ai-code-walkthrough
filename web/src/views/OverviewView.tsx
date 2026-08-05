@@ -189,7 +189,6 @@ function OverflowMenu({ actions }: { readonly actions: RightPaneActions }) {
       </ActionIcon>
     </Menu.Target>
     <Menu.Dropdown>
-      <Menu.Item onClick={() => void actions.tour('new')}>New walkthrough</Menu.Item>
       <Menu.Item onClick={() => void actions.copyMarkdown()}>Copy Markdown</Menu.Item>
       <Menu.Item onClick={() => void actions.downloadTechnicalReference()}>Technical reference</Menu.Item>
     </Menu.Dropdown>
