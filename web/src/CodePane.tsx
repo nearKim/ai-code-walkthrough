@@ -20,10 +20,9 @@ interface CodePaneProps {
   readonly nextStep?: FlowStep;
   readonly nextEdge?: StepEdge;
   readonly dark: boolean;
-  readonly focusNonce: number;
 }
 
-export function CodePane({ step, nextStep, nextEdge, dark, focusNonce }: CodePaneProps) {
+export function CodePane({ step, nextStep, nextEdge, dark }: CodePaneProps) {
   const [source, setSource] = useState<SourceFile>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
@@ -142,7 +141,7 @@ export function CodePane({ step, nextStep, nextEdge, dark, focusNonce }: CodePan
     if (editor === null || step === undefined) return;
     editor.revealLinesInCenter(step.start_line, step.end_line, monaco.editor.ScrollType.Smooth);
     editor.focus();
-  }, [focusNonce, step]);
+  }, [step]);
 
   useEffect(() => clearVisuals, [clearVisuals]);
 
@@ -156,11 +155,7 @@ export function CodePane({ step, nextStep, nextEdge, dark, focusNonce }: CodePan
     return (
       <Center className="code-empty">
         <Stack align="center" gap={6} className="code-empty-card">
-          <p className="field-label">Source pane</p>
-          <Text fw={650}>No stop selected</Text>
-          <Text c="dimmed" size="sm" ta="center">
-            Map a walkthrough, then preview a stop or start the tour.
-          </Text>
+          <Text fw={650}>Choose a code stop.</Text>
         </Stack>
       </Center>
     );
@@ -170,14 +165,8 @@ export function CodePane({ step, nextStep, nextEdge, dark, focusNonce }: CodePan
     <div className="code-pane">
       <div className="code-toolbar">
         <div className="code-path-block">
-          <p className="field-label">File</p>
           <Text size="sm" fw={600} ff="monospace" truncate>{source?.path ?? step?.file_path}</Text>
         </div>
-        {step !== undefined && (
-          <Text size="xs" className="code-range" ff="monospace">
-            L{step.start_line}–{step.end_line}
-          </Text>
-        )}
       </div>
       {error !== undefined && <Alert color="red" title="Source unavailable">{error}</Alert>}
       {loading && source === undefined

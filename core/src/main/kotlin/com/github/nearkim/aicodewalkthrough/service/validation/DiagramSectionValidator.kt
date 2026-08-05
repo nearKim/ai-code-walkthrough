@@ -45,40 +45,15 @@ internal class DiagramSectionValidator {
         architecture: CodebaseArchitecture?,
         steps: List<FlowStep>,
         learningPath: List<LearningStage>,
-        entryStepId: String?,
     ): List<DiagramSection> {
-        val componentIds = architecture?.components?.map { it.id }.orEmpty()
-        val navigableStepIds = steps.filterNot { it.broken }.map { it.id }
-        val fallbackSections = buildList {
-            add(
-                DiagramSection(
-                    id = "system-overview",
-                    title = "System overview",
-                    summary = architecture?.systemPurpose,
-                    componentIds = componentIds,
-                    stepIds = entryStepId?.takeIf { it in navigableStepIds }?.let(::listOf).orEmpty(),
-                ),
+        val fallbackSections = learningPath.map { stage ->
+            DiagramSection(
+                id = "feature-${stage.id}",
+                title = stage.title,
+                summary = stage.goal,
+                componentIds = stage.componentIds,
+                stepIds = stage.stepIds,
             )
-            add(
-                DiagramSection(
-                    id = "component-map",
-                    title = "Component map",
-                    summary = "Inspect the validated components and their representative code stops.",
-                    componentIds = componentIds,
-                    stepIds = navigableStepIds,
-                ),
-            )
-            learningPath.forEach { stage ->
-                add(
-                    DiagramSection(
-                        id = "feature-${stage.id}",
-                        title = stage.title,
-                        summary = stage.goal,
-                        componentIds = stage.componentIds,
-                        stepIds = stage.stepIds,
-                    ),
-                )
-            }
         }
         val presentIds = sections.mapTo(mutableSetOf()) { it.id }
         return sections + validate(fallbackSections, architecture, steps).filter { it.id !in presentIds }

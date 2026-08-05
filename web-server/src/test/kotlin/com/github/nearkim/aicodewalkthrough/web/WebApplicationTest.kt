@@ -64,7 +64,7 @@ class WebApplicationTest {
             assertEquals("OVERVIEW", sampleSnapshot.state)
             assertEquals(SampleWalkthrough.question, sampleSnapshot.question)
             assertEquals("sample-map", sampleSnapshot.flowMap?.entryStepId)
-            assertEquals("system-overview", sampleSnapshot.flowMap?.diagramSections?.firstOrNull()?.id)
+            assertEquals("feature-behavior", sampleSnapshot.flowMap?.diagramSections?.firstOrNull()?.id)
             assertTrue(samplePayload.contains("WalkthroughSample.mapSystem"))
             val sampleSource = client.get("/api/source?path=${SampleWalkthrough.sourcePath}")
             assertEquals(HttpStatusCode.OK, sampleSource.status)
@@ -78,20 +78,28 @@ class WebApplicationTest {
 
             val scopedTour = client.post("/api/tour") {
                 contentType(ContentType.Application.Json)
-                setBody("""{"action":"start_section","section_id":"system-overview"}""")
+                setBody("""{"action":"start_section","section_id":"feature-behavior"}""")
             }
             val scopedSnapshot = Json.decodeFromString<SessionSnapshot>(scopedTour.bodyAsText())
             assertEquals("TOUR_ACTIVE", scopedSnapshot.state)
-            assertEquals("system-overview", scopedSnapshot.activeSectionId)
-            assertEquals("sample-map", scopedSnapshot.displayedStep?.id)
+            assertEquals("feature-behavior", scopedSnapshot.activeSectionId)
+            assertEquals("sample-behavior", scopedSnapshot.displayedStep?.id)
 
             val sectionEnd = client.post("/api/tour") {
                 contentType(ContentType.Application.Json)
                 setBody("""{"action":"next"}""")
             }
             val endedSnapshot = Json.decodeFromString<SessionSnapshot>(sectionEnd.bodyAsText())
-            assertEquals("OVERVIEW", endedSnapshot.state)
-            assertEquals(null, endedSnapshot.activeSectionId)
+            assertEquals("TOUR_ACTIVE", endedSnapshot.state)
+            assertEquals("sample-evidence", endedSnapshot.displayedStep?.id)
+
+            val finishSection = client.post("/api/tour") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"action":"next"}""")
+            }
+            val finishedSnapshot = Json.decodeFromString<SessionSnapshot>(finishSection.bodyAsText())
+            assertEquals("OVERVIEW", finishedSnapshot.state)
+            assertEquals(null, finishedSnapshot.activeSectionId)
 
             val mapping = client.post("/api/mapping") {
                 contentType(ContentType.Application.Json)

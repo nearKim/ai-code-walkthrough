@@ -51,7 +51,6 @@ class StepValidator(
                         architecture,
                         validatedSteps,
                         learningPath,
-                        entryStepId,
                     )
                 } else {
                     sections

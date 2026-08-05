@@ -498,12 +498,12 @@ class StepValidatorTest {
             )
             assertEquals(listOf("application"), validated.learningPath.first().componentIds)
             assertEquals(
-                listOf("system-overview", "component-map", "feature-orientation", "feature-core"),
+                listOf("system-overview", "feature-orientation", "feature-core"),
                 validated.diagramSections.map { it.id },
             )
             assertEquals("Model overview", validated.diagramSections.first().title)
             assertEquals(listOf("start"), validated.diagramSections.first().stepIds)
-            assertEquals(listOf("application", "service"), validated.diagramSections[1].componentIds)
+            assertEquals(listOf("application"), validated.diagramSections[1].componentIds)
         } finally {
             root.toFile().deleteRecursively()
         }

@@ -1,48 +1,24 @@
 import { createTheme, type MantineColorsTuple } from '@mantine/core';
 
-/** Burnt copper — path / selection signal. Not indigo. */
-const copper: MantineColorsTuple = [
-  '#fff7ed',
-  '#ffedd5',
-  '#fed7aa',
-  '#fdba74',
-  '#fb923c',
-  '#f97316',
-  '#ea580c',
-  '#c2410c',
-  '#9a3412',
-  '#7c2d12',
+const blue: MantineColorsTuple = [
+  '#edf6ff', '#d7ebff', '#b5d8ff', '#8cc2ff', '#5aa7fa',
+  '#2888e8', '#0071e3', '#005bb5', '#00478d', '#00386f',
 ];
 
-/** Moss — validated / next-hop markers. */
-const moss: MantineColorsTuple = [
-  '#f0f7f3',
-  '#dceee4',
-  '#b9dcc9',
-  '#8fc4a8',
-  '#5ea683',
-  '#3d8b68',
-  '#2f6f54',
-  '#285946',
-  '#22483a',
-  '#1c3b30',
+const green: MantineColorsTuple = [
+  '#effbf3', '#d9f5e2', '#b4e9c7', '#82d8a1', '#4dc279',
+  '#26a85d', '#16803c', '#106831', '#0d5228', '#083f1f',
 ];
 
 export const walkthroughTheme = createTheme({
-  primaryColor: 'copper',
-  primaryShade: { light: 7, dark: 5 },
-  colors: {
-    copper,
-    moss,
-  },
-  fontFamily:
-    '"IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif',
-  fontFamilyMonospace:
-    '"IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+  primaryColor: 'blue',
+  primaryShade: { light: 6, dark: 5 },
+  colors: { blue, green },
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  fontFamilyMonospace: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
   headings: {
-    fontFamily:
-      '"IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif',
-    fontWeight: '600',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontWeight: '650',
     sizes: {
       h1: { fontSize: '2rem', lineHeight: '1.15' },
       h2: { fontSize: '1.35rem', lineHeight: '1.2' },
@@ -50,12 +26,12 @@ export const walkthroughTheme = createTheme({
       h4: { fontSize: '0.95rem', lineHeight: '1.3' },
     },
   },
-  defaultRadius: 2,
+  defaultRadius: 'md',
   radius: {
-    xs: '2px',
-    sm: '3px',
-    md: '4px',
-    lg: '6px',
+    xs: '4px',
+    sm: '6px',
+    md: '8px',
+    lg: '8px',
     xl: '8px',
   },
   spacing: {
@@ -74,57 +50,7 @@ export const walkthroughTheme = createTheme({
   },
   components: {
     Button: {
-      defaultProps: {
-        radius: 'xs',
-      },
-      styles: {
-        root: {
-          fontWeight: 600,
-          letterSpacing: '0.01em',
-        },
-      },
-    },
-    SegmentedControl: {
-      defaultProps: {
-        radius: 'xs',
-      },
-    },
-    TextInput: {
-      defaultProps: {
-        radius: 'xs',
-      },
-    },
-    Textarea: {
-      defaultProps: {
-        radius: 'xs',
-      },
-    },
-    Select: {
-      defaultProps: {
-        radius: 'xs',
-      },
-    },
-    Badge: {
-      defaultProps: {
-        radius: 'xs',
-      },
-    },
-    Alert: {
-      defaultProps: {
-        radius: 'xs',
-      },
-    },
-    Modal: {
-      defaultProps: {
-        radius: 'xs',
-      },
-    },
-    Tabs: {
-      styles: {
-        tab: {
-          fontWeight: 600,
-        },
-      },
+      styles: { root: { fontWeight: 600, letterSpacing: '0' } },
     },
   },
 });

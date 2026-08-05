@@ -1,29 +1,71 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { RightPane, type RightPaneActions } from './RightPane';
 import type { SessionSnapshot } from './types';
 
-test('starts the default whole-codebase walkthrough', async () => {
+test('starts a whole-codebase walkthrough from the minimal input', async () => {
   const startMapping = vi.fn(async () => undefined);
   const showSample = vi.fn(async () => undefined);
+  const actions = testActions({ startMapping, showSample });
+
+  render(<MantineProvider><RightPane
+    session={inputSession()}
+    providers={[{ id: 'codex_cli', name: 'Codex CLI', available: true, message: 'Available' }]}
+    actions={actions}
+  /></MantineProvider>);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Learn' }));
+  await waitFor(() => expect(startMapping).toHaveBeenCalledWith('', 'understand', 'codex_cli'));
+  fireEvent.click(screen.getByRole('button', { name: 'Walkthrough options' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Preview sample' }));
+  await waitFor(() => expect(showSample).toHaveBeenCalledOnce());
+});
+
+test('narrows the map to a feature and starts its scoped walkthrough', () => {
+  const tour = vi.fn(async () => undefined);
+  const previewEvidence = vi.fn();
+  const actions = testActions({ tour, previewEvidence });
+
+  render(<MantineProvider><RightPane
+    session={overviewSession()}
+    providers={[]}
+    actions={actions}
+  /></MantineProvider>);
+
+  expect(screen.getByLabelText('Architecture map')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Application flow' })).toHaveAttribute('aria-pressed', 'true');
+  expect(document.getElementById('architecture-node-interface')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Walk' }));
+  expect(tour).toHaveBeenCalledWith('start_section', undefined, 'application-flow');
+
+  fireEvent.click(screen.getByRole('button', { name: 'All code' }));
+  expect(document.getElementById('architecture-node-interface')).not.toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Show ExperimentRunner source' }));
+  expect(previewEvidence).toHaveBeenCalledWith(
+    expect.objectContaining({ label: 'ExperimentRunner', start_line: 5 }),
+    'Owns the experiment lifecycle.',
+  );
+});
+
+function testActions(overrides: Partial<RightPaneActions> = {}): RightPaneActions {
   const noop = vi.fn(async () => undefined);
-  const actions: RightPaneActions = {
-    startMapping,
-    showSample,
+  return {
+    startMapping: noop,
+    showSample: noop,
     cancelMapping: noop,
     tour: noop,
     answer: noop,
-    loadSymbolInventory: async () => ({
-      tool: 'python_stdlib_ast', language: 'python', files_scanned: 0, symbol_count: 0, truncated: false, modules: [],
-    }),
     copyMarkdown: noop,
     downloadTechnicalReference: noop,
     openSettings: vi.fn(),
-    focusCode: vi.fn(),
     previewEvidence: vi.fn(),
+    ...overrides,
   };
-  const session: SessionSnapshot = {
+}
+
+function inputSession(): SessionSnapshot {
+  return {
     state: 'INPUT',
     repository: 'sample-repo',
     repository_path: '/tmp/sample-repo',
@@ -35,78 +77,18 @@ test('starts the default whole-codebase walkthrough', async () => {
     step_answer_loading: false,
     progress_lines: [],
   };
+}
 
-  render(
-    <MantineProvider>
-      <RightPane
-        session={session}
-        providers={[{ id: 'codex_cli', name: 'Codex CLI', available: true, message: 'Available' }]}
-        actions={actions}
-      />
-    </MantineProvider>,
-  );
-
-  fireEvent.click(screen.getByRole('button', { name: 'Learn codebase' }));
-  await waitFor(() => expect(startMapping).toHaveBeenCalledWith('', 'understand', 'codex_cli'));
-  fireEvent.click(screen.getByRole('button', { name: 'Preview sample result' }));
-  await waitFor(() => expect(showSample).toHaveBeenCalledOnce());
-});
-
-test('explains component roles and links details to validated code', async () => {
-  const tour = vi.fn(async () => undefined);
-  const previewEvidence = vi.fn();
-  const noop = vi.fn(async () => undefined);
-  const downloadTechnicalReference = vi.fn(async () => undefined);
-  const actions: RightPaneActions = {
-    startMapping: noop,
-    showSample: noop,
-    cancelMapping: noop,
-    tour,
-    answer: noop,
-    loadSymbolInventory: async () => ({
-      tool: 'python_stdlib_ast',
-      language: 'python',
-      files_scanned: 1,
-      symbol_count: 4,
-      truncated: false,
-      modules: [{
-        path: 'src/app.ts',
-        imports: [],
-        classes: [{
-          name: 'ExperimentRunner',
-          start_line: 5,
-          end_line: 19,
-          bases: [],
-          state_fields: ['resultStore'],
-          methods: [{ name: 'run', start_line: 6, end_line: 8 }],
-        }],
-        functions: [{ name: 'buildRunner', start_line: 21, end_line: 24 }],
-      }],
-    }),
-    copyMarkdown: noop,
-    downloadTechnicalReference,
-    openSettings: vi.fn(),
-    focusCode: vi.fn(),
-    previewEvidence,
-  };
-  const session: SessionSnapshot = {
+function overviewSession(): SessionSnapshot {
+  return {
+    ...inputSession(),
     state: 'OVERVIEW',
-    repository: 'sample-repo',
-    repository_path: '/tmp/sample-repo',
-    mode: 'understand',
-    provider: 'codex_cli',
-    current_step_index: -1,
-    displayed_step_index: -1,
-    broken_step_ids: [],
-    step_answer_loading: false,
-    progress_lines: [],
     flow_map: {
       summary: 'A small request flow.',
       steps: [{
         id: 'run',
         title: 'Run the application',
         file_path: 'src/app.ts',
-        symbol: 'run',
         start_line: 5,
         end_line: 9,
         explanation: 'Runs the use case.',
@@ -118,75 +100,22 @@ test('explains component roles and links details to validated code', async () =>
       architecture: {
         system_name: 'Experiment system',
         system_purpose: 'Handle a request.',
-        containers: [{
-          id: 'cli',
-          name: 'experiment-cli',
-          kind: 'command_line_application',
-          responsibility: 'Starts the experiment from a terminal.',
-          component_ids: ['interface', 'application'],
-          evidence: [{ kind: 'entrypoint', label: 'experiment-cli', file_path: 'src/cli.ts', start_line: 1, end_line: 1 }],
-          uncertain: false,
-        }, {
-          id: 'mcp',
-          name: 'experiment-mcp',
-          kind: 'mcp_server',
-          responsibility: 'Starts the experiment through MCP.',
-          component_ids: ['application'],
-          evidence: [{ kind: 'entrypoint', label: 'experiment-mcp', file_path: 'src/app.ts', start_line: 1, end_line: 1 }],
-          uncertain: false,
-        }],
         components: [{
           id: 'application',
           name: 'Experiment application',
           kind: 'application',
           responsibility: 'Coordinate the experiment workflow.',
-          responsibilities: [{
-            id: 'coordinate-run',
-            title: 'Coordinate one experiment run',
-            description: 'Sequences preparation, execution, and result recording.',
-            evidence: [{
-              kind: 'class',
-              label: 'ExperimentRunner',
-              file_path: 'src/app.ts',
-              start_line: 5,
-              end_line: 9,
-              text: 'Owns the experiment lifecycle.',
-            }, {
-              kind: 'method',
-              label: 'run',
-              file_path: 'src/app.ts',
-              start_line: 5,
-              end_line: 8,
-              text: 'Sequences the lifecycle operations.',
-            }, {
-              kind: 'state',
-              label: 'resultStore',
-              file_path: 'src/app.ts',
-              start_line: 9,
-              end_line: 9,
-              text: 'Retains the result boundary used by the run.',
-            }, {
-              kind: 'class',
-              label: 'PlanBuilder',
-              file_path: 'src/app.ts',
-              start_line: 20,
-              end_line: 30,
-              text: 'Builds the experiment plan.',
-            }, {
-              kind: 'method',
-              label: 'buildPlan',
-              file_path: 'src/app.ts',
-              start_line: 22,
-              end_line: 25,
-              text: 'Builds one plan.',
-            }],
-            collaborator_component_ids: ['interface'],
-            relationship_ids: ['interface-calls-application'],
-            uncertain: false,
-          }],
+          responsibilities: [],
           key_paths: ['src/app.ts'],
           key_symbols: ['run'],
-          evidence: [],
+          evidence: [{
+            kind: 'class',
+            label: 'ExperimentRunner',
+            file_path: 'src/app.ts',
+            start_line: 5,
+            end_line: 9,
+            text: 'Owns the experiment lifecycle.',
+          }],
           uncertain: false,
         }, {
           id: 'interface',
@@ -205,17 +134,16 @@ test('explains component roles and links details to validated code', async () =>
           to_component_id: 'application',
           kind: 'calls',
           description: 'The CLI starts the experiment workflow.',
-          evidence: [{ kind: 'callsite', label: 'run call', file_path: 'src/app.ts', start_line: 6, end_line: 6 }],
+          evidence: [],
           uncertain: false,
         }],
-        cross_cutting_concerns: ['All requests use the same audit trail.'],
-        coverage_notes: ['Generated files were not inspected.'],
+        cross_cutting_concerns: [],
+        coverage_notes: [],
       },
       learning_path: [],
       diagram_sections: [{
         id: 'application-flow',
         title: 'Application flow',
-        summary: 'Trace the request through the application service.',
         component_ids: ['application'],
         step_ids: ['run'],
       }],
@@ -224,65 +152,4 @@ test('explains component roles and links details to validated code', async () =>
     },
     active_section_id: 'application-flow',
   };
-
-  render(
-    <MantineProvider>
-      <RightPane session={session} providers={[]} actions={actions} />
-    </MantineProvider>,
-  );
-
-  expect(await screen.findByLabelText('Architecture depth')).toBeVisible();
-  expect(screen.getByRole('combobox', { name: 'Diagram focus' })).toHaveValue('Application flow');
-  expect(screen.getByText('Trace the request through the application service.')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Walk this section' }));
-  expect(tour).toHaveBeenCalledWith('start_section', undefined, 'application-flow');
-  expect(screen.getByRole('button', { name: 'Zoom in' })).toBeVisible();
-  expect(screen.getByLabelText('Architecture diagram workspace')).toBeVisible();
-  expect(screen.getByLabelText('Component details')).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'System: big picture' })).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'Runtime: entrypoint path' })).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'Packages: import graph' })).toBeVisible();
-  expect(screen.getByRole('tab', { name: 'Code: files & symbols' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'How this project runs' })).toBeVisible();
-  expect(screen.getByLabelText('Code groups by entry point')).toBeVisible();
-  expect(within(screen.getByLabelText('Component details')).getByText('Handle a request.')).toBeVisible();
-  expect(screen.queryByText('Coordinate the experiment workflow.')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: 'Code: files & symbols' }));
-  expect(screen.getAllByText('application workflow').length).toBeGreaterThan(0);
-  const codeOwnership = screen.getByLabelText('Class ownership');
-  expect(codeOwnership).toBeVisible();
-  await waitFor(() => expect(within(codeOwnership).getByRole('button', { name: 'Show ExperimentRunner.run source' })).toBeVisible());
-  const experimentRunner = within(codeOwnership).getByText('ExperimentRunner').closest('.code-owner-row');
-  expect(experimentRunner).not.toBeNull();
-  expect(within(experimentRunner as HTMLElement).getByText('run()')).toBeVisible();
-  expect(within(experimentRunner as HTMLElement).getByText('Coordinate one experiment run')).toBeVisible();
-  expect(within(experimentRunner as HTMLElement).getByText('Sequences preparation, execution, and result recording.')).toBeVisible();
-  expect(within(experimentRunner as HTMLElement).getByText('Sequences the lifecycle operations.')).toBeVisible();
-  expect(codeOwnership.querySelectorAll('.code-owner-row')).toHaveLength(2);
-  expect(screen.queryByLabelText('Responsibility behavior map')).not.toBeInTheDocument();
-  expect(screen.queryByRole('tab', { name: 'Code files' })).not.toBeInTheDocument();
-  const selectedComponent = screen.getByLabelText('Selected diagram component');
-  expect(within(selectedComponent).getByRole('heading', { name: 'Experiment application' })).toBeVisible();
-  expect(screen.queryByText('Selected component')).not.toBeInTheDocument();
-  expect(screen.queryByLabelText('Choose component')).not.toBeInTheDocument();
-  fireEvent.click(within(codeOwnership).getByRole('button', { name: 'Show ExperimentRunner.run source' }));
-  expect(previewEvidence).toHaveBeenCalledWith(
-    expect.objectContaining({ label: 'ExperimentRunner.run', start_line: 6 }),
-    'Sequences the lifecycle operations.',
-  );
-  fireEvent.click(screen.getByRole('tab', { name: 'Packages: import graph' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Operator interfaces, Accept operator commands.' }));
-  await waitFor(() => expect(within(screen.getByLabelText('Selected diagram component')).getByRole('heading', { name: 'Operator interfaces' })).toBeVisible());
-  expect(screen.getByRole('tab', { name: 'Packages: import graph' })).toHaveAttribute('data-active', 'true');
-
-  fireEvent.click(screen.getByRole('button', { name: 'Download technical reference' }));
-  expect(downloadTechnicalReference).toHaveBeenCalledOnce();
-
-  expect(screen.getByRole('tab', { name: 'System notes' })).toBeVisible();
-  expect(screen.getByText('Rules affecting multiple components')).not.toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: 'System notes' }));
-  expect(screen.getByText('Rules affecting multiple components')).toBeVisible();
-  expect(screen.getByText('Analysis boundaries')).toBeVisible();
-  expect(screen.getByText('All requests use the same audit trail.')).toBeVisible();
-  expect(screen.getByText('Generated files were not inspected.')).toBeVisible();
-});
+}

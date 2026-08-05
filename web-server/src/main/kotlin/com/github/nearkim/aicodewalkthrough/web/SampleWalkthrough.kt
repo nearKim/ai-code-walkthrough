@@ -131,25 +131,11 @@ internal object SampleWalkthrough {
             ),
             diagramSections = listOf(
                 DiagramSection(
-                    id = "system-overview",
-                    title = "System overview",
-                    summary = "Orient to the validated system boundary before following its behavior.",
-                    componentIds = listOf("sample-system", "sample-behavior", "sample-evidence"),
-                    stepIds = listOf("sample-map"),
-                ),
-                DiagramSection(
-                    id = "component-map",
-                    title = "Component map",
-                    summary = "Inspect the components and their connected representative stops.",
-                    componentIds = listOf("sample-system", "sample-behavior", "sample-evidence"),
-                    stepIds = listOf("sample-map", "sample-behavior", "sample-evidence"),
-                ),
-                DiagramSection(
-                    id = "feature-walkthrough",
-                    title = "Feature walkthrough",
-                    summary = "Follow the representative path from system map through behavior and evidence.",
-                    componentIds = listOf("sample-system", "sample-behavior", "sample-evidence"),
-                    stepIds = listOf("sample-map", "sample-behavior", "sample-evidence"),
+                    id = "feature-behavior",
+                    title = "Trace behavior",
+                    summary = "Follow the branch and its evidence.",
+                    componentIds = listOf("sample-behavior", "sample-evidence"),
+                    stepIds = listOf("sample-behavior", "sample-evidence"),
                 ),
             ),
             learningPath = listOf(

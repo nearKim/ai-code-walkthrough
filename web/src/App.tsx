@@ -3,13 +3,11 @@ import {
   Button,
   Center,
   Loader,
-  localStorageColorSchemeManager,
   MantineProvider,
   Text,
-  UnstyledButton,
   useComputedColorScheme,
-  useMantineColorScheme,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Group as PanelGroup, Panel, Separator, usePanelCallbackRef } from 'react-resizable-panels';
 import { api, subscribeToEvents } from './api';
@@ -27,15 +25,10 @@ import type {
   WalkthroughSettings,
 } from './types';
 
-const colorSchemeManager = localStorageColorSchemeManager({
-  key: 'ai-code-walkthrough-color-scheme',
-});
-
 export function App() {
   return (
     <MantineProvider
       theme={walkthroughTheme}
-      colorSchemeManager={colorSchemeManager}
       defaultColorScheme="auto"
     >
       <WalkthroughApplication />
@@ -45,29 +38,34 @@ export function App() {
 
 function WalkthroughApplication() {
   const colorScheme = useComputedColorScheme('light');
-  const { setColorScheme } = useMantineColorScheme();
   const dark = colorScheme === 'dark';
+  const narrowScreen = useMediaQuery('(max-width: 720px)');
   const [session, setSession] = useState<SessionSnapshot>();
   const [settings, setSettings] = useState<WalkthroughSettings>();
   const [providers, setProviders] = useState<ReadonlyArray<ProviderStatus>>([]);
   const [settingsOpened, setSettingsOpened] = useState(false);
   const [actionError, setActionError] = useState<string>();
-  const [focusNonce, setFocusNonce] = useState(0);
   const [codeCollapsed, setCodeCollapsed] = useState(true);
-  const [walkthroughNarrow, setWalkthroughNarrow] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<FlowStep>();
   const [codePanel, setCodePanel] = usePanelCallbackRef();
+  const [workspaceNarrow, setWorkspaceNarrow] = useState(narrowScreen);
   const displayedStep = evidencePreview ?? session?.displayed_step;
   const shouldShowCode = session?.state === 'TOUR_ACTIVE' || displayedStep !== undefined;
 
   useEffect(() => {
+    if (workspaceNarrow === narrowScreen) return;
+    setCodePanel(null);
+    setWorkspaceNarrow(narrowScreen);
+  }, [narrowScreen, setCodePanel, workspaceNarrow]);
+
+  useEffect(() => {
     if (codePanel === null) return;
     if (shouldShowCode) {
-      if (codePanel.isCollapsed()) codePanel.resize('64%');
+      if (codePanel.isCollapsed()) codePanel.resize(workspaceNarrow ? '56%' : '64%');
     } else {
       codePanel.collapse();
     }
-  }, [codePanel, shouldShowCode]);
+  }, [codePanel, shouldShowCode, workspaceNarrow]);
 
   const toggleCodePane = useCallback(() => {
     if (codePanel === null) return;
@@ -160,7 +158,6 @@ function WalkthroughApplication() {
       await perform(() => api.tour(action, stepId, sectionId));
     },
     answer: async (question) => perform(() => api.answer(question)),
-    loadSymbolInventory: api.symbols,
     copyMarkdown: async () => {
       setActionError(undefined);
       try {
@@ -183,10 +180,6 @@ function WalkthroughApplication() {
       }
     },
     openSettings: () => setSettingsOpened(true),
-    focusCode: () => {
-      codePanel?.expand();
-      setFocusNonce((value) => value + 1);
-    },
     previewEvidence: (evidence: EvidenceItem, explanation: string) => {
       if (evidence.file_path === undefined || evidence.start_line === undefined) return;
       setEvidencePreview({
@@ -219,46 +212,15 @@ function WalkthroughApplication() {
     }
   };
 
-  const stateLabel = session === undefined
-    ? 'connecting'
-    : session.state === 'INPUT'
-      ? 'ready'
-      : session.state === 'LOADING'
-        ? 'mapping'
-        : session.state === 'OVERVIEW'
-          ? 'overview'
-          : 'tour';
-
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="app-brand">
-          <span aria-hidden="true" className="app-brand-mark">
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-              <path d="M2 14V4h2.4l2.5 6.2L9.4 4H12v10h-2V7.6L7.7 14H6.1L3.9 7.6V14H2z" fill="currentColor" />
-              <path d="M13 4h1.5l1.8 10H14.8l-.3-1.8h-2.2L12 14h-1.6L13 4zm.7 2.6-.7 4.4h1.4l-.7-4.4z" fill="currentColor" opacity="0.55" />
-            </svg>
-          </span>
-          <div className="app-brand-copy">
-            <Text className="app-brand-title">Code Cartograph</Text>
-            <Text className="app-brand-sub">Review · map · understand</Text>
-          </div>
+        <div className="app-header-primary">
+          <Text className="app-brand-title">Code Walkthrough</Text>
+          <Text className="repository-name" ff="monospace" truncate title={session?.repository_path}>
+            {session?.repository ?? 'Connecting...'}
+          </Text>
         </div>
-
-        <div className="app-header-meta">
-          <div className="repository-context" title={session?.repository_path}>
-            <span className="meta-label">Repository</span>
-            <Text className="repository-name" ff="monospace" truncate>
-              {session?.repository ?? 'Connecting…'}
-            </Text>
-          </div>
-          <div className="session-chip" data-state={stateLabel}>
-            <span className="session-chip-dot" aria-hidden="true" />
-            <span className="meta-label">Session</span>
-            <Text className="session-chip-value">{stateLabel}</Text>
-          </div>
-        </div>
-
         <div className="app-header-controls">
           {shouldShowCode && (
             <Button
@@ -271,22 +233,6 @@ function WalkthroughApplication() {
               {codeCollapsed ? 'Show source' : 'Hide source'}
             </Button>
           )}
-          <div className="theme-toggle" role="group" aria-label="Color theme">
-            <UnstyledButton
-              className={!dark ? 'active' : undefined}
-              aria-pressed={!dark}
-              onClick={() => setColorScheme('light')}
-            >
-              Light
-            </UnstyledButton>
-            <UnstyledButton
-              className={dark ? 'active' : undefined}
-              aria-pressed={dark}
-              onClick={() => setColorScheme('dark')}
-            >
-              Dark
-            </UnstyledButton>
-          </div>
         </div>
       </header>
 
@@ -302,17 +248,18 @@ function WalkthroughApplication() {
       )}
 
       {session === undefined ? (
-        <Center className="app-loading"><Loader size="sm" color="copper" /></Center>
+        <Center className="app-loading"><Loader size="sm" /></Center>
       ) : (
         <PanelGroup
-          orientation="horizontal"
+          key={workspaceNarrow ? 'narrow' : 'wide'}
+          orientation={workspaceNarrow ? 'vertical' : 'horizontal'}
           className="workspace"
-          defaultLayout={shouldShowCode ? { code: 70, walkthrough: 30 } : { code: 0, walkthrough: 100 }}
+          defaultLayout={shouldShowCode ? { code: workspaceNarrow ? 56 : 64, walkthrough: workspaceNarrow ? 44 : 36 } : { code: 0, walkthrough: 100 }}
         >
           <Panel
             id="code"
             panelRef={setCodePanel}
-            minSize={480}
+            minSize={workspaceNarrow ? 220 : 420}
             collapsible
             collapsedSize={0}
             onResize={(size) => setCodeCollapsed(size.inPixels <= 1)}
@@ -322,18 +269,13 @@ function WalkthroughApplication() {
               nextStep={evidencePreview === undefined ? session.next_step : undefined}
               nextEdge={evidencePreview === undefined ? session.next_edge : undefined}
               dark={dark}
-              focusNonce={focusNonce}
             />
           </Panel>
           <Separator className="pane-separator" />
           <Panel
             id="walkthrough"
             defaultSize="30"
-            minSize={360}
-            onResize={(size) => setWalkthroughNarrow((current) => {
-              const next = size.inPixels <= 720;
-              return current === next ? current : next;
-            })}
+            minSize={workspaceNarrow ? 260 : 360}
           >
             <RightPane
               session={session}
@@ -341,7 +283,7 @@ function WalkthroughApplication() {
               providers={providers}
               actions={actions}
               actionError={actionError}
-              compact={walkthroughNarrow}
+              compact={workspaceNarrow}
             />
           </Panel>
         </PanelGroup>

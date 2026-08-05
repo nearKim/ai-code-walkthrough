@@ -16,6 +16,7 @@ class PromptContractTest {
         assertTrue(prompt.contains("persisted deterministic analyzer output"))
         assertTrue(prompt.contains("immutable facts"))
         assertTrue(prompt.contains("\"diagram_sections\""))
-        assertTrue(prompt.contains("system overview, component map, and feature walkthrough"))
+        assertTrue(prompt.contains("optional feature scopes"))
+        assertTrue(prompt.contains("not duplicate whole-system views"))
     }
 }
