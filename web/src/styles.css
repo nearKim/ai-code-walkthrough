@@ -227,7 +227,23 @@ textarea {
 }
 
 .map-view {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.map-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.learning-total,
+.tour-progress-count {
+  flex: 0 0 auto;
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1 !important;
 }
 
 .map-scopes {
@@ -241,6 +257,72 @@ textarea {
 
 .map-scopes::-webkit-scrollbar {
   display: none;
+}
+
+.learning-track {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 8px 22px;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+
+.learning-track::-webkit-scrollbar {
+  display: none;
+}
+
+.learning-stage {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 8px 5px 5px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.learning-stage:hover,
+.learning-stage:focus-visible {
+  background: var(--panel-muted);
+  color: var(--ink);
+  outline: none;
+}
+
+.learning-stage.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.learning-stage-index {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.learning-stage.complete .learning-stage-index {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: #fff;
+}
+
+.learning-stage-title {
+  max-width: 180px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .map-scope {
@@ -423,6 +505,39 @@ textarea {
   align-items: flex-start;
 }
 
+.tour-top {
+  border-bottom: 1px solid var(--border);
+}
+
+.tour-top .pane-header {
+  border-bottom: 0;
+}
+
+.tour-heading {
+  min-width: 0;
+}
+
+.tour-stage-title {
+  margin-bottom: 4px;
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  font-weight: 600;
+  line-height: 1.2 !important;
+}
+
+.learning-progress {
+  height: 2px;
+  overflow: hidden;
+  background: var(--panel-strong);
+}
+
+.learning-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
 .tour-scroll {
   min-height: 0;
 }
@@ -596,6 +711,7 @@ textarea {
 
   .pane-header,
   .map-scopes,
+  .learning-track,
   .component-peek,
   .tour-dock {
     padding-right: 16px;

@@ -8,7 +8,7 @@ export interface RightPaneActions {
   readonly startMapping: (question: string, mode: AnalysisModeId, provider: ProviderId) => Promise<void>;
   readonly showSample: () => Promise<void>;
   readonly cancelMapping: () => Promise<void>;
-  readonly tour: (action: TourAction, stepId?: string, sectionId?: string) => Promise<void>;
+  readonly tour: (action: TourAction, stepId?: string, sectionId?: string, stageId?: string) => Promise<void>;
   readonly answer: (question: string) => Promise<void>;
   readonly copyMarkdown: () => Promise<void>;
   readonly downloadTechnicalReference: () => Promise<void>;

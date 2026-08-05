@@ -75,7 +75,9 @@ data class StoredWebSession(
     val stepAnswerError: String? = null,
     val activeStepId: String? = null,
     val activeSectionId: String? = null,
+    val activeStageId: String? = null,
     val historyStepIds: List<String> = emptyList(),
+    val completedStepIds: List<String> = emptyList(),
 )
 
 private fun defaultSessionPath(projectRoot: Path): Path {

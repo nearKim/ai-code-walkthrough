@@ -81,8 +81,13 @@ export const api = {
   startMapping: (question: string, mode: AnalysisModeId, provider: ProviderId): Promise<SessionSnapshot> =>
     request('/api/mapping', jsonRequest('POST', { question, mode, provider })),
   cancelMapping: (): Promise<SessionSnapshot> => request('/api/mapping', { method: 'DELETE' }),
-  tour: (action: TourAction, stepId?: string, sectionId?: string): Promise<SessionSnapshot> =>
-    request('/api/tour', jsonRequest('POST', { action, step_id: stepId, section_id: sectionId })),
+  tour: (action: TourAction, stepId?: string, sectionId?: string, stageId?: string): Promise<SessionSnapshot> =>
+    request('/api/tour', jsonRequest('POST', {
+      action,
+      step_id: stepId,
+      section_id: sectionId,
+      stage_id: stageId,
+    })),
   answer: (question: string): Promise<SessionSnapshot> =>
     request('/api/step-answer', jsonRequest('POST', { question })),
   source: (path: string): Promise<SourceFile> => request(`/api/source?path=${encodeURIComponent(path)}`),

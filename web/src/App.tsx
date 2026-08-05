@@ -153,9 +153,9 @@ function WalkthroughApplication() {
       await perform(api.sample);
     },
     cancelMapping: async () => perform(api.cancelMapping),
-    tour: async (action, stepId, sectionId) => {
+    tour: async (action, stepId, sectionId, stageId) => {
       setEvidencePreview(undefined);
-      await perform(() => api.tour(action, stepId, sectionId));
+      await perform(() => api.tour(action, stepId, sectionId, stageId));
     },
     answer: async (question) => perform(() => api.answer(question)),
     copyMarkdown: async () => {

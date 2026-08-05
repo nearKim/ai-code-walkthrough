@@ -159,7 +159,7 @@ fun Application.configureWebApplication(dependencies: WebDependencies) {
         post("/api/tour") {
             if (!call.requireJson()) return@post
             val request = call.receive<TourRequest>()
-            dependencies.session.tour(request.action, request.stepId, request.sectionId).fold(
+            dependencies.session.tour(request.action, request.stepId, request.sectionId, request.stageId).fold(
                 onSuccess = { call.respond(it) },
                 onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorResponse(it.message ?: "Invalid tour action")) },
             )

@@ -22,7 +22,7 @@ test('starts a whole-codebase walkthrough from the minimal input', async () => {
   await waitFor(() => expect(showSample).toHaveBeenCalledOnce());
 });
 
-test('narrows the map to a feature and starts its scoped walkthrough', () => {
+test('keeps feature scopes separate from the learning path', () => {
   const tour = vi.fn(async () => undefined);
   const previewEvidence = vi.fn();
   const actions = testActions({ tour, previewEvidence });
@@ -36,8 +36,13 @@ test('narrows the map to a feature and starts its scoped walkthrough', () => {
   expect(screen.getByLabelText('Architecture map')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Application flow' })).toHaveAttribute('aria-pressed', 'true');
   expect(document.getElementById('architecture-node-interface')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /Application basics/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Walk' }));
-  expect(tour).toHaveBeenCalledWith('start_section', undefined, 'application-flow');
+  expect(tour).toHaveBeenLastCalledWith('start_stage', undefined, undefined, 'application-basics');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Application flow' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Walk' }));
+  expect(tour).toHaveBeenLastCalledWith('start_section', undefined, 'application-flow');
 
   fireEvent.click(screen.getByRole('button', { name: 'All code' }));
   expect(document.getElementById('architecture-node-interface')).not.toBeNull();
@@ -46,6 +51,29 @@ test('narrows the map to a feature and starts its scoped walkthrough', () => {
     expect.objectContaining({ label: 'ExperimentRunner', start_line: 5 }),
     'Owns the experiment lifecycle.',
   );
+});
+
+test('shows the active learning stage and digestion progress during a tour', () => {
+  const session = overviewSession();
+  const activeSession: SessionSnapshot = {
+    ...session,
+    state: 'TOUR_ACTIVE',
+    current_step_index: 0,
+    displayed_step_index: 0,
+    displayed_step: session.flow_map!.steps[0],
+    active_learning_stage_id: 'application-basics',
+    completed_step_ids: [],
+  };
+
+  render(<MantineProvider><RightPane
+    session={activeSession}
+    providers={[]}
+    actions={testActions()}
+  /></MantineProvider>);
+
+  expect(document.querySelector('.tour-stage-title')).toHaveTextContent('Application basics');
+  expect(screen.getByRole('progressbar', { name: 'Learning progress: 0 of 1 code stops' }))
+    .toHaveAttribute('aria-valuenow', '0');
 });
 
 function testActions(overrides: Partial<RightPaneActions> = {}): RightPaneActions {
@@ -140,7 +168,13 @@ function overviewSession(): SessionSnapshot {
         cross_cutting_concerns: [],
         coverage_notes: [],
       },
-      learning_path: [],
+      learning_path: [{
+        id: 'application-basics',
+        title: 'Application basics',
+        goal: 'Connect the application component to its code stop.',
+        component_ids: ['application'],
+        step_ids: ['run'],
+      }],
       diagram_sections: [{
         id: 'application-flow',
         title: 'Application flow',

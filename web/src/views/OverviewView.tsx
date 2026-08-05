@@ -2,8 +2,16 @@ import { ActionIcon, Alert, Button, Group, Menu, Text, Title, UnstyledButton } f
 import { useEffect, useMemo, useState } from 'react';
 import { ArchitectureDiagram } from '../ArchitectureDiagram';
 import { hasCodeLocation } from '../architecture/evidence';
+import { learningProgress, navigableLearningStages, stageProgress } from '../learningPath';
 import type { RightPaneActions } from '../RightPane';
-import type { ArchitectureComponent, CodebaseArchitecture, DiagramSection, EvidenceItem, SessionSnapshot } from '../types';
+import type {
+  ArchitectureComponent,
+  CodebaseArchitecture,
+  DiagramSection,
+  EvidenceItem,
+  LearningStage,
+  SessionSnapshot,
+} from '../types';
 
 interface OverviewViewProps {
   readonly session: SessionSnapshot;
@@ -21,6 +29,8 @@ export function OverviewView({ session, actions }: OverviewViewProps) {
   return <MapView
     architecture={flow.architecture}
     sections={flow.diagram_sections ?? []}
+    learningPath={navigableLearningStages(flow)}
+    completedStepIds={session.completed_step_ids ?? []}
     activeSectionId={session.active_section_id}
     actions={actions}
   />;
@@ -37,22 +47,32 @@ function SimpleWalkthrough({ actions }: { readonly actions: RightPaneActions }) 
 function MapView({
   architecture,
   sections,
+  learningPath,
+  completedStepIds,
   activeSectionId,
   actions,
 }: {
   readonly architecture: CodebaseArchitecture;
   readonly sections: ReadonlyArray<DiagramSection>;
+  readonly learningPath: ReadonlyArray<LearningStage>;
+  readonly completedStepIds: ReadonlyArray<string>;
   readonly activeSectionId?: string;
   readonly actions: RightPaneActions;
 }) {
   const featureSections = useMemo(() => visibleFeatureSections(architecture, sections), [architecture, sections]);
   const [scopeId, setScopeId] = useState(ALL_CODE);
+  const [stageId, setStageId] = useState<string>();
   const scope = featureSections.find((section) => section.id === scopeId);
+  const stage = learningPath.find((candidate) => candidate.id === stageId);
+  const focusedComponentIds = stage !== undefined && stage.component_ids.length > 0
+    ? stage.component_ids
+    : scope?.component_ids;
   const visibleComponents = architecture.components.filter((component) =>
-    scope === undefined || scope.component_ids.includes(component.id));
+    focusedComponentIds === undefined || focusedComponentIds.includes(component.id));
   const [selectedComponentId, setSelectedComponentId] = useState('');
   const selectedComponent = visibleComponents.find((component) => component.id === selectedComponentId)
     ?? visibleComponents[0];
+  const progress = learningProgress(learningPath, completedStepIds);
 
   useEffect(() => {
     setScopeId(featureSections.some((section) => section.id === activeSectionId) ? activeSectionId! : ALL_CODE);
@@ -63,14 +83,29 @@ function MapView({
   }, [visibleComponents]);
 
   const walk = () => {
-    if (scope === undefined) void actions.tour('start');
+    if (stage !== undefined) void actions.tour('start_stage', undefined, undefined, stage.id);
+    else if (scope === undefined) void actions.tour('start');
     else void actions.tour('start_section', undefined, scope.id);
+  };
+
+  const selectScope = (id: string) => {
+    setStageId(undefined);
+    setScopeId(id);
+  };
+
+  const selectStage = (id: string) => {
+    setScopeId(ALL_CODE);
+    setStageId(id);
   };
 
   return <div className="pane-column map-view">
     <header className="pane-header overview-header">
-      <div>
-        <Title order={2} lineClamp={1}>{scope?.title ?? architecture.system_name ?? 'System map'}</Title>
+      <div className="map-heading">
+        <Title order={2} lineClamp={1}>{stage?.title ?? scope?.title ?? architecture.system_name ?? 'System map'}</Title>
+        {progress.total > 0 && <Text
+          className="learning-total"
+          aria-label={`Code digestion progress: ${progress.complete} of ${progress.total} stops`}
+        >{progress.complete}/{progress.total}</Text>}
       </div>
       <Group gap="xs" wrap="nowrap">
         <Button size="compact-sm" onClick={walk}>Walk</Button>
@@ -78,17 +113,33 @@ function MapView({
       </Group>
     </header>
     {featureSections.length > 0 && <nav aria-label="Feature scope" className="map-scopes">
-      <ScopeButton active={scope === undefined} onClick={() => setScopeId(ALL_CODE)}>All code</ScopeButton>
+      <ScopeButton active={scope === undefined && stage === undefined} onClick={() => selectScope(ALL_CODE)}>All code</ScopeButton>
       {featureSections.map((section) => <ScopeButton
-        active={section.id === scope?.id}
+        active={stage === undefined && section.id === scope?.id}
         key={section.id}
-        onClick={() => setScopeId(section.id)}
+        onClick={() => selectScope(section.id)}
       >{section.title}</ScopeButton>)}
+    </nav>}
+    {learningPath.length > 0 && <nav aria-label="Learning path" className="learning-track">
+      {learningPath.map((candidate, index) => {
+        const stageState = stageProgress(candidate, completedStepIds);
+        const complete = stageState.complete === stageState.total;
+        return <UnstyledButton
+          aria-current={candidate.id === stage?.id ? 'step' : undefined}
+          aria-label={`${candidate.title}: ${stageState.complete} of ${stageState.total} code stops complete`}
+          className={`learning-stage${candidate.id === stage?.id ? ' selected' : ''}${complete ? ' complete' : ''}`}
+          key={candidate.id}
+          onClick={() => selectStage(candidate.id)}
+        >
+          <span aria-hidden="true" className="learning-stage-index">{index + 1}</span>
+          <span className="learning-stage-title">{candidate.title}</span>
+        </UnstyledButton>;
+      })}
     </nav>}
     <div className="architecture-workspace">
       <ArchitectureDiagram
         architecture={architecture}
-        focusedComponentIds={scope?.component_ids}
+        focusedComponentIds={focusedComponentIds}
         selectedComponentId={selectedComponent?.id ?? ''}
         onComponentSelect={setSelectedComponentId}
       />
@@ -153,7 +204,7 @@ function visibleFeatureSections(
   return sections.filter((section) => {
     if (reservedSectionIds.has(section.id)) return false;
     const componentIds = new Set(section.component_ids.filter((id) => allIds.has(id)));
-    return componentIds.size > 0 && componentIds.size < allIds.size;
+    return componentIds.size > 0 && componentIds.size < allIds.size && section.step_ids.length > 0;
   });
 }
 

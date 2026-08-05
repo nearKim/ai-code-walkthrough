@@ -78,7 +78,19 @@ const flow = {
     coverage_notes: [],
   },
   steps: [firstStep, secondStep],
-  learning_path: [],
+  learning_path: [{
+    id: 'orientation',
+    title: 'Orientation',
+    goal: 'Find the executable entrypoint.',
+    component_ids: ['entrypoint'],
+    step_ids: ['entry'],
+  }, {
+    id: 'application-logic',
+    title: 'Application logic',
+    goal: 'Follow the application work.',
+    component_ids: ['application'],
+    step_ids: ['logic'],
+  }],
   diagram_sections: [{
     id: 'authentication',
     title: 'Authentication',
@@ -151,6 +163,7 @@ test('maps a feature, walks it, and keeps the source visible', async ({ page }) 
           displayed_step: firstStep,
           next_step: secondStep,
           next_edge: edge,
+          completed_step_ids: [],
         };
       } else if (action === 'next') {
         session = {
@@ -161,9 +174,10 @@ test('maps a feature, walks it, and keeps the source visible', async ({ page }) 
           current_step_index: 1,
           displayed_step_index: 1,
           displayed_step: secondStep,
+          completed_step_ids: ['entry'],
         };
       } else if (action === 'stop') {
-        session = { ...baseSession, state: 'OVERVIEW', flow_map: flow };
+        session = { ...baseSession, state: 'OVERVIEW', flow_map: flow, completed_step_ids: ['entry'] };
       } else if (action === 'new') {
         session = { ...baseSession, state: 'INPUT', flow_map: flow };
       }
@@ -198,9 +212,12 @@ test('maps a feature, walks it, and keeps the source visible', async ({ page }) 
 
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Run application logic' })).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: 'Learning progress: 1 of 2 code stops' }))
+    .toHaveAttribute('aria-valuenow', '1');
   await expect(page.locator('.walkthrough-zone-annotation')).toContainText('reached the implementation');
   await page.getByRole('button', { name: 'Back to map' }).click();
   await expect(page.getByRole('heading', { name: 'Sample application' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Orientation: 1 of 1 code stops complete' })).toBeVisible();
 
   await expect(page.locator('.architecture-diagram-frame')).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

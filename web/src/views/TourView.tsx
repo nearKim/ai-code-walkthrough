@@ -1,6 +1,7 @@
 import { Alert, Button, Group, Loader, ScrollArea, Stack, Text, TextInput, Title } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { learningProgress, navigableLearningStages, stageForStep } from '../learningPath';
 import type { RightPaneActions } from '../RightPane';
 import type { SessionSnapshot } from '../types';
 
@@ -24,6 +25,14 @@ export function TourView({ session, actions }: TourViewProps) {
     }
   }, [session.step_answer, session.step_answer_error, session.step_answer_loading]);
 
+  const learningPath = useMemo(
+    () => session.flow_map === undefined ? [] : navigableLearningStages(session.flow_map),
+    [session.flow_map],
+  );
+  const stage = stageForStep(learningPath, step?.id);
+  const progress = learningProgress(learningPath, session.completed_step_ids ?? []);
+  const progressLabel = `Learning progress: ${progress.complete} of ${progress.total} code stops`;
+
   if (step === undefined) return <Alert color="red">The active tour step is unavailable.</Alert>;
 
   const submit = async () => {
@@ -35,10 +44,26 @@ export function TourView({ session, actions }: TourViewProps) {
   };
 
   return <div className="pane-column">
-    <header className="pane-header tour-header">
-      <Title order={2} lineClamp={2}>{step.title}</Title>
-      <Button size="compact-xs" variant="subtle" color="gray" onClick={() => void actions.tour('stop')}>Back to map</Button>
-    </header>
+    <div className="tour-top">
+      <header className="pane-header tour-header">
+        <div className="tour-heading">
+          {stage !== undefined && <Text className="tour-stage-title">{stage.title}</Text>}
+          <Title order={2} lineClamp={2}>{step.title}</Title>
+        </div>
+        <Group gap="xs" wrap="nowrap">
+          {progress.total > 0 && <Text className="tour-progress-count" aria-label={progressLabel}>{progress.complete}/{progress.total}</Text>}
+          <Button size="compact-xs" variant="subtle" color="gray" onClick={() => void actions.tour('stop')}>Back to map</Button>
+        </Group>
+      </header>
+      {progress.total > 0 && <div
+        aria-label={progressLabel}
+        aria-valuemax={progress.total}
+        aria-valuemin={0}
+        aria-valuenow={progress.complete}
+        className="learning-progress"
+        role="progressbar"
+      ><span style={{ width: `${(progress.complete / progress.total) * 100}%` }} /></div>}
+    </div>
     <ScrollArea className="tour-scroll" offsetScrollbars>
       {showAnswer
         ? <AnswerView session={session} back={() => setShowAnswer(false)} />

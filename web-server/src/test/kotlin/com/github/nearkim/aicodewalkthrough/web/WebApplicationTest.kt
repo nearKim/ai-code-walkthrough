@@ -76,6 +76,23 @@ class WebApplicationTest {
             assertTrue(technicalReference.headers[HttpHeaders.ContentDisposition]?.contains("code-walkthrough.html") == true)
             assertTrue(technicalReference.bodyAsText().contains("Feature walkthrough"))
 
+            val stageTour = client.post("/api/tour") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"action":"start_stage","stage_id":"sample-behavior-stage"}""")
+            }
+            val stageSnapshot = Json.decodeFromString<SessionSnapshot>(stageTour.bodyAsText())
+            assertEquals("TOUR_ACTIVE", stageSnapshot.state)
+            assertEquals("sample-behavior-stage", stageSnapshot.activeLearningStageId)
+            assertEquals("sample-behavior", stageSnapshot.displayedStep?.id)
+
+            val finishStage = client.post("/api/tour") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"action":"next"}""")
+            }
+            val completedStageSnapshot = Json.decodeFromString<SessionSnapshot>(finishStage.bodyAsText())
+            assertEquals("OVERVIEW", completedStageSnapshot.state)
+            assertEquals(listOf("sample-behavior"), completedStageSnapshot.completedStepIds)
+
             val scopedTour = client.post("/api/tour") {
                 contentType(ContentType.Application.Json)
                 setBody("""{"action":"start_section","section_id":"feature-behavior"}""")
@@ -92,6 +109,7 @@ class WebApplicationTest {
             val endedSnapshot = Json.decodeFromString<SessionSnapshot>(sectionEnd.bodyAsText())
             assertEquals("TOUR_ACTIVE", endedSnapshot.state)
             assertEquals("sample-evidence", endedSnapshot.displayedStep?.id)
+            assertEquals(listOf("sample-behavior"), endedSnapshot.completedStepIds)
 
             val finishSection = client.post("/api/tour") {
                 contentType(ContentType.Application.Json)
@@ -100,6 +118,7 @@ class WebApplicationTest {
             val finishedSnapshot = Json.decodeFromString<SessionSnapshot>(finishSection.bodyAsText())
             assertEquals("OVERVIEW", finishedSnapshot.state)
             assertEquals(null, finishedSnapshot.activeSectionId)
+            assertEquals(listOf("sample-behavior", "sample-evidence"), finishedSnapshot.completedStepIds)
 
             val mapping = client.post("/api/mapping") {
                 contentType(ContentType.Application.Json)
@@ -116,6 +135,7 @@ class WebApplicationTest {
             }
             assertEquals("OVERVIEW", snapshot.state)
             assertEquals("entry", snapshot.flowMap?.entryStepId)
+            assertTrue(snapshot.completedStepIds.isEmpty())
 
             val tour = client.post("/api/tour") {
                 contentType(ContentType.Application.Json)
@@ -169,6 +189,9 @@ class WebApplicationTest {
             first.showSample()
             val active = first.tour("start", null).getOrThrow()
             assertEquals("TOUR_ACTIVE", active.state)
+            val advanced = first.tour("next", null).getOrThrow()
+            assertEquals("sample-behavior", advanced.displayedStep?.id)
+            assertEquals(listOf("sample-map"), advanced.completedStepIds)
         } finally {
             first.close()
         }
@@ -179,7 +202,8 @@ class WebApplicationTest {
             assertEquals("TOUR_ACTIVE", restored.state)
             assertEquals(SampleWalkthrough.question, restored.question)
             assertEquals("sample-map", restored.flowMap?.entryStepId)
-            assertEquals("sample-map", restored.displayedStep?.id)
+            assertEquals("sample-behavior", restored.displayedStep?.id)
+            assertEquals(listOf("sample-map"), restored.completedStepIds)
         } finally {
             second.close()
         }

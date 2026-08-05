@@ -1,7 +1,7 @@
 export type SessionState = 'INPUT' | 'LOADING' | 'OVERVIEW' | 'TOUR_ACTIVE';
 export type AnalysisModeId = 'understand' | 'review' | 'trace';
 export type ProviderId = 'claude_cli' | 'codex_cli';
-export type TourAction = 'start' | 'start_section' | 'preview' | 'next' | 'previous' | 'stop' | 'new';
+export type TourAction = 'start' | 'start_section' | 'start_stage' | 'preview' | 'next' | 'previous' | 'stop' | 'new';
 
 export interface LineAnnotation {
   readonly start_line: number;
@@ -175,6 +175,8 @@ export interface SessionSnapshot {
   readonly error_message?: string;
   readonly progress_lines: ReadonlyArray<string>;
   readonly can_previous?: boolean;
+  readonly active_learning_stage_id?: string;
+  readonly completed_step_ids?: ReadonlyArray<string>;
 }
 
 export interface ProviderStatus {

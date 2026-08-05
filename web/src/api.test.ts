@@ -50,6 +50,18 @@ test('sends the requested diagram section when starting its tour', async () => {
   }));
 });
 
+test('sends the requested learning stage when starting its tour', async () => {
+  const fetchMock = vi.fn(async () => Response.json({}));
+  vi.stubGlobal('fetch', fetchMock);
+
+  await api.tour('start_stage', undefined, undefined, 'orientation');
+
+  expect(fetchMock).toHaveBeenCalledWith('/api/tour', expect.objectContaining({
+    method: 'POST',
+    body: JSON.stringify({ action: 'start_stage', stage_id: 'orientation' }),
+  }));
+});
+
 test('downloads the technical reference as HTML', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('<!doctype html>', {
     headers: { 'content-type': 'text/html' },
